@@ -152,175 +152,69 @@ def normalize_title(title):
     return t.strip()
 
 # =====================
-# 記事本文から published 取得
+# generate
 # =====================
-def fetch_published_from_article(url):
-    try:
-        r = requests.get(url, timeout=10, headers={"User-Agent":"Mozilla/5.0"})
-        m = re.search(r'<time[^>]*datetime="([^"]+)"', r.text)
-        if not m:
-            return None
-        dt = datetime.fromisoformat(m.group(1).replace("Z","")).astimezone(JST)
-        return dt if is_within_24h(dt) else None
-    except:
-        return None
-
-# =====================
-# sitemap fetchers（50件制限）
-# =====================
-def fetch_bigmint_from_sitemap():
-    urls = []
-    try:
-        r = requests.get("https://www.bigmint.co/sitemap.xml", timeout=10, headers={"User-Agent":"Mozilla/5.0"})
-        root = ET.fromstring(r.text)
-        for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
-            loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
-            if loc is not None:
-                urls.append(loc.text)
-            if len(urls) >= 50:
-                break
-    except:
-        pass
-    return urls
-
-def fetch_kallanish_from_sitemap():
-    urls = []
-    try:
-        r = requests.get("https://www.kallanish.com/sitemap.xml", timeout=10, headers={"User-Agent":"Mozilla/5.0"})
-        root = ET.fromstring(r.text)
-        for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
-            loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
-            if loc is not None:
-                urls.append(loc.text)
-            if len(urls) >= 50:
-                break
-    except:
-        pass
-    return urls
-
-def fetch_fastmarkets_from_sitemap():
-    urls = []
-    try:
-        r = requests.get("https://www.fastmarkets.com/sitemap.xml", timeout=10, headers={"User-Agent":"Mozilla/5.0"})
-        root = ET.fromstring(r.text)
-        for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
-            loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
-            if loc is not None:
-                urls.append(loc.text)
-            if len(urls) >= 50:
-                break
-    except:
-        pass
-    return urls
-
-def fetch_argus_from_sitemap():
-    urls = []
-    try:
-        r = requests.get("https://www.argusmedia.com/sitemap.xml", timeout=10, headers={"User-Agent":"Mozilla/5.0"})
-        root = ET.fromstring(r.text)
-        for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
-            loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
-            if loc is not None:
-                urls.append(loc.text)
-            if len(urls) >= 50:
-                break
-    except:
-        pass
-    return urls
-
 def generate_html():
-    all_articles = []
-    seen = set()
-    seen_links = set()
+    final_articles = []
     raw_media = {"Kallanish","BigMint","Fastmarkets","Argus"}
 
-    # sitemap
-    for media, fetcher in [
-        ("BigMint", fetch_bigmint_from_sitemap),
-        ("Kallanish", fetch_kallanish_from_sitemap),
-        ("Fastmarkets", fetch_fastmarkets_from_sitemap),
-        ("Argus", fetch_argus_from_sitemap)
-    ]:
-        for link in fetcher():
-            if link in seen_links:
-                continue
-            dt = fetch_published_from_article(link)
-            if not dt:
-                continue
-            title = link.split("/")[-1].replace("-"," ").title()
-            key = normalize_title(title)
-            if key in seen:
-                continue
-            seen.add(key)
-            seen_links.add(link)
-            all_articles.append({
-                "media": media,
-                "title": title,
-                "summary": "",
-                "score": importance_score(title),
-                "published": dt.strftime("%Y-%m-%d %H:%M"),
-                "link": link
-            })
-
-    # RSS
     for media, feeds in MEDIA.items():
-        for url in feeds:
-            for e in safe_parse(url):
-                title = clean(e.get("title", ""))
-                summary_raw = clean(e.get("summary", ""))
-                if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
-                    continue
-                link = normalize_link(e.get("link",""))
-                key = normalize_title(title)
-                if link in seen_links or key in seen:
-                    continue
-                seen.add(key)
-                seen_links.add(link)
-                all_articles.append({
-                    "media": media,
-                    "title": title,
-                    "summary": "",
-                    "score": importance_score(title + summary_raw),
-                    "published": published(e),
-                    "link": link
-                })
+        collected = []
+        seen = set()
+        offset = 0
 
-    # ===== 24h & 各媒体15件 =====
-    final_articles = []
-    for media in set(a["media"] for a in all_articles):
-        media_items = []
-        for a in all_articles:
-            if a["media"] != media:
-                continue
-            try:
-                dt = datetime.strptime(a["published"], "%Y-%m-%d %H:%M").replace(tzinfo=JST)
-            except:
-                continue
-            if not is_within_24h(dt):
-                continue
-            media_items.append(a)
+        while len(collected) < 15:
+            batch = []
+            for url in feeds:
+                entries = safe_parse(url)
+                for e in entries[offset:offset+15]:
+                    title = clean(e.get("title", ""))
+                    summary_raw = clean(e.get("summary", ""))
+                    link = normalize_link(e.get("link",""))
+                    try:
+                        dt = datetime.strptime(published(e), "%Y-%m-%d %H:%M").replace(tzinfo=JST)
+                    except:
+                        continue
+                    if not is_within_24h(dt):
+                        continue
+                    batch.append({
+                        "media": media,
+                        "title": title,
+                        "summary": "",
+                        "score": importance_score(title + summary_raw),
+                        "published": published(e),
+                        "link": link,
+                        "key": normalize_title(title)
+                    })
 
-        selected = []
-        for score in [3,2,1,0]:
-            for a in sorted(media_items, key=lambda x:x["published"], reverse=True):
-                if a["score"] == score and a not in selected:
-                    selected.append(a)
-                    if len(selected) >= 15:
-                        break
-            if len(selected) >= 15:
+            offset += 15
+            if not batch:
                 break
 
-        final_articles.extend(selected)
+            unique = {}
+            for a in batch:
+                if a["key"] not in unique:
+                    unique[a["key"]] = a
 
-    # 翻訳はここでのみ実行
+            sorted_items = sorted(unique.values(), key=lambda x:(x["score"],x["published"]), reverse=True)
+
+            for a in sorted_items:
+                if a["score"] >= 1 and len(collected) < 15:
+                    collected.append(a)
+
+            if len(collected) < 15:
+                for a in sorted_items:
+                    if a["score"] == 0 and len(collected) < 15:
+                        collected.append(a)
+
+        final_articles.extend(collected)
+
     for a in final_articles:
         if a["media"] in raw_media:
             a["summary"] = deepl_translate(a["title"])
 
-    all_articles = sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True)
-
     body_html = "<html><body><h2>主要ニュース速報（重要度順）</h2>"
-    for a in all_articles:
+    for a in sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True):
         stars = "★"*a["score"] if a["score"] else "－"
         body_html += f"""
         <div style="background:{COLOR_BG[a['score']]}; border-left:5px solid {COLOR_BORDER[a['score']]}; padding:12px;margin-bottom:14px;">
