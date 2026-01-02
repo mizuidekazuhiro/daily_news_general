@@ -242,18 +242,19 @@ def generate_html():
             if not is_japanese(a["title"]):
                 a["summary"] = deepl_translate(a["title"])
 
-body_html = """
-<html>
-<body style="
-    font-family:
-        'Meiryo UI',
-        'Meiryo',
-        'Yu Gothic',
-        'Hiragino Kaku Gothic ProN',
-        sans-serif;
-">
-<h2>主要ニュース速報（重要度順）</h2>
-"""
+    body_html = """
+    <html>
+    <body style="
+        font-family:
+            'Meiryo UI',
+            'Meiryo',
+            'Yu Gothic',
+            'Hiragino Kaku Gothic ProN',
+            sans-serif;
+    ">
+    <h2>主要ニュース速報（重要度順）</h2>
+    """
+
     for a in sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True):
         stars = "★"*a["score"] if a["score"] else "－"
         body_html += f"""
