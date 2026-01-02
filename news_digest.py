@@ -23,16 +23,27 @@ now_jst = datetime.now(JST)
 IS_MONDAY = now_jst.weekday() == 0  # 月曜
 
 # =====================
-# 媒体設定（最新30件）※RSS精査済み
+# 媒体設定（最新30件）※Google News RSS置換済み
 # =====================
 MEDIA = {
-    "日経新聞": (30, ["https://www.nikkei.com/rss/news.rdf"]),
-    "Bloomberg": (30, ["https://www.bloomberg.co.jp/feed/news"]),
-    "Reuters": (30, ["https://feeds.reuters.com/reuters/topNews"]),
-    "S&P Global": (30, ["https://www.spglobal.com/commodityinsights/en/rss-feed"]),
-    "東洋経済": (30, ["https://toyokeizai.net/list/feed/rss"]),
-    "日経ビジネス": (30, ["https://business.nikkei.com/rss/special.xml"])
+    "日経新聞": (
+        30,
+        ["https://news.google.com/rss/search?q=site:nikkei.com&hl=ja&gl=JP&ceid=JP:ja"]
+    ),
+    "Bloomberg": (
+        30,
+        ["https://news.google.com/rss/search?q=Bloomberg&hl=ja&gl=JP&ceid=JP:ja"]
+    ),
+    "Reuters": (
+        30,
+        ["https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja"]
+    ),
+    "東洋経済": (
+        30,
+        ["https://toyokeizai.net/list/feed/rss"]
+    )
 }
+
 
 # =====================
 # 重要度キーワード
