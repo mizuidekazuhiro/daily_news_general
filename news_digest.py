@@ -88,7 +88,18 @@ def clean(text):
 
 def importance_score(text):
     text = text.lower()
-    return min(sum(w in text for v in IMPORTANT_KEYWORDS.values() for w in v), 3)
+    score = 0
+
+    for words in IMPORTANT_KEYWORDS.values():
+        for w in words:
+            if w.isascii() and w.isalpha():
+                if re.search(rf"\b{re.escape(w)}\b", text):
+                    score += 1
+            else:
+                if w in text:
+                    score += 1
+
+    return min(score, 3)
 
 def published(entry):
     if hasattr(entry, "published_parsed") and entry.published_parsed:
