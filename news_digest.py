@@ -219,6 +219,7 @@ def fetch_argus_from_sitemap():
 def generate_html():
     all_articles = []
     seen = set()
+    seen_links = set()   # ← 追加（重複対策）
     raw_media = {"Kallanish","BigMint","Fastmarkets","Argus"}
 
     # sitemap
@@ -229,17 +230,22 @@ def generate_html():
         ("Argus", fetch_argus_from_sitemap)
     ]:
         for link in fetcher():
+            if link in seen_links:
+                continue
             dt = fetch_published_from_article(link)
             if not dt:
                 continue
             title = link.split("/")[-1].replace("-"," ").title()
+            if "重複記事を削除します" in title:
+                continue
             if title in seen:
                 continue
             seen.add(title)
+            seen_links.add(link)
             all_articles.append({
                 "media": media,
                 "title": title,
-                "summary": "",  # ← 翻訳しない
+                "summary": "",
                 "score": importance_score(title),
                 "published": dt.strftime("%Y-%m-%d %H:%M"),
                 "link": link
@@ -250,20 +256,26 @@ def generate_html():
         for url in feeds:
             for e in safe_parse(url):
                 title = clean(e.get("title", ""))
+                if "重複記事を削除します" in title:
+                    continue
                 summary_raw = clean(e.get("summary", ""))
                 if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
+                    continue
+                link = normalize_link(e.get("link",""))
+                if link in seen_links:
                     continue
                 dedup_key = re.sub(r"（.*?）|- .*?$", "", title)
                 if dedup_key in seen:
                     continue
                 seen.add(dedup_key)
+                seen_links.add(link)
                 all_articles.append({
                     "media": media,
                     "title": title,
                     "summary": "",
                     "score": importance_score(title + summary_raw),
                     "published": published(e),
-                    "link": normalize_link(e.get("link",""))
+                    "link": link
                 })
 
     # ===== 24h & 各媒体15件 =====
