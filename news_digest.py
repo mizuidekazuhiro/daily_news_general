@@ -65,7 +65,7 @@ MEDIA = {
 # 重要度キーワード
 # =====================
 IMPORTANT_KEYWORDS = {
-    "鉄鋼": ["steel","iron","scrap","rebar","製鉄","鉄鋼","高炉","電炉"],
+    "鉄鋼": ["steel","iron","scrap","rebar","製鉄","鉄鋼","高炉","電炉","ferrous"],
     "建設": ["construction","infrastructure","建設","再開発"],
     "AI": ["ai","artificial intelligence","semiconductor","半導体","生成ai"],
     "政治": ["government","policy","election","政権","政策","規制"],
@@ -101,18 +101,6 @@ def safe_parse(url):
     except:
         return []
 
-def scrape_article_text(url):
-    try:
-        r = requests.get(url, timeout=10)
-        html = r.text
-        html = re.sub(r"<script.*?>.*?</script>", "", html, flags=re.S)
-        html = re.sub(r"<style.*?>.*?</style>", "", html, flags=re.S)
-        text = re.sub("<[^<]+?>", "", html)
-        text = re.sub(r"\s+", " ", text)
-        return text.strip()[:4000]
-    except:
-        return ""
-
 def deepl_translate(text):
     try:
         r = requests.post(
@@ -125,6 +113,8 @@ def deepl_translate(text):
         return text
 
 def normalize_link(url):
+    if "news.google.com" in url and "url=" in url:
+        url = urllib.parse.unquote(re.sub(r".*url=", "", url))
     url = re.sub(r"&utm_.*", "", url)
     return url.strip()
 
@@ -176,17 +166,14 @@ def generate_html():
                 score = importance_score(title + summary_raw)
 
                 if media in raw_media:
-                    body = scrape_article_text(final_url)
                     summary = deepl_translate(title)
                 else:
-                    body = ""
                     summary = ""
 
                 all_articles.append({
                     "media": media,
                     "title": title,
                     "summary": summary,
-                    "body": body,
                     "score": score,
                     "published": published(e),
                     "link": final_url
@@ -204,8 +191,6 @@ def generate_html():
         <b>{a['title']}</b><br>"""
         if a["summary"]:
             body_html += f"<div>{a['summary']}</div>"
-        if a["body"]:
-            body_html += f"<div style='white-space:pre-wrap;'>{a['body']}</div>"
         body_html += f"""
         <div style="font-size:12px;color:#555;">
         {a['media']}｜重要度:{stars}｜{a['published']}
