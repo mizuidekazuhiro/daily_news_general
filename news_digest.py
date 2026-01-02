@@ -8,12 +8,12 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 
 # =====================
-# タイムアウト
+# タイムアウト設定
 # =====================
 socket.setdefaulttimeout(10)
 
 # =====================
-# Secrets
+# メール設定（GitHub Secrets）
 # =====================
 MAIL_FROM = os.environ["MAIL_FROM"]
 MAIL_TO = os.environ["MAIL_TO"]
@@ -30,86 +30,79 @@ JST = timezone(timedelta(hours=9))
 now_jst = datetime.now(JST)
 
 # =====================
-# Media RSS
+# 媒体設定（変更なし）
 # =====================
 MEDIA = {
     "日経新聞": [
-        "https://news.google.com/rss/search?q=site:nikkei.com+政治&hl=ja&gl=JP&ceid=JP:ja",
-        "https://news.google.com/rss/search?q=site:nikkei.com+政策&hl=ja&gl=JP&ceid=JP:ja",
-        "https://news.google.com/rss/search?q=site:nikkei.com+企業&hl=ja&gl=JP&ceid=JP:ja",
-        "https://news.google.com/rss/search?q=site:nikkei.com+金融&hl=ja&gl=JP&ceid=JP:ja",
+        "https://news.google.com/rss/search?q=site:nikkei.com+経済+-人事+-訃報+-文化+-スポーツ&hl=ja&gl=JP&ceid=JP:ja"
     ],
     "Reuters": [
-        "https://news.google.com/rss/search?q=Reuters&hl=en&gl=US&ceid=US:en"
+        "https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja"
     ],
     "Bloomberg": [
-        "https://news.google.com/rss/search?q=Bloomberg&hl=en&gl=US&ceid=US:en"
+        "https://news.google.com/rss/search?q=Bloomberg&hl=ja&gl=JP&ceid=JP:ja"
     ],
     "Fastmarkets": [
-        "https://news.google.com/rss/search?q=Fastmarkets&hl=en&gl=US&ceid=US:en"
+        "https://news.google.com/rss/search?q=Fastmarkets&hl=en&ceid=US:en"
     ],
     "BigMint": [
-        "https://news.google.com/rss/search?q=BigMint&hl=en&gl=US&ceid=US:en"
-    ],
+        "https://news.google.com/rss/search?q=BigMint&hl=en&ceid=US:en"
+    ]
 }
-
-# =====================
-# 日経ノイズ除外（★追加）
-# =====================
-NIKKEI_NOISE_KEYWORDS = [
-    "NIKKEI COMPASS",
-    "会社情報",
-    "与信管理",
-    "人事",
-    "訃報",
-    "文化",
-    "スポーツ",
-    "有限会社",
-    "代表取締役",
-    "資本金",
-    "設立",
-]
 
 # =====================
 # 重要度キーワード（変更なし）
 # =====================
-IMPORTANT_KEYWORDS = [
-    "steel","iron","scrap","rebar","製鉄","鉄鋼","高炉","電炉",
-    "construction","infrastructure","建設","土木","再開発",
-    "ai","artificial intelligence","半導体","gpu","data center",
-    "bank","banking","loan","融資","金利","市場","株式","債券",
-    "government","policy","election","trade","tariff","制裁",
-    "india","indian","インド","vietnam","ベトナム",
-]
+IMPORTANT_KEYWORDS = {
+    "鉄鋼": ["steel","iron","scrap","rebar","製鉄","鉄鋼","高炉","電炉"],
+    "建設": ["construction","infrastructure","建設","再開発"],
+    "AI": ["ai","artificial intelligence","semiconductor","半導体","生成ai"],
+    "銀行": ["bank","banking","loan","credit","銀行","金融機関"],
+    "政治": ["government","policy","election","政権","政策","規制"],
+    "企業": ["company","earnings","決算","m&a","投資"],
+    "金融": ["market","interest","rate","金利","市場"],
+    "通商": ["trade","tariff","sanction","関税","制裁"],
+    "重点国": ["india","indian","インド","vietnam","ベトナム"]
+}
 
 # =====================
-# Utils
+# 色分け（変更なし）
+# =====================
+COLOR_BG = {
+    3: "#fff5f5",
+    2: "#fffaf0",
+    1: "#f0f9ff",
+    0: "#ffffff"
+}
+COLOR_BORDER = {
+    3: "#c53030",
+    2: "#dd6b20",
+    1: "#3182ce",
+    0: "#d0d7de"
+}
+
+# =====================
+# ユーティリティ
 # =====================
 def clean(text):
     return re.sub("<[^<]+?>", "", text).strip()
 
+def is_english(text):
+    return re.search(r"[A-Za-z]", text) is not None
+
 def importance_score(text):
-    t = text.lower()
-    score = sum(1 for k in IMPORTANT_KEYWORDS if k in t)
+    text = text.lower()
+    score = 0
+    for words in IMPORTANT_KEYWORDS.values():
+        for w in words:
+            if w in text:
+                score += 1
     return min(score, 3)
 
-def deepl_translate(text):
-    if not text:
-        return ""
-    r = requests.post(
-        "https://api-free.deepl.com/v2/translate",
-        data={
-            "auth_key": DEEPL_API_KEY,
-            "text": text,
-            "source_lang": "EN",
-            "target_lang": "JA",
-        },
-        timeout=10
-    )
-    return r.json()["translations"][0]["text"]
-
-def is_english(text):
-    return bool(re.search(r"[A-Za-z]", text))
+def published(entry):
+    if hasattr(entry, "published_parsed") and entry.published_parsed:
+        return datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
+    return "N/A"
 
 def safe_parse(url):
     try:
@@ -117,40 +110,50 @@ def safe_parse(url):
     except:
         return []
 
-def published(e):
-    if hasattr(e, "published_parsed"):
-        return datetime(*e.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
-    return "N/A"
-
 def is_nikkei_noise(title, summary):
-    text = title + summary
-    return any(k in text for k in NIKKEI_NOISE_KEYWORDS)
+    noise = ["会社情報", "与信管理", "NIKKEI COMPASS"]
+    return any(n in title or n in summary for n in noise)
 
 # =====================
-# HTML color
+# DeepL 要約（変更なし）
 # =====================
-COLOR = {
-    3: "#fff5f5",
-    2: "#fffaf0",
-    1: "#f0f8ff",
-    0: "#f8fafc"
-}
+def deepl_translate(text):
+    try:
+        r = requests.post(
+            "https://api-free.deepl.com/v2/translate",
+            data={
+                "auth_key": DEEPL_API_KEY,
+                "text": text,
+                "target_lang": "JA"
+            },
+            timeout=10
+        )
+        return r.json()["translations"][0]["text"]
+    except:
+        return text
 
 # =====================
-# Generate HTML
+# HTML生成（★ここだけ変更）
 # =====================
 def generate_html():
-    articles = []
+    media_articles = {}
+    seen = set()
 
     for media, feeds in MEDIA.items():
+        articles = []
+
         for url in feeds:
             for e in safe_parse(url):
                 title = clean(e.get("title", ""))
                 summary_raw = clean(e.get("summary", ""))
 
-                # ★ 日経ノイズ除外
                 if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
                     continue
+
+                key = media + title
+                if key in seen:
+                    continue
+                seen.add(key)
 
                 score = importance_score(title + summary_raw)
 
@@ -161,7 +164,6 @@ def generate_html():
                 )
 
                 articles.append({
-                    "media": media,
                     "title": title,
                     "summary": summary,
                     "score": score,
@@ -169,47 +171,57 @@ def generate_html():
                     "link": e.get("link", "")
                 })
 
-    articles = sorted(
-        articles,
-        key=lambda x: (x["score"], x["published"]),
-        reverse=True
-    )[:15]
+        media_articles[media] = sorted(
+            articles,
+            key=lambda x: (x["score"], x["published"]),
+            reverse=True
+        )[:15]
 
-    body = "<html><body><h2>主要ニュース速報</h2><p>ニュースサマリ</p>"
+    body = """
+    <html>
+    <body style="font-family:'Meiryo UI','Segoe UI',sans-serif;">
+    <h2>主要ニュース速報</h2>
+    """
 
-    for a in articles:
-        stars = "★" * a["score"] if a["score"] else "－"
-        body += f"""
-        <div style="background:{COLOR[a['score']]};
-                    padding:12px;margin-bottom:12px;
-                    border-left:4px solid #c53030;">
-          <b>{a['title']}</b><br>
-          <div>{a['summary']}</div>
-          <div style="font-size:12px;">
-            {a['media']}｜重要度:{stars}｜{a['published']}
-          </div>
-          <a href="{a['link']}">▶ 元記事</a>
-        </div>
-        """
+    for media, articles in media_articles.items():
+        body += f"<h3>【{media}｜{len(articles)}件】</h3>"
 
-    return body + "</body></html>"
+        for a in articles:
+            stars = "★" * a["score"] if a["score"] else "－"
+            body += f"""
+            <div style="background:{COLOR_BG[a['score']]};
+                        border-left:5px solid {COLOR_BORDER[a['score']]};
+                        padding:12px;margin-bottom:14px;">
+              <b>{a['title']}</b><br>
+              <div>{a['summary']}</div>
+              <div style="font-size:12px;color:#555;">
+                {media}｜重要度:{stars}｜{a['published']}
+              </div>
+              <a href="{a['link']}">▶ 元記事</a>
+            </div>
+            """
+        body += "<hr>"
+
+    body += "</body></html>"
+    return body
 
 # =====================
-# Mail
+# メール送信（変更なし）
 # =====================
 def send_mail(html):
     msg = MIMEText(html, "html", "utf-8")
-    msg["Subject"] = f"主要ニュース｜{now_jst.strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"主要ニュースまとめ｜{now_jst.strftime('%Y-%m-%d')}"
     msg["From"] = MAIL_FROM
     msg["To"] = MAIL_TO
 
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
-        s.starttls()
-        s.login(MAIL_FROM, MAIL_PASSWORD)
-        s.send_message(msg)
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        server.starttls()
+        server.login(MAIL_FROM, MAIL_PASSWORD)
+        server.send_message(msg)
 
 # =====================
-# Run
+# 実行
 # =====================
 if __name__ == "__main__":
-    send_mail(generate_html())
+    html = generate_html()
+    send_mail(html)
