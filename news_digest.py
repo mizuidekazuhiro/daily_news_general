@@ -74,6 +74,12 @@ IMPORTANT_KEYWORDS = {
 }
 
 # =====================
+# 色分け（★修正点②）
+# =====================
+COLOR_BG = {3:"#fff5f5",2:"#fffaf0",1:"#f0f9ff",0:"#ffffff"}
+COLOR_BORDER = {3:"#c53030",2:"#dd6b20",1:"#3182ce",0:"#d0d7de"}
+
+# =====================
 # ユーティリティ
 # =====================
 def clean(text):
@@ -156,8 +162,6 @@ def generate_html():
         buffer_zero = []
 
         while len(collected) < 15 and not exhausted:
-            batch = []
-
             for url in feeds:
                 entries = safe_parse(url)
                 slice_entries = entries[offset:offset+15]
@@ -199,11 +203,12 @@ def generate_html():
                     if item["score"] >= 1:
                         collected.append(item)
                     else:
-                        buffer_zero.append(item)
+                        # ★修正点①：★0でも日経ノイズは入れない
+                        if not (media == "日経新聞" and is_nikkei_noise(title, summary_raw)):
+                            buffer_zero.append(item)
 
             offset += 15
 
-        # ★0で埋める（最後のみ）
         for a in sorted(buffer_zero, key=lambda x:x["published"], reverse=True):
             if len(collected) >= 15:
                 break
@@ -219,7 +224,9 @@ def generate_html():
     for a in sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True):
         stars = "★"*a["score"] if a["score"] else "－"
         body_html += f"""
-        <div style="padding:12px;margin-bottom:14px;">
+        <div style="background:{COLOR_BG[a['score']]};
+                    border-left:5px solid {COLOR_BORDER[a['score']]};
+                    padding:12px;margin-bottom:14px;">
             <b>{a['title']}</b><br>
         """
         if a["summary"]:
