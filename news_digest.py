@@ -7,7 +7,6 @@ import requests
 import urllib.parse
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
-import xml.etree.ElementTree as ET
 
 # =====================
 # タイムアウト設定
@@ -75,12 +74,6 @@ IMPORTANT_KEYWORDS = {
 }
 
 # =====================
-# 色分け
-# =====================
-COLOR_BG = {3:"#fff5f5",2:"#fffaf0",1:"#f0f9ff",0:"#ffffff"}
-COLOR_BORDER = {3:"#c53030",2:"#dd6b20",1:"#3182ce",0:"#d0d7de"}
-
-# =====================
 # ユーティリティ
 # =====================
 def clean(text):
@@ -139,9 +132,6 @@ def is_nikkei_noise(title, summary):
 def is_within_24h(dt):
     return dt >= now_jst - timedelta(hours=24)
 
-# =====================
-# 正規化タイトル（重複除去用）
-# =====================
 def normalize_title(title):
     t = title.lower()
     t = re.sub(r"（.*?）|\(.*?\)", "", t)
@@ -162,50 +152,62 @@ def generate_html():
         collected = []
         seen = set()
         offset = 0
+        exhausted = False
+        buffer_zero = []
 
-        while len(collected) < 15:
+        while len(collected) < 15 and not exhausted:
             batch = []
+
             for url in feeds:
                 entries = safe_parse(url)
-                for e in entries[offset:offset+15]:
+                slice_entries = entries[offset:offset+15]
+                if not slice_entries:
+                    exhausted = True
+                    continue
+
+                for e in slice_entries:
                     title = clean(e.get("title", ""))
                     summary_raw = clean(e.get("summary", ""))
                     link = normalize_link(e.get("link",""))
+
                     try:
                         dt = datetime.strptime(published(e), "%Y-%m-%d %H:%M").replace(tzinfo=JST)
                     except:
                         continue
+
                     if not is_within_24h(dt):
+                        exhausted = True
                         continue
-                    batch.append({
+
+                    if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
+                        continue
+
+                    key = normalize_title(title)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+
+                    item = {
                         "media": media,
                         "title": title,
                         "summary": "",
                         "score": importance_score(title + summary_raw),
                         "published": published(e),
-                        "link": link,
-                        "key": normalize_title(title)
-                    })
+                        "link": link
+                    }
+
+                    if item["score"] >= 1:
+                        collected.append(item)
+                    else:
+                        buffer_zero.append(item)
 
             offset += 15
-            if not batch:
+
+        # ★0で埋める（最後のみ）
+        for a in sorted(buffer_zero, key=lambda x:x["published"], reverse=True):
+            if len(collected) >= 15:
                 break
-
-            unique = {}
-            for a in batch:
-                if a["key"] not in unique:
-                    unique[a["key"]] = a
-
-            sorted_items = sorted(unique.values(), key=lambda x:(x["score"],x["published"]), reverse=True)
-
-            for a in sorted_items:
-                if a["score"] >= 1 and len(collected) < 15:
-                    collected.append(a)
-
-            if len(collected) < 15:
-                for a in sorted_items:
-                    if a["score"] == 0 and len(collected) < 15:
-                        collected.append(a)
+            collected.append(a)
 
         final_articles.extend(collected)
 
@@ -217,7 +219,7 @@ def generate_html():
     for a in sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True):
         stars = "★"*a["score"] if a["score"] else "－"
         body_html += f"""
-        <div style="background:{COLOR_BG[a['score']]}; border-left:5px solid {COLOR_BORDER[a['score']]}; padding:12px;margin-bottom:14px;">
+        <div style="padding:12px;margin-bottom:14px;">
             <b>{a['title']}</b><br>
         """
         if a["summary"]:
