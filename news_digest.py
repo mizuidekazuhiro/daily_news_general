@@ -26,13 +26,11 @@ SMTP_PORT = 587
 # =====================
 JST = timezone(timedelta(hours=9))
 now_jst = datetime.now(JST)
-IS_MONDAY = now_jst.weekday() == 0  # 月曜
 
 # =====================
 # 媒体設定（Google News RSS）
 # =====================
 MEDIA = {
-
     "日経新聞": (
         30,
         [
@@ -42,7 +40,6 @@ MEDIA = {
             "https://news.google.com/rss/search?q=日本経済新聞+政策&hl=ja&gl=JP&ceid=JP:ja"
         ]
     ),
-
     "Bloomberg": (
         30,
         ["https://news.google.com/rss/search?q=Bloomberg&hl=ja&gl=JP&ceid=JP:ja"]
@@ -61,11 +58,53 @@ MEDIA = {
 # 重要度キーワード
 # =====================
 IMPORTANT_KEYWORDS = {
-    "鉄鋼": ["steel", "iron", "scrap", "鉄鋼", "製鉄", "高炉", "スクラップ"],
-    "政治": ["government", "policy", "政権", "法案", "規制", "election"],
-    "企業": ["company", "corp", "企業", "決算", "m&a", "investment", "jv"],
-    "金融": ["market", "interest", "rate", "金融", "金利", "市場"],
-    "通商": ["trade", "tariff", "sanction", "輸出", "輸入", "関税", "制裁"]
+    "鉄鋼": [
+        "steel", "iron", "scrap", "rebar", "hbi", "dri",
+        "製鉄", "鉄鋼", "高炉", "電炉", "スクラップ",
+        "automotive", "construction", "infrastructure",
+        "橋梁", "建材"
+    ],
+    "建設": [
+        "construction", "infrastructure", "real estate",
+        "housing", "property", "developer",
+        "建設", "土木", "不動産", "住宅", "再開発",
+        "公共事業", "インフラ"
+    ],
+    "AI": [
+        "ai", "artificial intelligence", "machine learning",
+        "semiconductor", "chip", "gpu", "data center",
+        "生成ai", "半導体", "データセンター",
+        "nvidia", "openai"
+    ],
+    "銀行": [
+        "bank", "banking", "lender", "financial institution",
+        "融資", "貸出", "銀行", "金融機関",
+        "credit", "loan", "default"
+    ],
+    "政治": [
+        "government", "policy", "administration",
+        "政権", "政策", "法案", "規制",
+        "election", "geopolitical", "military", "conflict"
+    ],
+    "企業": [
+        "company", "corp", "firm",
+        "決算", "業績", "m&a", "acquisition",
+        "investment", "joint venture", "subsidiary"
+    ],
+    "金融": [
+        "market", "interest", "rate", "yield",
+        "fx", "currency", "bond", "equity",
+        "金融", "金利", "市場", "株式", "債券"
+    ],
+    "通商": [
+        "trade", "tariff", "sanction",
+        "export", "import", "quota",
+        "輸出", "輸入", "関税", "制裁"
+    ],
+    "重点国": [
+        "india", "indian", "インド",
+        "vietnam", "ベトナム", "viet"
+    ]
 }
 
 # =====================
@@ -92,45 +131,14 @@ def published_date(entry):
         return datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
     return "N/A"
 
-def is_within_last_week(entry):
-    if not hasattr(entry, "published_parsed"):
-        return False
-    published = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-    return published >= datetime.now(timezone.utc) - timedelta(days=7)
-
 # =====================
-# RSS安全取得（失敗しても止まらない）
+# RSS安全取得
 # =====================
 def safe_parse(url):
     try:
         return feedparser.parse(url).entries
-    except Exception as e:
-        print(f"[WARN] RSS取得失敗: {url} / {e}")
+    except Exception:
         return []
-
-# =====================
-# 週次振り返り
-# =====================
-def weekly_review(entries):
-    total = 0
-    important = 0
-    titles = []
-
-    for e in entries:
-        if not is_within_last_week(e):
-            continue
-
-        title = clean_html(e.get("title", ""))
-        summary = clean_html(e.get("summary", ""))
-        score = importance_score(title + summary)
-
-        total += 1
-        if score == 3:
-            important += 1
-            if len(titles) < 3:
-                titles.append(title)
-
-    return total, important, titles
 
 # =====================
 # HTML描画
@@ -151,9 +159,7 @@ def render_articles(articles, highlight=False):
             重要度：{stars} ｜ Published：{a['published']}
           </div>
           <div style="font-size:12px;">
-            <a href="{a['link']}" target="_blank" style="color:#1a73e8;">
-              ▶ 元記事を読む
-            </a>
+            <a href="{a['link']}" target="_blank">▶ 元記事を読む</a>
           </div>
         </div>
         """
@@ -164,13 +170,10 @@ def render_articles(articles, highlight=False):
 # =====================
 def generate_html():
     body = """
-    <html>
-    <body style="font-family:'Meiryo UI','Segoe UI',sans-serif;
-                 background:#f8fafc;padding:20px;">
-    <div style="max-width:900px;margin:auto;background:#ffffff;padding:24px;">
-      <h2 style="color:#0f2a44;">主要ニュース速報</h2>
-      <p style="color:#555;">ニュースサマリ</p>
-      <hr>
+    <html><body style="font-family:'Meiryo UI','Segoe UI',sans-serif;">
+    <div style="max-width:900px;margin:auto;">
+    <h2>主要ニュース速報</h2>
+    <p>ニュースサマリ</p><hr>
     """
 
     for media, (count, feeds) in MEDIA.items():
@@ -184,33 +187,30 @@ def generate_html():
             reverse=True
         )[:count]
 
-        top_articles, other_articles = [], []
-
+        articles = []
         for e in entries:
             title = clean_html(e.get("title", ""))
             summary = simple_summary(e)
             score = importance_score(title + summary)
 
-            article = {
+            articles.append({
                 "title": title,
                 "summary": summary,
                 "score": score,
                 "published": published_date(e),
                 "link": e.get("link", "")
-            }
+            })
 
-            if score == 3:
-                top_articles.append(article)
-            else:
-                other_articles.append(article)
+        # ★ 修正①：重要度 → 新しさ順
+        articles = sorted(
+            articles,
+            key=lambda x: (x["score"], x["published"]),
+            reverse=True
+        )
 
-        body += f"<h3>【{media}｜最新{len(entries)}件】</h3>"
-
-        if top_articles:
-            body += "<h4>★★★ 重要記事</h4>"
-            body += render_articles(top_articles, highlight=True)
-
-        body += render_articles(other_articles)
+        body += f"<h3>【{media}｜最新{len(articles)}件】</h3>"
+        body += render_articles([a for a in articles if a["score"] == 3], highlight=True)
+        body += render_articles([a for a in articles if a["score"] < 3])
         body += "<hr>"
 
     body += "</div></body></html>"
