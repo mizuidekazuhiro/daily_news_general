@@ -28,7 +28,8 @@ IS_MONDAY = now_jst.weekday() == 0  # 月曜
 MEDIA = {
     "日経新聞": (
         30,
-        ["https://news.google.com/rss/search?q=site:nikkei.com&hl=ja&gl=JP&ceid=JP:ja"]
+        ["https://news.google.com/rss/search?q=site:nikkei.com+-NIKKEI+COMPASS+-会社情報+-与信管理+-人事+-訃報+-文化+-スポーツ&hl=ja&gl=JP&ceid=JP:ja"]
+
     ),
     "Bloomberg": (
         30,
