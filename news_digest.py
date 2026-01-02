@@ -7,8 +7,14 @@ import requests
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 
+# =====================
+# タイムアウト設定
+# =====================
 socket.setdefaulttimeout(10)
 
+# =====================
+# メール設定（GitHub Secrets）
+# =====================
 MAIL_FROM = os.environ["MAIL_FROM"]
 MAIL_TO = os.environ["MAIL_TO"]
 MAIL_PASSWORD = os.environ["MAIL_PASSWORD"]
@@ -17,12 +23,27 @@ DEEPL_API_KEY = os.environ["DEEPL_API_KEY"]
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
+# =====================
+# JST
+# =====================
 JST = timezone(timedelta(hours=9))
 now_jst = datetime.now(JST)
 
+# =====================
+# 媒体設定（★日経のみ入口拡張）
+# =====================
 MEDIA = {
     "日経新聞": [
-        "https://news.google.com/rss/search?q=site:nikkei.com+-人事+-訃報+-文化+-スポーツ&hl=ja&gl=JP&ceid=JP:ja"
+        # 総合
+        "https://news.google.com/rss/search?q=site:nikkei.com+-人事+-訃報+-文化+-スポーツ&hl=ja&gl=JP&ceid=JP:ja",
+        # 市場・金融
+        "https://news.google.com/rss/search?q=site:nikkei.com+市場&hl=ja&gl=JP&ceid=JP:ja",
+        # 企業
+        "https://news.google.com/rss/search?q=site:nikkei.com+企業&hl=ja&gl=JP&ceid=JP:ja",
+        # 政策・政治
+        "https://news.google.com/rss/search?q=site:nikkei.com+政策&hl=ja&gl=JP&ceid=JP:ja",
+        # 産業
+        "https://news.google.com/rss/search?q=site:nikkei.com+産業&hl=ja&gl=JP&ceid=JP:ja"
     ],
     "Reuters": [
         "https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja"
@@ -38,6 +59,9 @@ MEDIA = {
     ]
 }
 
+# =====================
+# 重要度キーワード（変更なし）
+# =====================
 IMPORTANT_KEYWORDS = {
     "鉄鋼": ["steel","iron","scrap","rebar","製鉄","鉄鋼","高炉","電炉"],
     "建設": ["construction","infrastructure","建設","再開発"],
@@ -48,9 +72,25 @@ IMPORTANT_KEYWORDS = {
     "重点国": ["india","indian","インド","vietnam","ベトナム"]
 }
 
-COLOR_BG = {3:"#fff5f5",2:"#fffaf0",1:"#f0f9ff",0:"#ffffff"}
-COLOR_BORDER = {3:"#c53030",2:"#dd6b20",1:"#3182ce",0:"#d0d7de"}
+# =====================
+# 色分け（変更なし）
+# =====================
+COLOR_BG = {
+    3: "#fff5f5",
+    2: "#fffaf0",
+    1: "#f0f9ff",
+    0: "#ffffff"
+}
+COLOR_BORDER = {
+    3: "#c53030",
+    2: "#dd6b20",
+    1: "#3182ce",
+    0: "#d0d7de"
+}
 
+# =====================
+# ユーティリティ
+# =====================
 def clean(text):
     return re.sub("<[^<]+?>", "", text).strip()
 
@@ -79,29 +119,47 @@ def safe_parse(url):
 
 def is_nikkei_noise(title, summary):
     noise = [
+        "会社情報","与信管理","NIKKEI COMPASS",
         "セミナー","イベント","説明会","講演",
-        "参加者募集","オンライン開催","受講料",
-        "キャンペーン","SALE","PR"
+        "参加者募集","オンライン開催","受講料","主催",
+        "キャンペーン","SALE","セール","発売",
+        "初売り","無料","最大","OFF",
+        "新製品","サービス開始","提供開始",
+        "PR","提供","公式","【","［"
     ]
     return any(n in title or n in summary for n in noise)
 
+# =====================
+# 24時間以内判定（変更なし）
+# =====================
 def is_within_24h(entry):
     if not hasattr(entry, "published_parsed") or not entry.published_parsed:
         return False
     published_utc = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-    return published_utc.astimezone(JST) >= now_jst - timedelta(hours=24)
+    published_jst = published_utc.astimezone(JST)
+    return published_jst >= now_jst - timedelta(hours=24)
 
+# =====================
+# DeepL 要約（変更なし）
+# =====================
 def deepl_translate(text):
     try:
         r = requests.post(
             "https://api-free.deepl.com/v2/translate",
-            data={"auth_key": DEEPL_API_KEY, "text": text, "target_lang": "JA"},
+            data={
+                "auth_key": DEEPL_API_KEY,
+                "text": text,
+                "target_lang": "JA"
+            },
             timeout=10
         )
         return r.json()["translations"][0]["text"]
     except:
         return text
 
+# =====================
+# HTML生成（変更なし）
+# =====================
 def generate_html():
     media_articles = {}
     seen = set()
@@ -147,10 +205,15 @@ def generate_html():
             reverse=True
         )[:15]
 
-    body = "<html><body><h2>主要ニュース速報</h2>"
+    body = """
+    <html>
+    <body style="font-family:'Meiryo UI','Segoe UI',sans-serif;">
+    <h2>主要ニュース速報</h2>
+    """
 
     for media, articles in media_articles.items():
         body += f"<h3>【{media}｜{len(articles)}件】</h3>"
+
         for a in articles:
             stars = "★" * a["score"] if a["score"] else "－"
             body += f"""
@@ -170,6 +233,9 @@ def generate_html():
     body += "</body></html>"
     return body
 
+# =====================
+# メール送信（変更なし）
+# =====================
 def send_mail(html):
     msg = MIMEText(html, "html", "utf-8")
     msg["Subject"] = f"主要ニュースまとめ｜{now_jst.strftime('%Y-%m-%d')}"
@@ -181,5 +247,9 @@ def send_mail(html):
         server.login(MAIL_FROM, MAIL_PASSWORD)
         server.send_message(msg)
 
+# =====================
+# 実行
+# =====================
 if __name__ == "__main__":
-    send_mail(generate_html())
+    html = generate_html()
+    send_mail(html)
