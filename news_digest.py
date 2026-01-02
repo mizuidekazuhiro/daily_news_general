@@ -48,6 +48,10 @@ MEDIA = {
         30,
         ["https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja"]
     ),
+    "Fastmarkets": (  # ★追加
+        30,
+        ["https://news.google.com/rss/search?q=Fastmarkets+steel+metal+raw+materials&hl=en&gl=US&ceid=US:en"]
+    ),
     "東洋経済": (
         30,
         ["https://toyokeizai.net/list/feed/rss"]
@@ -201,7 +205,7 @@ def generate_html():
                 "link": e.get("link", "")
             })
 
-        # ★ 修正①：重要度 → 新しさ順
+        # 重要度 → 新しさ順
         articles = sorted(
             articles,
             key=lambda x: (x["score"], x["published"]),
@@ -217,7 +221,7 @@ def generate_html():
     return body
 
 # =====================
-# メール送信（必ず実行）
+# メール送信
 # =====================
 def send_mail(html):
     msg = MIMEText(html, "html", "utf-8")
