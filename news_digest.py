@@ -139,7 +139,7 @@ def is_nikkei_noise(title, summary):
     return any(n in title or n in summary for n in noise)
 
 def is_within_24h(dt):
-    return dt &gt;= now_jst - timedelta(hours=24)
+    return dt >= now_jst - timedelta(hours=24)
 
 # =====================
 # 記事本文から published 取得
@@ -167,7 +167,7 @@ def fetch_bigmint_from_sitemap():
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
             if loc is not None:
                 urls.append(loc.text)
-            if len(urls) &gt;= 50:
+            if len(urls) >= 50:
                 break
     except:
         pass
@@ -182,7 +182,7 @@ def fetch_kallanish_from_sitemap():
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
             if loc is not None:
                 urls.append(loc.text)
-            if len(urls) &gt;= 50:
+            if len(urls) >= 50:
                 break
     except:
         pass
@@ -197,7 +197,7 @@ def fetch_fastmarkets_from_sitemap():
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
             if loc is not None:
                 urls.append(loc.text)
-            if len(urls) &gt;= 50:
+            if len(urls) >= 50:
                 break
     except:
         pass
@@ -212,7 +212,7 @@ def fetch_argus_from_sitemap():
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
             if loc is not None:
                 urls.append(loc.text)
-            if len(urls) &gt;= 50:
+            if len(urls) >= 50:
                 break
     except:
         pass
@@ -303,9 +303,9 @@ def generate_html():
             for a in sorted(media_items, key=lambda x:x["published"], reverse=True):
                 if a["score"] == score and a not in selected:
                     selected.append(a)
-                    if len(selected) &gt;= 15:
+                    if len(selected) >= 15:
                         break
-            if len(selected) &gt;= 15:
+            if len(selected) >= 15:
                 break
 
         final_articles.extend(selected)
