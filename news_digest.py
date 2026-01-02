@@ -348,4 +348,4 @@ def send_mail(html):
         s.send_message(msg)
 
 if __name__ == "__main__":
-    send_mail(generate_html())
+    send_mail(generate_html()
