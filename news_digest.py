@@ -137,7 +137,7 @@ def is_within_24h(dt):
     return dt >= now_jst - timedelta(hours=24)
 
 # =====================
-# 記事本文から published 取得（追加）
+# 記事本文から published 取得
 # =====================
 def fetch_published_from_article(url):
     try:
@@ -151,7 +151,7 @@ def fetch_published_from_article(url):
         return None
 
 # =====================
-# === 英文媒体 sitemap 直接クロール ===
+# sitemap fetchers
 # =====================
 def fetch_bigmint_from_sitemap():
     urls = []
@@ -258,7 +258,36 @@ def generate_html():
                     "link": normalize_link(e.get("link",""))
                 })
 
-    all_articles = sorted(all_articles, key=lambda x:(x["score"],x["published"]), reverse=True)
+    # ===== ここから追加ロジック（他は変更なし） =====
+    final_articles = []
+
+    for media in set(a["media"] for a in all_articles):
+        media_items = []
+        for a in all_articles:
+            if a["media"] != media:
+                continue
+            try:
+                dt = datetime.strptime(a["published"], "%Y-%m-%d %H:%M").replace(tzinfo=JST)
+            except:
+                continue
+            if not is_within_24h(dt):
+                continue
+            media_items.append(a)
+
+        selected = []
+        for score in [3,2,1,0]:
+            for a in sorted(media_items, key=lambda x:x["published"], reverse=True):
+                if a["score"] == score and a not in selected:
+                    selected.append(a)
+                    if len(selected) >= 15:
+                        break
+            if len(selected) >= 15:
+                break
+
+        final_articles.extend(selected)
+
+    all_articles = sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True)
+    # ===== 追加ロジックここまで =====
 
     body_html = "<html><body><h2>主要ニュース速報（重要度順）</h2>"
     for a in all_articles:
