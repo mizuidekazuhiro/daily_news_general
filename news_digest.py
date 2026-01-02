@@ -132,7 +132,12 @@ def normalize_link(url):
 
 def resolve_final_url(url):
     try:
-        return requests.get(url, timeout=10, allow_redirects=True).url
+        return requests.get(
+            url,
+            timeout=10,
+            allow_redirects=True,
+            headers={"User-Agent": "Mozilla/5.0"}
+        ).url
     except:
         return url
 
