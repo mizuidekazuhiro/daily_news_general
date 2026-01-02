@@ -6,26 +6,20 @@ on:
   workflow_dispatch:
 
 jobs:
-  run:
+  send-news:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.11'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-    - name: Install dependencies
-      run: |
-        pip install -r requirements.txt
+      - run: pip install -r requirements.txt
 
-    - name: Run script
-      env:
-        MAIL_FROM: ${{ secrets.MAIL_FROM }}
-        MAIL_TO: ${{ secrets.MAIL_TO }}
-        MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
-      run: |
-        python news_digest.py
+      - run: python news_digest.py
+        env:
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
