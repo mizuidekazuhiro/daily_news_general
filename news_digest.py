@@ -66,13 +66,13 @@ MEDIA = {
 # 重要度キーワード
 # =====================
 IMPORTANT_KEYWORDS = {
-    "鉄鋼": ["steel","iron","scrap","rebar","製鉄","鉄鋼","高炉","電炉","ferrous"],
-    "建設": ["construction","infrastructure","建設","再開発"],
-    "AI": ["ai","artificial intelligence","semiconductor","半導体","生成ai"],
-    "政治": ["government","policy","election","政権","政策","規制"],
-    "企業": ["company","earnings","決算","m&amp;a","投資"],
-    "通商": ["trade","tariff","sanction","関税","制裁"],
-    "重点国": ["india","indian","インド","vietnam","ベトナム"]
+    "鉄鋼": ["steel", "iron", "scrap", "rebar", "製鉄", "鉄鋼", "高炉", "電炉", "ferrous"],
+    "建設": ["construction", "infrastructure", "建設", "再開発"],
+    "AI": ["ai", "artificial intelligence", "semiconductor", "半導体", "生成ai"],
+    "政治": ["government", "policy", "election", "政権", "政策", "規制"],
+    "企業": ["company", "earnings", "決算", "m&amp;a", "投資"],
+    "通商": ["trade", "tariff", "sanction", "関税", "制裁"],
+    "重点国": ["india", "indian", "インド", "vietnam", "ベトナム"]
 }
 
 # =====================
@@ -126,15 +126,15 @@ def normalize_link(url):
 
 def is_nikkei_noise(title, summary):
     noise = [
-        "会社情報","与信管理","NIKKEI COMPASS",
-        "会社概要","現状と将来性","業界の動向",
-        "経営・財務","リスク情報","企業分析","基本情報",
-        "セミナー","イベント","説明会","講演","参加者募集",
-        "オンライン開催","受講料","主催",
-        "キャンペーン","SALE","セール","発売","初売り",
-        "無料","最大","OFF",
-        "新製品","サービス開始","提供開始",
-        "PR","提供","公式","【","［"
+        "会社情報", "与信管理", "NIKKEI COMPASS",
+        "会社概要", "現状と将来性", "業界の動向",
+        "経営・財務", "リスク情報", "企業分析", "基本情報",
+        "セミナー", "イベント", "説明会", "講演", "参加者募集",
+        "オンライン開催", "受講料", "主催",
+        "キャンペーン", "SALE", "セール", "発売", "初売り",
+        "無料", "最大", "OFF",
+        "新製品", "サービス開始", "提供開始",
+        "PR", "提供", "公式", "【", "［"
     ]
     return any(n in title or n in summary for n in noise)
 
@@ -331,20 +331,18 @@ def generate_html():
             <div style="font-size:12px;color:#555;">
                 {a['media']}｜重要度:{stars}｜{a['published']}
             </div>
-            <a href="{a['link']}">▶ 元記事</a>
-        </div>
         """
+        body_html += f'<a href="{a["link"]}">▶ 元記事</a>\n</div>\n'
     body_html += "</body></html>"
     return body_html
 
 def send_mail(html):
     msg = MIMEText(html, "html", "utf-8")
-   "主要ニュースまとめ｜{now_jst.strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"主要ニュースまとめ｜{now_jst.strftime("%Y-%m-%d")}"
     msg["From"] = MAIL_FROM
     msg["To"] = MAIL_TO
     with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
-        s.starttls()
-        s.login(MAIL_FROM, MAIL_PASSWORD)
+        s.startin(MAIL_FROM, MAIL_PASSWORD)
         s.send_message(msg)
 
 if __name__ == "__main__":
