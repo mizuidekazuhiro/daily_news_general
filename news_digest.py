@@ -116,7 +116,25 @@ def scrape_article_text(url):
         return ""
 
 # =====================
-# ★復活：日経ノイズ除去
+# ★URL正規化（重複防止）
+# =====================
+def normalize_link(url):
+    if "news.google.com" in url and "url=" in url:
+        url = re.sub(r".*url=", "", url)
+    url = re.sub(r"&utm_.*", "", url)
+    return url.strip()
+
+# =====================
+# ★追加：Google News → 配信元URL解決（←唯一の追加）
+# =====================
+def resolve_final_url(url):
+    try:
+        return requests.get(url, timeout=10, allow_redirects=True).url
+    except:
+        return url
+
+# =====================
+# 日経ノイズ除去（※変更なし）
 # =====================
 def is_nikkei_noise(title, summary):
     noise = [
@@ -142,20 +160,6 @@ def is_within_24h(entry):
     return dt.astimezone(JST) >= now_jst - timedelta(hours=24)
 
 # =====================
-# DeepL
-# =====================
-def deepl_translate(text):
-    try:
-        r = requests.post(
-            "https://api-free.deepl.com/v2/translate",
-            data={"auth_key":DEEPL_API_KEY,"text":text,"target_lang":"JA"},
-            timeout=10
-        )
-        return r.json()["translations"][0]["text"]
-    except:
-        return text
-
-# =====================
 # HTML生成
 # =====================
 def generate_html():
@@ -177,24 +181,25 @@ def generate_html():
                 if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
                     continue
 
-                key = media + title
-                if key in seen:
+                link = normalize_link(e.get("link",""))
+                if link in seen:
                     continue
-                seen.add(key)
+                seen.add(link)
 
                 score = importance_score(title + summary_raw)
 
                 if media in raw_media:
-                    summary = scrape_article_text(e.get("link",""))
+                    final_url = resolve_final_url(link)
+                    summary = scrape_article_text(final_url)
                 else:
-                    summary = deepl_translate(summary_raw[:1000]) if is_english(title) else summary_raw[:300]
+                    summary = summary_raw[:300]
 
                 articles.append({
                     "title": title,
                     "summary": summary,
                     "score": score,
                     "published": published(e),
-                    "link": e.get("link","")
+                    "link": link
                 })
 
         media_articles[media] = sorted(
