@@ -155,8 +155,15 @@ def generate_html():
                 if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
                     continue
 
-                raw_url = e.source.href if hasattr(e, "source") and "href" in e.source else e.get("link","")
-                final_url = normalize_link(raw_url)
+                raw_url = e.get("link","")
+                final_url = normalize_link(
+                    requests.get(
+                        raw_url,
+                        timeout=10,
+                        allow_redirects=True,
+                        headers={"User-Agent":"Mozilla/5.0"}
+                    ).url
+                )
 
                 dedup_key = re.sub(r"（.*?）|- .*?$", "", title)
                 if dedup_key in seen:
