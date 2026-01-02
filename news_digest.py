@@ -66,13 +66,12 @@ MEDIA = {
 # 重要度キーワード
 # =====================
 IMPORTANT_KEYWORDS = {
-    "鉄鋼": ["steel","iron","scrap","rebar","製鉄","鉄鋼","高炉","電炉","ferrous"],
-    "建設": ["construction","infrastructure","建設","再開発"],
-    "AI": ["ai","artificial intelligence","semiconductor","半導体","生成ai"],
-    "政治": ["government","policy","election","政権","政策","規制"],
-    "企業": ["company","earnings","決算","m&a","投資"],
-    "通商": ["trade","tariff","sanction","関税","制裁"],
-    "重点国": ["india","indian","インド","vietnam","ベトナム"]
+    "鉄鋼": ["steel","iron","scrap","rebar","H形鋼","H Beam","製鉄","鉄鋼","高炉","電炉","ferrous"],
+    "建設": ["construction","infrastructure","建設","ゼネコン"],
+    "AI": ["ai","artificial intelligence","semiconductor","半導体","生成ai","Data Center","データセンター"],
+    "企業": ["m&a","買収","商社","三菱商事","住友商事","伊藤忠商事","丸紅","三井物産"],
+    "通商": ["trade","tariff","sanction","関税","AD"],
+    "重点国": ["india","indian","インド","vietnam","ベトナム","Bangladesh","バングラデシュ"]
 }
 
 # =====================
