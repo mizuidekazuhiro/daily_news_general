@@ -30,11 +30,11 @@ JST = timezone(timedelta(hours=9))
 now_jst = datetime.now(JST)
 
 # =====================
-# 媒体設定（★順序変更のみ）
+# 媒体設定
 # =====================
 MEDIA = {
     "Kallanish": [
-        "https://news.google.com/rss/search?q=Kallanish&hl=en&ceid=US:en"
+        "https://news.google.com/rss/search?q=site:kallanish.com&hl=en&ceid=US:en"
     ],
     "BigMint": [
         "https://news.google.com/rss/search?q=BigMint&hl=en&ceid=US:en"
@@ -43,7 +43,7 @@ MEDIA = {
         "https://news.google.com/rss/search?q=Fastmarkets&hl=en&ceid=US:en"
     ],
     "Argus": [
-        "https://news.google.com/rss/search?q=Argus+Media&hl=en&ceid=US:en"
+        "https://news.google.com/rss/search?q=site:argusmedia.com&hl=en&ceid=US:en"
     ],
     "日経新聞": [
         "https://news.google.com/rss/search?q=site:nikkei.com+-人事+-訃報+-文化+-スポーツ&hl=ja&gl=JP&ceid=JP:ja",
@@ -61,7 +61,7 @@ MEDIA = {
 }
 
 # =====================
-# 重要度キーワード（変更なし）
+# 重要度キーワード
 # =====================
 IMPORTANT_KEYWORDS = {
     "鉄鋼": ["steel","iron","scrap","rebar","製鉄","鉄鋼","高炉","電炉"],
@@ -74,7 +74,7 @@ IMPORTANT_KEYWORDS = {
 }
 
 # =====================
-# 色分け（変更なし）
+# 色分け
 # =====================
 COLOR_BG = {3:"#fff5f5",2:"#fffaf0",1:"#f0f9ff",0:"#ffffff"}
 COLOR_BORDER = {3:"#c53030",2:"#dd6b20",1:"#3182ce",0:"#d0d7de"}
@@ -116,7 +116,47 @@ def scrape_article_text(url):
         return ""
 
 # =====================
-# HTML生成（★原文貼付追加）
+# ★復活：日経ノイズ除去
+# =====================
+def is_nikkei_noise(title, summary):
+    noise = [
+        "会社情報","与信管理","NIKKEI COMPASS",
+        "会社概要","現状と将来性","業界の動向",
+        "経営・財務","リスク情報","企業分析","基本情報",
+        "セミナー","イベント","説明会","講演",
+        "参加者募集","オンライン開催","受講料","主催",
+        "キャンペーン","SALE","セール","発売",
+        "初売り","無料","最大","OFF",
+        "新製品","サービス開始","提供開始",
+        "PR","提供","公式","【","［"
+    ]
+    return any(n in title or n in summary for n in noise)
+
+# =====================
+# 24時間判定
+# =====================
+def is_within_24h(entry):
+    if not hasattr(entry, "published_parsed") or not entry.published_parsed:
+        return False
+    dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+    return dt.astimezone(JST) >= now_jst - timedelta(hours=24)
+
+# =====================
+# DeepL
+# =====================
+def deepl_translate(text):
+    try:
+        r = requests.post(
+            "https://api-free.deepl.com/v2/translate",
+            data={"auth_key":DEEPL_API_KEY,"text":text,"target_lang":"JA"},
+            timeout=10
+        )
+        return r.json()["translations"][0]["text"]
+    except:
+        return text
+
+# =====================
+# HTML生成
 # =====================
 def generate_html():
     media_articles = {}
@@ -133,6 +173,10 @@ def generate_html():
 
                 title = clean(e.get("title", ""))
                 summary_raw = clean(e.get("summary", ""))
+
+                if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
+                    continue
+
                 key = media + title
                 if key in seen:
                     continue
@@ -153,7 +197,9 @@ def generate_html():
                     "link": e.get("link","")
                 })
 
-        media_articles[media] = sorted(articles, key=lambda x:(x["score"],x["published"]), reverse=True)[:15]
+        media_articles[media] = sorted(
+            articles, key=lambda x:(x["score"],x["published"]), reverse=True
+        )[:15]
 
     body = "<html><body><h2>主要ニュース速報</h2>"
     for media, articles in media_articles.items():
@@ -176,30 +222,7 @@ def generate_html():
     return body
 
 # =====================
-# 24時間判定（変更なし）
-# =====================
-def is_within_24h(entry):
-    if not hasattr(entry, "published_parsed") or not entry.published_parsed:
-        return False
-    dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-    return dt.astimezone(JST) >= now_jst - timedelta(hours=24)
-
-# =====================
-# DeepL（変更なし）
-# =====================
-def deepl_translate(text):
-    try:
-        r = requests.post(
-            "https://api-free.deepl.com/v2/translate",
-            data={"auth_key":DEEPL_API_KEY,"text":text,"target_lang":"JA"},
-            timeout=10
-        )
-        return r.json()["translations"][0]["text"]
-    except:
-        return text
-
-# =====================
-# メール送信（変更なし）
+# メール送信
 # =====================
 def send_mail(html):
     msg = MIMEText(html, "html", "utf-8")
