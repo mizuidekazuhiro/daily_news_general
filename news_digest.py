@@ -66,20 +66,20 @@ MEDIA = {
 # 重要度キーワード
 # =====================
 IMPORTANT_KEYWORDS = {
-    "鉄鋼": ["steel","iron","scrap","rebar","製鉄","鉄鋼","高炉","電炉","ferrous"],
-    "建設": ["construction","infrastructure","建設","再開発"],
-    "AI": ["ai","artificial intelligence","semiconductor","半導体","生成ai"],
-    "政治": ["government","policy","election","政権","政策","規制"],
-    "企業": ["company","earnings","決算","m&amp;a","投資"],
-    "通商": ["trade","tariff","sanction","関税","制裁"],
-    "重点国": ["india","indian","インド","vietnam","ベトナム"]
+    "鉄鋼": ["steel", "iron", "scrap", "rebar", "製鉄", "鉄鋼", "高炉", "電炉", "ferrous"],
+    "建設": ["construction", "infrastructure", "建設", "再開発"],
+    "AI": ["ai", "artificial intelligence", "semiconductor", "半導体", "生成ai"],
+    "政治": ["government", "policy", "election", "政権", "政策", "規制"],
+    "企業": ["company", "earnings", "決算", "m&amp;a", "投資"],
+    "通商": ["trade", "tariff", "sanction", "関税", "制裁"],
+    "重点国": ["india", "indian", "インド", "vietnam", "ベトナム"]
 }
 
 # =====================
 # 色分け
 # =====================
-COLOR_BG = {3:"#fff5f5",2:"#fffaf0",1:"#f0f9ff",0:"#ffffff"}
-COLOR_BORDER = {3:"#c53030",2:"#dd6b20",1:"#3182ce",0:"#d0d7de"}
+COLOR_BG = {3: "#fff5f5", 2: "#fffaf0", 1: "#f0f9ff", 0: "#ffffff"}
+COLOR_BORDER = {3: "#c53030", 2: "#dd6b20", 1: "#3182ce", 0: "#d0d7de"}
 
 # =====================
 # ユーティリティ
@@ -126,15 +126,15 @@ def normalize_link(url):
 
 def is_nikkei_noise(title, summary):
     noise = [
-        "会社情報","与信管理","NIKKEI COMPASS",
-        "会社概要","現状と将来性","業界の動向",
-        "経営・財務","リスク情報","企業分析","基本情報",
-        "セミナー","イベント","説明会","講演","参加者募集",
-        "オンライン開催","受講料","主催",
-        "キャンペーン","SALE","セール","発売","初売り",
-        "無料","最大","OFF",
-        "新製品","サービス開始","提供開始",
-        "PR","提供","公式","【","［"
+        "会社情報", "与信管理", "NIKKEI COMPASS",
+        "会社概要", "現状と将来性", "業界の動向",
+        "経営・財務", "リスク情報", "企業分析", "基本情報",
+        "セミナー", "イベント", "説明会", "講演", "参加者募集",
+        "オンライン開催", "受講料", "主催",
+        "キャンペーン", "SALE", "セール", "発売", "初売り",
+        "無料", "最大", "OFF",
+        "新製品", "サービス開始", "提供開始",
+        "PR", "提供", "公式", "【", "［"
     ]
     return any(n in title or n in summary for n in noise)
 
@@ -146,11 +146,11 @@ def is_within_24h(dt):
 # =====================
 def fetch_published_from_article(url):
     try:
-        r = requests.get(url, timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        r = requests.get(url, timeout=10, headers={"User-Agent": "Mozilla/5.0"})
         m = re.search(r'&lt;time[^&gt;]*datetime="([^"]+)"', r.text)
         if not m:
             return None
-        dt = datetime.fromisoformat(m.group(1).replace("Z","")).astimezone(JST)
+        dt = datetime.fromisoformat(m.group(1).replace("Z", "")).astimezone(JST)
         return dt if is_within_24h(dt) else None
     except:
         return None
@@ -161,7 +161,7 @@ def fetch_published_from_article(url):
 def fetch_bigmint_from_sitemap():
     urls = []
     try:
-        r = requests.get("https://www.bigmint.co/sitemap.xml", timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        r = requests.get("https://www.bigmint.co/sitemap.xml", timeout=10, headers={"User-Agent": "Mozilla/5.0"})
         root = ET.fromstring(r.text)
         for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
@@ -176,7 +176,7 @@ def fetch_bigmint_from_sitemap():
 def fetch_kallanish_from_sitemap():
     urls = []
     try:
-        r = requests.get("https://www.kallanish.com/sitemap.xml", timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        r = requests.get("https://www.kallanish.com/sitemap.xml", timeout=10, headers={"User-Agent": "Mozilla/5.0"})
         root = ET.fromstring(r.text)
         for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
@@ -191,7 +191,7 @@ def fetch_kallanish_from_sitemap():
 def fetch_fastmarkets_from_sitemap():
     urls = []
     try:
-        r = requests.get("https://www.fastmarkets.com/sitemap.xml", timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        r = requests.get("https://www.fastmarkets.com/sitemap.xml", timeout=10, headers={"User-Agent": "Mozilla/5.0"})
         root = ET.fromstring(r.text)
         for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
@@ -206,7 +206,7 @@ def fetch_fastmarkets_from_sitemap():
 def fetch_argus_from_sitemap():
     urls = []
     try:
-        r = requests.get("https://www.argusmedia.com/sitemap.xml", timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        r = requests.get("https://www.argusmedia.com/sitemap.xml", timeout=10, headers={"User-Agent": "Mozilla/5.0"})
         root = ET.fromstring(r.text)
         for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
@@ -221,8 +221,8 @@ def fetch_argus_from_sitemap():
 def generate_html():
     all_articles = []
     seen = set()
-    seen_links = set()   # ← 追加（重複対策）
-    raw_media = {"Kallanish","BigMint","Fastmarkets","Argus"}
+    seen_links = set()   # 重複対策
+    raw_media = {"Kallanish", "BigMint", "Fastmarkets", "Argus"}
 
     # sitemap
     for media, fetcher in [
@@ -237,7 +237,7 @@ def generate_html():
             dt = fetch_published_from_article(link)
             if not dt:
                 continue
-            title = link.split("/")[-1].replace("-"," ").title()
+            title = link.split("/")[-1].replace("-", " ").title()
             dedup_key = re.sub(r"（.*?）|- .*?$", "", title)
             dedup_key = re.sub(r"\s+", " ", dedup_key).strip().lower()
             if "重複記事を削除します" in title:
@@ -265,7 +265,7 @@ def generate_html():
                 summary_raw = clean(e.get("summary", ""))
                 if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
                     continue
-                link = normalize_link(e.get("link",""))
+                link = normalize_link(e.get("link", ""))
                 if link in seen_links:
                     continue
                 dedup_key = re.sub(r"（.*?）|- .*?$", "", title)
@@ -315,12 +315,12 @@ def generate_html():
         if a["media"] in raw_media:
             a["summary"] = deepl_translate(a["title"])
 
-    all_articles = sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True)
+    all_articles = sorted(final_articles, key=lambda x: (x["score"], x["published"]), reverse=True)
 
     # ===== HTML本文（プレーンタグ）=====
     body_html = "<html><body><h2>主要ニュース速報（重要度順）</h2>"
     for a in all_articles:
-        stars = "★"*a["score"] if a["score"] else "－"
+        stars = "★" * a["score"] if a["score"] else "－"
         body_html += f"""
         <div style="background:{COLOR_BG[a['score']]}; border-left:5px solid {COLOR_BORDER[a['score']]}; padding:12px;margin-bottom:14px;">
             <b>{a['title']}</b><br>
@@ -333,14 +333,13 @@ def generate_html():
             </div>
         """
         # ▶ 元記事（アンカー行の最小修正）
-        body_html += f'<a href="{a["link"]}">▶ 元記事</a>\n</div>\n'
+        body_html += f'{a[▶ 元記事</a>\n</div>\n'
     body_html += "</body></html>"
     return body_html
 
 def send_mail(html):
     msg = MIMEText(html, "html", "utf-8")
-    # f-string 内の strftime はシングルクォートで囲む（最小修正）
-    msg["Subject"] = f"主要ニュースまとめ｜{now_jst.strftime('%Y-%m-%d')}"
+    msg["Subject"] = f"主要ニュースまとめ｜{now_jst.strftime("%Y-%m-%d")}"
     msg["From"] = MAIL_FROM
     msg["To"] = MAIL_TO
     with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
@@ -349,4 +348,4 @@ def send_mail(html):
         s.send_message(msg)
 
 if __name__ == "__main__":
-   _html())
+    send_mail(generate_html())
