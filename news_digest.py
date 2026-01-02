@@ -74,7 +74,7 @@ IMPORTANT_KEYWORDS = {
 }
 
 # =====================
-# 色分け（★修正点②）
+# 色分け
 # =====================
 COLOR_BG = {3:"#fff5f5",2:"#fffaf0",1:"#f0f9ff",0:"#ffffff"}
 COLOR_BORDER = {3:"#c53030",2:"#dd6b20",1:"#3182ce",0:"#d0d7de"}
@@ -156,17 +156,19 @@ def generate_html():
 
     for media, feeds in MEDIA.items():
         collected = []
+        buffer_zero = []
         seen = set()
         offset = 0
         exhausted = False
-        buffer_zero = []
 
         while len(collected) < 15 and not exhausted:
+            found_recent_in_batch = False
+
             for url in feeds:
                 entries = safe_parse(url)
                 slice_entries = entries[offset:offset+15]
+
                 if not slice_entries:
-                    exhausted = True
                     continue
 
                 for e in slice_entries:
@@ -175,13 +177,16 @@ def generate_html():
                     link = normalize_link(e.get("link",""))
 
                     try:
-                        dt = datetime.strptime(published(e), "%Y-%m-%d %H:%M").replace(tzinfo=JST)
+                        dt = datetime.strptime(
+                            published(e), "%Y-%m-%d %H:%M"
+                        ).replace(tzinfo=JST)
                     except:
                         continue
 
                     if not is_within_24h(dt):
-                        exhausted = True
                         continue
+
+                    found_recent_in_batch = True
 
                     if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
                         continue
@@ -203,9 +208,10 @@ def generate_html():
                     if item["score"] >= 1:
                         collected.append(item)
                     else:
-                        # ★修正点①：★0でも日経ノイズは入れない
-                        if not (media == "日経新聞" and is_nikkei_noise(title, summary_raw)):
-                            buffer_zero.append(item)
+                        buffer_zero.append(item)
+
+            if not found_recent_in_batch:
+                exhausted = True
 
             offset += 15
 
