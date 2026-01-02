@@ -115,27 +115,33 @@ def scrape_article_text(url):
     except:
         return ""
 
-# =====================
-# ★URL正規化（重複防止）
-# =====================
+def deepl_translate(text):
+    try:
+        r = requests.post(
+            "https://api-free.deepl.com/v2/translate",
+            data={
+                "auth_key": DEEPL_API_KEY,
+                "text": text,
+                "target_lang": "JA"
+            },
+            timeout=10
+        )
+        return r.json()["translations"][0]["text"]
+    except:
+        return text
+
 def normalize_link(url):
     if "news.google.com" in url and "url=" in url:
         url = re.sub(r".*url=", "", url)
     url = re.sub(r"&utm_.*", "", url)
     return url.strip()
 
-# =====================
-# ★追加：Google News → 配信元URL解決（←唯一の追加）
-# =====================
 def resolve_final_url(url):
     try:
         return requests.get(url, timeout=10, allow_redirects=True).url
     except:
         return url
 
-# =====================
-# 日経ノイズ除去（※変更なし）
-# =====================
 def is_nikkei_noise(title, summary):
     noise = [
         "会社情報","与信管理","NIKKEI COMPASS",
@@ -150,18 +156,12 @@ def is_nikkei_noise(title, summary):
     ]
     return any(n in title or n in summary for n in noise)
 
-# =====================
-# 24時間判定
-# =====================
 def is_within_24h(entry):
     if not hasattr(entry, "published_parsed") or not entry.published_parsed:
         return False
     dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
     return dt.astimezone(JST) >= now_jst - timedelta(hours=24)
 
-# =====================
-# HTML生成
-# =====================
 def generate_html():
     media_articles = {}
     seen = set()
@@ -181,22 +181,28 @@ def generate_html():
                 if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
                     continue
 
-                link = normalize_link(e.get("link",""))
-                if link in seen:
+                raw_link = e.get("link","")
+                final_url = resolve_final_url(raw_link)
+                link = normalize_link(final_url)
+
+                dedup_key = re.sub(r"（.*?）|- .*?$", "", title)
+                if dedup_key in seen:
                     continue
-                seen.add(link)
+                seen.add(dedup_key)
 
                 score = importance_score(title + summary_raw)
 
                 if media in raw_media:
-                    final_url = resolve_final_url(link)
-                    summary = scrape_article_text(final_url)
+                    body_text = scrape_article_text(link)
+                    summary = deepl_translate(body_text[:1000])
                 else:
+                    body_text = ""
                     summary = summary_raw[:300]
 
                 articles.append({
                     "title": title,
                     "summary": summary,
+                    "body": body_text,
                     "score": score,
                     "published": published(e),
                     "link": link
@@ -216,7 +222,10 @@ def generate_html():
             border-left:5px solid {COLOR_BORDER[a['score']]};
             padding:12px;margin-bottom:14px;">
             <b>{a['title']}</b><br>
-            <div style="white-space:pre-wrap;">{a['summary']}</div>
+            <div><b>要約：</b><br>{a['summary']}</div>"""
+            if media in raw_media:
+                body += f"""<div><b>本文：</b><br><div style="white-space:pre-wrap;">{a['body']}</div></div>"""
+            body += f"""
             <div style="font-size:12px;color:#555;">
             {media}｜重要度:{stars}｜{a['published']}
             </div>
@@ -226,9 +235,6 @@ def generate_html():
     body += "</body></html>"
     return body
 
-# =====================
-# メール送信
-# =====================
 def send_mail(html):
     msg = MIMEText(html, "html", "utf-8")
     msg["Subject"] = f"主要ニュースまとめ｜{now_jst.strftime('%Y-%m-%d')}"
@@ -239,8 +245,5 @@ def send_mail(html):
         s.login(MAIL_FROM, MAIL_PASSWORD)
         s.send_message(msg)
 
-# =====================
-# 実行
-# =====================
 if __name__ == "__main__":
     send_mail(generate_html())
