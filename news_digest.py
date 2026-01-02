@@ -320,23 +320,18 @@ def generate_html():
 
     all_articles = sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True)
 
-    # ===== HTML本文（プレーンタグ）=====
+    # ===== HTML本文（プレーンタグ）=====    
     body_html = "<html><body><h2>主要ニュース速報（重要度順）</h2>"
     for a in all_articles:
         stars = "★"*a["score"] if a["score"] else "－"
-        body_html += f"""
-        <div style="background:{COLOR_BG[a['score']]}; border-left:5px solid {COLOR_BORDER[a['score']]}; padding:12px;margin-bottom:14px;">
-            <b>{a['title']}</b><br>
-        """
-        if a["summary"]:
-            body_html += f"<div>{a['summary']}</div>"
-        body_html += f"""
-            <div style="font-size:12px;color:#555;">
-                {a['media']}｜重要度:{stars}｜{a['published']}
-            </div>
-            {a[▶ 元記事</a>
+
+    body_html += f"""
+        <div style="font-size:12px;color:#555;">
+            {a['media']}｜重要度:{stars}｜{a['published']}
         </div>
-        """
+        <a href="{a['link']}">▶ 元記事</a>
+    </div>
+    """
     body_html += "</body></html>"
     return body_html
 
