@@ -7,14 +7,8 @@ import requests
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 
-# =====================
-# タイムアウト設定
-# =====================
 socket.setdefaulttimeout(10)
 
-# =====================
-# メール設定（GitHub Secrets）
-# =====================
 MAIL_FROM = os.environ["MAIL_FROM"]
 MAIL_TO = os.environ["MAIL_TO"]
 MAIL_PASSWORD = os.environ["MAIL_PASSWORD"]
@@ -23,15 +17,9 @@ DEEPL_API_KEY = os.environ["DEEPL_API_KEY"]
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
-# =====================
-# JST
-# =====================
 JST = timezone(timedelta(hours=9))
 now_jst = datetime.now(JST)
 
-# =====================
-# 媒体設定（変更なし）
-# =====================
 MEDIA = {
     "日経新聞": [
         "https://news.google.com/rss/search?q=site:nikkei.com+経済+-人事+-訃報+-文化+-スポーツ&hl=ja&gl=JP&ceid=JP:ja"
@@ -50,9 +38,6 @@ MEDIA = {
     ]
 }
 
-# =====================
-# 重要度キーワード（変更なし）
-# =====================
 IMPORTANT_KEYWORDS = {
     "鉄鋼": ["steel","iron","scrap","rebar","製鉄","鉄鋼","高炉","電炉"],
     "建設": ["construction","infrastructure","建設","再開発"],
@@ -63,25 +48,9 @@ IMPORTANT_KEYWORDS = {
     "重点国": ["india","indian","インド","vietnam","ベトナム"]
 }
 
-# =====================
-# 色分け（変更なし）
-# =====================
-COLOR_BG = {
-    3: "#fff5f5",
-    2: "#fffaf0",
-    1: "#f0f9ff",
-    0: "#ffffff"
-}
-COLOR_BORDER = {
-    3: "#c53030",
-    2: "#dd6b20",
-    1: "#3182ce",
-    0: "#d0d7de"
-}
+COLOR_BG = {3:"#fff5f5",2:"#fffaf0",1:"#f0f9ff",0:"#ffffff"}
+COLOR_BORDER = {3:"#c53030",2:"#dd6b20",1:"#3182ce",0:"#d0d7de"}
 
-# =====================
-# ユーティリティ
-# =====================
 def clean(text):
     return re.sub("<[^<]+?>", "", text).strip()
 
@@ -120,43 +89,29 @@ def is_nikkei_noise(title, summary):
     ]
     return any(n in title or n in summary for n in noise)
 
-# =====================
-# 24時間以内判定（変更なし）
-# =====================
 def is_within_24h(entry):
     if not hasattr(entry, "published_parsed") or not entry.published_parsed:
         return False
     published_utc = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-    published_jst = published_utc.astimezone(JST)
-    return published_jst >= now_jst - timedelta(hours=24)
+    return published_utc.astimezone(JST) >= now_jst - timedelta(hours=24)
 
-# =====================
-# DeepL 要約（変更なし）
-# =====================
 def deepl_translate(text):
     try:
         r = requests.post(
             "https://api-free.deepl.com/v2/translate",
-            data={
-                "auth_key": DEEPL_API_KEY,
-                "text": text,
-                "target_lang": "JA"
-            },
+            data={"auth_key": DEEPL_API_KEY, "text": text, "target_lang": "JA"},
             timeout=10
         )
         return r.json()["translations"][0]["text"]
     except:
         return text
 
-# =====================
-# HTML生成（天気削除のみ）
-# =====================
 def generate_html():
     media_articles = {}
     seen = set()
 
     for media, feeds in MEDIA.items():
-        articles = []
+        all_articles = []
 
         for url in feeds:
             for e in safe_parse(url):
@@ -182,7 +137,7 @@ def generate_html():
                     else summary_raw[:300]
                 )
 
-                articles.append({
+                all_articles.append({
                     "title": title,
                     "summary": summary,
                     "score": score,
@@ -190,21 +145,24 @@ def generate_html():
                     "link": e.get("link", "")
                 })
 
-        media_articles[media] = sorted(
-            articles,
+        high = sorted(
+            [a for a in all_articles if a["score"] >= 1],
             key=lambda x: (x["score"], x["published"]),
             reverse=True
-        )[:15]
+        )
 
-    body = """
-    <html>
-    <body style="font-family:'Meiryo UI','Segoe UI',sans-serif;">
-    <h2>主要ニュース速報</h2>
-    """
+        low = sorted(
+            [a for a in all_articles if a["score"] == 0],
+            key=lambda x: x["published"],
+            reverse=True
+        )
+
+        media_articles[media] = (high + low)[:15]
+
+    body = "<html><body><h2>主要ニュース速報</h2>"
 
     for media, articles in media_articles.items():
         body += f"<h3>【{media}｜{len(articles)}件】</h3>"
-
         for a in articles:
             stars = "★" * a["score"] if a["score"] else "－"
             body += f"""
@@ -224,9 +182,6 @@ def generate_html():
     body += "</body></html>"
     return body
 
-# =====================
-# メール送信（変更なし）
-# =====================
 def send_mail(html):
     msg = MIMEText(html, "html", "utf-8")
     msg["Subject"] = f"主要ニュースまとめ｜{now_jst.strftime('%Y-%m-%d')}"
@@ -238,9 +193,5 @@ def send_mail(html):
         server.login(MAIL_FROM, MAIL_PASSWORD)
         server.send_message(msg)
 
-# =====================
-# 実行
-# =====================
 if __name__ == "__main__":
-    html = generate_html()
-    send_mail(html)
+    send_mail(generate_html())
