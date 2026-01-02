@@ -1,0 +1,31 @@
+name: Daily News Digest
+
+on:
+  schedule:
+    - cron: '0 22 * * *'   # JST 7:00
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+
+    - name: Run script
+      env:
+        MAIL_FROM: ${{ secrets.MAIL_FROM }}
+        MAIL_TO: ${{ secrets.MAIL_TO }}
+        MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+      run: |
+        python news_digest.py
