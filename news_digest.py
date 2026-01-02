@@ -79,13 +79,9 @@ def safe_parse(url):
 
 def is_nikkei_noise(title, summary):
     noise = [
-        "会社情報","与信管理","NIKKEI COMPASS",
         "セミナー","イベント","説明会","講演",
-        "参加者募集","オンライン開催","受講料","主催",
-        "キャンペーン","SALE","セール","発売",
-        "初売り","無料","最大","OFF",
-        "新製品","サービス開始","提供開始",
-        "PR","提供","公式"
+        "参加者募集","オンライン開催","受講料",
+        "キャンペーン","SALE","PR"
     ]
     return any(n in title or n in summary for n in noise)
 
@@ -111,7 +107,7 @@ def generate_html():
     seen = set()
 
     for media, feeds in MEDIA.items():
-        all_articles = []
+        articles = []
 
         for url in feeds:
             for e in safe_parse(url):
@@ -137,7 +133,7 @@ def generate_html():
                     else summary_raw[:300]
                 )
 
-                all_articles.append({
+                articles.append({
                     "title": title,
                     "summary": summary,
                     "score": score,
@@ -145,18 +141,11 @@ def generate_html():
                     "link": e.get("link", "")
                 })
 
-        high = sorted(
-            [a for a in all_articles if a["score"] >= 1],
+        media_articles[media] = sorted(
+            articles,
             key=lambda x: (x["score"], x["published"]),
             reverse=True
-        )
-        low = sorted(
-            [a for a in all_articles if a["score"] == 0],
-            key=lambda x: x["published"],
-            reverse=True
-        )
-
-        media_articles[media] = (high + low)[:15]
+        )[:15]
 
     body = "<html><body><h2>主要ニュース速報</h2>"
 
