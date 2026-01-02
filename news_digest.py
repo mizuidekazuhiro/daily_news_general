@@ -22,7 +22,7 @@ now_jst = datetime.now(JST)
 
 MEDIA = {
     "日経新聞": [
-        "https://news.google.com/rss/search?q=site:nikkei.com+経済+-人事+-訃報+-文化+-スポーツ&hl=ja&gl=JP&ceid=JP:ja"
+        "https://news.google.com/rss/search?q=site:nikkei.com+-人事+-訃報+-文化+-スポーツ&hl=ja&gl=JP&ceid=JP:ja"
     ],
     "Reuters": [
         "https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja"
@@ -85,7 +85,7 @@ def is_nikkei_noise(title, summary):
         "キャンペーン","SALE","セール","発売",
         "初売り","無料","最大","OFF",
         "新製品","サービス開始","提供開始",
-        "PR","提供","公式","【","［"
+        "PR","提供","公式"
     ]
     return any(n in title or n in summary for n in noise)
 
@@ -150,7 +150,6 @@ def generate_html():
             key=lambda x: (x["score"], x["published"]),
             reverse=True
         )
-
         low = sorted(
             [a for a in all_articles if a["score"] == 0],
             key=lambda x: x["published"],
