@@ -7,6 +7,7 @@ import requests
 import urllib.parse
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
+import xml.etree.ElementTree as ET
 
 # =====================
 # タイムアウト設定
@@ -132,58 +133,156 @@ def is_nikkei_noise(title, summary):
     ]
     return any(n in title or n in summary for n in noise)
 
-def is_within_24h(entry):
-    if not hasattr(entry, "published_parsed") or not entry.published_parsed:
+def is_within_24h_from_str(date_str):
+    try:
+        dt = datetime.fromisoformat(date_str.replace("Z","")).replace(tzinfo=timezone.utc)
+        return dt.astimezone(JST) >= now_jst - timedelta(hours=24)
+    except:
         return False
-    dt = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-    return dt.astimezone(JST) >= now_jst - timedelta(hours=24)
+
+# =====================
+# === 英文媒体 sitemap 直接クロール ===
+# =====================
+def fetch_bigmint_from_sitemap():
+    urls = []
+    try:
+        r = requests.get("https://www.bigmint.co/sitemap.xml", timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        root = ET.fromstring(r.text)
+        for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
+            loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
+            lastmod = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod")
+            if loc is not None and lastmod is not None and is_within_24h_from_str(lastmod.text):
+                urls.append(loc.text)
+    except:
+        pass
+    return urls
+
+def fetch_kallanish_from_sitemap():
+    urls = []
+    try:
+        r = requests.get("https://www.kallanish.com/sitemap.xml", timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        root = ET.fromstring(r.text)
+        for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
+            loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
+            lastmod = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod")
+            if loc is not None and lastmod is not None and is_within_24h_from_str(lastmod.text):
+                urls.append(loc.text)
+    except:
+        pass
+    return urls
+
+def fetch_fastmarkets_from_sitemap():
+    urls = []
+    try:
+        r = requests.get("https://www.fastmarkets.com/sitemap.xml", timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        root = ET.fromstring(r.text)
+        for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
+            loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
+            lastmod = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod")
+            if loc is not None and lastmod is not None and is_within_24h_from_str(lastmod.text):
+                urls.append(loc.text)
+    except:
+        pass
+    return urls
+
+def fetch_argus_from_sitemap():
+    urls = []
+    try:
+        r = requests.get("https://www.argusmedia.com/sitemap.xml", timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        root = ET.fromstring(r.text)
+        for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
+            loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
+            lastmod = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod")
+            if loc is not None and lastmod is not None and is_within_24h_from_str(lastmod.text):
+                urls.append(loc.text)
+    except:
+        pass
+    return urls
 
 def generate_html():
     all_articles = []
     seen = set()
     raw_media = {"Kallanish","BigMint","Fastmarkets","Argus"}
 
+    for link in fetch_bigmint_from_sitemap():
+        title = link.split("/")[-1].replace("-"," ").title()
+        if title in seen:
+            continue
+        seen.add(title)
+        all_articles.append({
+            "media": "BigMint",
+            "title": title,
+            "summary": deepl_translate(title),
+            "score": importance_score(title),
+            "published": now_jst.strftime("%Y-%m-%d %H:%M"),
+            "link": link
+        })
+
+    for link in fetch_kallanish_from_sitemap():
+        title = link.split("/")[-1].replace("-"," ").title()
+        if title in seen:
+            continue
+        seen.add(title)
+        all_articles.append({
+            "media": "Kallanish",
+            "title": title,
+            "summary": deepl_translate(title),
+            "score": importance_score(title),
+            "published": now_jst.strftime("%Y-%m-%d %H:%M"),
+            "link": link
+        })
+
+    for link in fetch_fastmarkets_from_sitemap():
+        title = link.split("/")[-1].replace("-"," ").title()
+        if title in seen:
+            continue
+        seen.add(title)
+        all_articles.append({
+            "media": "Fastmarkets",
+            "title": title,
+            "summary": deepl_translate(title),
+            "score": importance_score(title),
+            "published": now_jst.strftime("%Y-%m-%d %H:%M"),
+            "link": link
+        })
+
+    for link in fetch_argus_from_sitemap():
+        title = link.split("/")[-1].replace("-"," ").title()
+        if title in seen:
+            continue
+        seen.add(title)
+        all_articles.append({
+            "media": "Argus",
+            "title": title,
+            "summary": deepl_translate(title),
+            "score": importance_score(title),
+            "published": now_jst.strftime("%Y-%m-%d %H:%M"),
+            "link": link
+        })
+
     for media, feeds in MEDIA.items():
         for url in feeds:
             for e in safe_parse(url):
-                if not is_within_24h(e):
-                    continue
-
                 title = clean(e.get("title", ""))
                 summary_raw = clean(e.get("summary", ""))
 
                 if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
                     continue
 
-                raw_url = e.get("link","")
-                final_url = normalize_link(
-                    requests.get(
-                        raw_url,
-                        timeout=10,
-                        allow_redirects=True,
-                        headers={"User-Agent":"Mozilla/5.0"}
-                    ).url
-                )
-
                 dedup_key = re.sub(r"（.*?）|- .*?$", "", title)
                 if dedup_key in seen:
                     continue
                 seen.add(dedup_key)
 
-                score = importance_score(title + summary_raw)
-
-                if media in raw_media:
-                    summary = deepl_translate(title)
-                else:
-                    summary = ""
+                summary = deepl_translate(title) if media in raw_media else ""
 
                 all_articles.append({
                     "media": media,
                     "title": title,
                     "summary": summary,
-                    "score": score,
+                    "score": importance_score(title + summary_raw),
                     "published": published(e),
-                    "link": final_url
+                    "link": normalize_link(e.get("link",""))
                 })
 
     all_articles = sorted(all_articles, key=lambda x:(x["score"],x["published"]), reverse=True)
