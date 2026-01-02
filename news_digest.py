@@ -23,15 +23,15 @@ now_jst = datetime.now(JST)
 IS_MONDAY = now_jst.weekday() == 0  # 月曜
 
 # =====================
-# 媒体設定（最新30件）
+# 媒体設定（最新30件）※RSS精査済み
 # =====================
 MEDIA = {
-    "日経新聞": (30, ["https://www.nikkei.com/rss/search"]),
-    "Bloomberg": (30, ["https://www.bloomberg.com/feed"]),
-    "Reuters": (30, ["https://www.reuters.com/rssFeed/topNews"]),
+    "日経新聞": (30, ["https://www.nikkei.com/rss/news.rdf"]),
+    "Bloomberg": (30, ["https://www.bloomberg.co.jp/feed/news"]),
+    "Reuters": (30, ["https://feeds.reuters.com/reuters/topNews"]),
     "S&P Global": (30, ["https://www.spglobal.com/commodityinsights/en/rss-feed"]),
     "東洋経済": (30, ["https://toyokeizai.net/list/feed/rss"]),
-    "日経ビジネス": (30, ["https://business.nikkei.com/rss"])
+    "日経ビジネス": (30, ["https://business.nikkei.com/rss/special.xml"])
 }
 
 # =====================
@@ -135,9 +135,8 @@ def generate_html():
     <body style="font-family:'Meiryo UI','Segoe UI',sans-serif;
                  background:#f8fafc;padding:20px;">
     <div style="max-width:900px;margin:auto;background:#ffffff;padding:24px;">
-      <h2 style="color:#0f2a44;">主要ニュース速報（業務判断用）</h2>
+      <h2 style="color:#0f2a44;">主要ニュース速報</h2>
       <p style="color:#555;">
-        RSSベース最新30件取得／重要度★★★を最上段表示<br>
         ニュースサマリ
       </p>
       <hr style="border:1px solid #e2e8f0;">
@@ -232,13 +231,4 @@ def send_mail(html):
     msg["From"] = MAIL_FROM
     msg["To"] = MAIL_TO
 
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-        server.starttls()
-        server.login(MAIL_FROM, MAIL_PASSWORD)
-        server.send_message(msg)
-
-# =====================
-# 実行
-# =====================
-if __name__ == "__main__":
-    send_mail(generate_html())
+    with smtplib.SMTP(SMTP_SER_
