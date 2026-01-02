@@ -2,8 +2,14 @@ import feedparser
 import smtplib
 import re
 import os
+import socket
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
+
+# =====================
+# タイムアウト設定（②採用）
+# =====================
+socket.setdefaulttimeout(10)
 
 # =====================
 # メール設定（GitHub Secrets）
@@ -23,8 +29,7 @@ now_jst = datetime.now(JST)
 IS_MONDAY = now_jst.weekday() == 0  # 月曜
 
 # =====================
-# 媒体設定（最新30件）
-# ※ Reuters / Bloomberg は英語RSS追加
+# 媒体設定（Google News RSS）
 # =====================
 MEDIA = {
     "日経新聞": (
@@ -33,17 +38,11 @@ MEDIA = {
     ),
     "Bloomberg": (
         30,
-        [
-            "https://news.google.com/rss/search?q=Bloomberg&hl=ja&gl=JP&ceid=JP:ja",
-            "https://news.google.com/rss/search?q=Bloomberg&hl=en-US&gl=US&ceid=US:en"
-        ]
+        ["https://news.google.com/rss/search?q=Bloomberg&hl=ja&gl=JP&ceid=JP:ja"]
     ),
     "Reuters": (
         30,
-        [
-            "https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja",
-            "https://news.google.com/rss/search?q=Reuters&hl=en-US&gl=US&ceid=US:en"
-        ]
+        ["https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja"]
     ),
     "東洋経済": (
         30,
@@ -86,54 +85,24 @@ def published_date(entry):
         return datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
     return "N/A"
 
-def is_yesterday_or_older(entry):
+def is_within_last_week(entry):
     if not hasattr(entry, "published_parsed"):
         return False
     published = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-    return published < now_jst.replace(hour=0, minute=0, second=0)
+    return published >= datetime.now(timezone.utc) - timedelta(days=7)
 
 # =====================
-# 重要度が低すぎる場合に遡る取得ロジック
+# RSS安全取得（失敗しても止まらない）
 # =====================
-def collect_entries(feeds, target_count):
-    collected = []
-    seen = set()
-
-    while True:
-        batch = []
-        for url in feeds:
-            batch.extend(feedparser.parse(url).entries)
-
-        for e in batch:
-            uid = e.get("id") or e.get("link")
-            if uid in seen:
-                continue
-            seen.add(uid)
-            collected.append(e)
-
-        collected = sorted(
-            collected,
-            key=lambda e: e.published_parsed if hasattr(e, "published_parsed") else 0,
-            reverse=True
-        )
-
-        sample = collected[:target_count]
-        low = 0
-        for e in sample:
-            text = clean_html(e.get("title", "")) + clean_html(e.get("summary", ""))
-            if importance_score(text) == 0:
-                low += 1
-
-        if low < 25:
-            break
-
-        if all(is_yesterday_or_older(e) for e in collected):
-            break
-
-    return collected[:target_count]
+def safe_parse(url):
+    try:
+        return feedparser.parse(url).entries
+    except Exception as e:
+        print(f"[WARN] RSS取得失敗: {url} / {e}")
+        return []
 
 # =====================
-# 週次振り返り生成
+# 週次振り返り
 # =====================
 def weekly_review(entries):
     total = 0
@@ -141,10 +110,7 @@ def weekly_review(entries):
     titles = []
 
     for e in entries:
-        if not hasattr(e, "published_parsed"):
-            continue
-        published = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
-        if published < datetime.now(timezone.utc) - timedelta(days=7):
+        if not is_within_last_week(e):
             continue
 
         title = clean_html(e.get("title", ""))
@@ -187,7 +153,7 @@ def render_articles(articles, highlight=False):
     return html
 
 # =====================
-# HTML全体生成
+# HTML生成
 # =====================
 def generate_html():
     body = """
@@ -197,11 +163,19 @@ def generate_html():
     <div style="max-width:900px;margin:auto;background:#ffffff;padding:24px;">
       <h2 style="color:#0f2a44;">主要ニュース速報</h2>
       <p style="color:#555;">ニュースサマリ</p>
-      <hr style="border:1px solid #e2e8f0;">
+      <hr>
     """
 
     for media, (count, feeds) in MEDIA.items():
-        entries = collect_entries(feeds, count)
+        entries = []
+        for url in feeds:
+            entries.extend(safe_parse(url))
+
+        entries = sorted(
+            entries,
+            key=lambda e: e.published_parsed if hasattr(e, "published_parsed") else 0,
+            reverse=True
+        )[:count]
 
         top_articles, other_articles = [], []
 
@@ -223,21 +197,20 @@ def generate_html():
             else:
                 other_articles.append(article)
 
-        body += f"<h3 style='color:#1a365d;'>【{media}｜最新{len(entries)}件】</h3>"
+        body += f"<h3>【{media}｜最新{len(entries)}件】</h3>"
 
         if top_articles:
-            body += "<h4 style='color:#c53030;'>★★★ 重要記事</h4>"
+            body += "<h4>★★★ 重要記事</h4>"
             body += render_articles(top_articles, highlight=True)
 
-        body += "<h4 style='color:#4a5568;'>その他の記事</h4>"
         body += render_articles(other_articles)
-        body += "<hr style='border:1px solid #edf2f7;'>"
+        body += "<hr>"
 
     body += "</div></body></html>"
     return body
 
 # =====================
-# メール送信
+# メール送信（必ず実行）
 # =====================
 def send_mail(html):
     msg = MIMEText(html, "html", "utf-8")
