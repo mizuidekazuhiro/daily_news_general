@@ -21,7 +21,6 @@ MAIL_FROM = os.environ["MAIL_FROM"]
 MAIL_TO = os.environ["MAIL_TO"]
 MAIL_PASSWORD = os.environ["MAIL_PASSWORD"]
 DEEPL_API_KEY = os.environ["DEEPL_API_KEY"]
-
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
@@ -106,7 +105,11 @@ def deepl_translate(text):
     try:
         r = requests.post(
             "https://api-free.deepl.com/v2/translate",
-            data={"auth_key":DEEPL_API_KEY,"text":text,"target_lang":"JA"},
+            data={
+                "auth_key": DEEPL_API_KEY,
+                "text": text,
+                "target_lang": "JA"
+            },
             timeout=10
         )
         return r.json()["translations"][0]["text"]
@@ -124,10 +127,10 @@ def is_nikkei_noise(title, summary):
         "会社情報","与信管理","NIKKEI COMPASS",
         "会社概要","現状と将来性","業界の動向",
         "経営・財務","リスク情報","企業分析","基本情報",
-        "セミナー","イベント","説明会","講演",
-        "参加者募集","オンライン開催","受講料","主催",
-        "キャンペーン","SALE","セール","発売",
-        "初売り","無料","最大","OFF",
+        "セミナー","イベント","説明会","講演","参加者募集",
+        "オンライン開催","受講料","主催",
+        "キャンペーン","SALE","セール","発売","初売り",
+        "無料","最大","OFF",
         "新製品","サービス開始","提供開始",
         "PR","提供","公式","【","［"
     ]
@@ -151,7 +154,7 @@ def fetch_published_from_article(url):
         return None
 
 # =====================
-# sitemap fetchers
+# sitemap fetchers（50件制限）
 # =====================
 def fetch_bigmint_from_sitemap():
     urls = []
@@ -162,6 +165,8 @@ def fetch_bigmint_from_sitemap():
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
             if loc is not None:
                 urls.append(loc.text)
+            if len(urls) >= 50:
+                break
     except:
         pass
     return urls
@@ -175,6 +180,8 @@ def fetch_kallanish_from_sitemap():
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
             if loc is not None:
                 urls.append(loc.text)
+            if len(urls) >= 50:
+                break
     except:
         pass
     return urls
@@ -188,6 +195,8 @@ def fetch_fastmarkets_from_sitemap():
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
             if loc is not None:
                 urls.append(loc.text)
+            if len(urls) >= 50:
+                break
     except:
         pass
     return urls
@@ -201,6 +210,8 @@ def fetch_argus_from_sitemap():
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
             if loc is not None:
                 urls.append(loc.text)
+            if len(urls) >= 50:
+                break
     except:
         pass
     return urls
@@ -210,6 +221,7 @@ def generate_html():
     seen = set()
     raw_media = {"Kallanish","BigMint","Fastmarkets","Argus"}
 
+    # sitemap
     for media, fetcher in [
         ("BigMint", fetch_bigmint_from_sitemap),
         ("Kallanish", fetch_kallanish_from_sitemap),
@@ -227,40 +239,35 @@ def generate_html():
             all_articles.append({
                 "media": media,
                 "title": title,
-                "summary": deepl_translate(title),
+                "summary": "",  # ← 翻訳しない
                 "score": importance_score(title),
                 "published": dt.strftime("%Y-%m-%d %H:%M"),
                 "link": link
             })
 
+    # RSS
     for media, feeds in MEDIA.items():
         for url in feeds:
             for e in safe_parse(url):
                 title = clean(e.get("title", ""))
                 summary_raw = clean(e.get("summary", ""))
-
                 if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
                     continue
-
                 dedup_key = re.sub(r"（.*?）|- .*?$", "", title)
                 if dedup_key in seen:
                     continue
                 seen.add(dedup_key)
-
-                summary = deepl_translate(title) if media in raw_media else ""
-
                 all_articles.append({
                     "media": media,
                     "title": title,
-                    "summary": summary,
+                    "summary": "",
                     "score": importance_score(title + summary_raw),
                     "published": published(e),
                     "link": normalize_link(e.get("link",""))
                 })
 
-    # ===== ここから追加ロジック（他は変更なし） =====
+    # ===== 24h & 各媒体15件 =====
     final_articles = []
-
     for media in set(a["media"] for a in all_articles):
         media_items = []
         for a in all_articles:
@@ -286,25 +293,29 @@ def generate_html():
 
         final_articles.extend(selected)
 
+    # 翻訳はここでのみ実行
+    for a in final_articles:
+        if a["media"] in raw_media:
+            a["summary"] = deepl_translate(a["title"])
+
     all_articles = sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True)
-    # ===== 追加ロジックここまで =====
 
     body_html = "<html><body><h2>主要ニュース速報（重要度順）</h2>"
     for a in all_articles:
         stars = "★"*a["score"] if a["score"] else "－"
         body_html += f"""
-        <div style="background:{COLOR_BG[a['score']]};
-        border-left:5px solid {COLOR_BORDER[a['score']]};
-        padding:12px;margin-bottom:14px;">
-        <b>{a['title']}</b><br>"""
+        <div style="background:{COLOR_BG[a['score']]}; border-left:5px solid {COLOR_BORDER[a['score']]}; padding:12px;margin-bottom:14px;">
+            <b>{a['title']}</b><br>
+        """
         if a["summary"]:
             body_html += f"<div>{a['summary']}</div>"
         body_html += f"""
-        <div style="font-size:12px;color:#555;">
-        {a['media']}｜重要度:{stars}｜{a['published']}
+            <div style="font-size:12px;color:#555;">
+                {a['media']}｜重要度:{stars}｜{a['published']}
+            </div>
+            <a href="{a['link']}">▶ 元記事</a>
         </div>
-        <a href="{a['link']}">▶ 元記事</a>
-        </div>"""
+        """
     body_html += "</body></html>"
     return body_html
 
