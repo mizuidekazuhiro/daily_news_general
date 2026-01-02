@@ -231,4 +231,8 @@ def send_mail(html):
     msg["From"] = MAIL_FROM
     msg["To"] = MAIL_TO
 
-    with smtplib.SMTP(SMTP_SER_
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        server.starttls()
+        server.login(MAIL_FROM, MAIL_PASSWORD)
+        server.send_message(msg)
+
