@@ -30,7 +30,7 @@ JST = timezone(timedelta(hours=9))
 now_jst = datetime.now(JST)
 
 # =====================
-# 媒体設定
+# 媒体設定（★パターン②）
 # =====================
 MEDIA = {
     "Kallanish": [
@@ -53,10 +53,12 @@ MEDIA = {
         "https://news.google.com/rss/search?q=site:nikkei.com+産業&hl=ja&gl=JP&ceid=JP:ja"
     ],
     "Bloomberg": [
-        "https://news.google.com/rss/search?q=Bloomberg&hl=ja&gl=JP&ceid=JP:ja"
+        "https://news.google.com/rss/search?q=Bloomberg&hl=ja&gl=JP&ceid=JP:ja",
+        "https://news.google.com/rss/search?q=Bloomberg&hl=en&ceid=US:en"
     ],
     "Reuters": [
-        "https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja"
+        "https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja",
+        "https://news.google.com/rss/search?q=Reuters&hl=en&ceid=US:en"
     ]
 }
 
@@ -118,8 +120,7 @@ def deepl_translate(text):
 def normalize_link(url):
     if "news.google.com" in url and "url=" in url:
         url = urllib.parse.unquote(re.sub(r".*url=", "", url))
-    url = re.sub(r"&utm_.*", "", url)
-    return url.strip()
+    return re.sub(r"&utm_.*", "", url)
 
 def is_nikkei_noise(title, summary):
     noise = [
@@ -144,15 +145,16 @@ def normalize_title(title):
     t = re.sub(r"-.*$", "", t)
     t = re.sub(r"(reuters|bloomberg|yahoo|msn|dメニュー|ロイター)", "", t)
     t = re.sub(r"[^\w\u4e00-\u9fff]+", " ", t)
-    t = re.sub(r"\s+", " ", t)
-    return t.strip()
+    return re.sub(r"\s+", " ", t).strip()
+
+def is_japanese(text):
+    return bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", text))
 
 # =====================
 # generate
 # =====================
 def generate_html():
     final_articles = []
-    raw_media = {"Kallanish","BigMint","Fastmarkets","Argus"}
 
     for media, feeds in MEDIA.items():
         collected = []
@@ -162,7 +164,7 @@ def generate_html():
         exhausted = False
 
         while len(collected) < 15 and not exhausted:
-            found_recent_in_batch = False
+            found_recent = False
 
             for url in feeds:
                 entries = safe_parse(url)
@@ -186,7 +188,7 @@ def generate_html():
                     if not is_within_24h(dt):
                         continue
 
-                    found_recent_in_batch = True
+                    found_recent = True
 
                     if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
                         continue
@@ -196,21 +198,23 @@ def generate_html():
                         continue
                     seen.add(key)
 
+                    score = importance_score(title + summary_raw)
+
                     item = {
                         "media": media,
                         "title": title,
                         "summary": "",
-                        "score": importance_score(title + summary_raw),
+                        "score": score,
                         "published": published(e),
                         "link": link
                     }
 
-                    if item["score"] >= 1:
+                    if score >= 1:
                         collected.append(item)
                     else:
                         buffer_zero.append(item)
 
-            if not found_recent_in_batch:
+            if not found_recent:
                 exhausted = True
 
             offset += 15
@@ -222,9 +226,11 @@ def generate_html():
 
         final_articles.extend(collected)
 
+    # ★翻訳ルール（英語のみ）
     for a in final_articles:
-        if a["media"] in raw_media:
-            a["summary"] = deepl_translate(a["title"])
+        if a["media"] in {"Kallanish","BigMint","Fastmarkets","Argus","Reuters","Bloomberg"}:
+            if not is_japanese(a["title"]):
+                a["summary"] = deepl_translate(a["title"])
 
     body_html = "<html><body><h2>主要ニュース速報（重要度順）</h2>"
     for a in sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True):
