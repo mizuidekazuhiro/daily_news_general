@@ -133,12 +133,22 @@ def is_nikkei_noise(title, summary):
     ]
     return any(n in title or n in summary for n in noise)
 
-def is_within_24h_from_str(date_str):
+def is_within_24h(dt):
+    return dt >= now_jst - timedelta(hours=24)
+
+# =====================
+# 記事本文から published 取得（追加）
+# =====================
+def fetch_published_from_article(url):
     try:
-        dt = datetime.fromisoformat(date_str.replace("Z","")).replace(tzinfo=timezone.utc)
-        return dt.astimezone(JST) >= now_jst - timedelta(hours=24)
+        r = requests.get(url, timeout=10, headers={"User-Agent":"Mozilla/5.0"})
+        m = re.search(r'<time[^>]*datetime="([^"]+)"', r.text)
+        if not m:
+            return None
+        dt = datetime.fromisoformat(m.group(1).replace("Z","")).astimezone(JST)
+        return dt if is_within_24h(dt) else None
     except:
-        return False
+        return None
 
 # =====================
 # === 英文媒体 sitemap 直接クロール ===
@@ -150,8 +160,7 @@ def fetch_bigmint_from_sitemap():
         root = ET.fromstring(r.text)
         for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
-            lastmod = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod")
-            if loc is not None and lastmod is not None and is_within_24h_from_str(lastmod.text):
+            if loc is not None:
                 urls.append(loc.text)
     except:
         pass
@@ -164,8 +173,7 @@ def fetch_kallanish_from_sitemap():
         root = ET.fromstring(r.text)
         for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
-            lastmod = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod")
-            if loc is not None and lastmod is not None and is_within_24h_from_str(lastmod.text):
+            if loc is not None:
                 urls.append(loc.text)
     except:
         pass
@@ -178,8 +186,7 @@ def fetch_fastmarkets_from_sitemap():
         root = ET.fromstring(r.text)
         for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
-            lastmod = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod")
-            if loc is not None and lastmod is not None and is_within_24h_from_str(lastmod.text):
+            if loc is not None:
                 urls.append(loc.text)
     except:
         pass
@@ -192,8 +199,7 @@ def fetch_argus_from_sitemap():
         root = ET.fromstring(r.text)
         for u in root.findall("{http://www.sitemaps.org/schemas/sitemap/0.9}url"):
             loc = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}loc")
-            lastmod = u.find("{http://www.sitemaps.org/schemas/sitemap/0.9}lastmod")
-            if loc is not None and lastmod is not None and is_within_24h_from_str(lastmod.text):
+            if loc is not None:
                 urls.append(loc.text)
     except:
         pass
@@ -204,61 +210,28 @@ def generate_html():
     seen = set()
     raw_media = {"Kallanish","BigMint","Fastmarkets","Argus"}
 
-    for link in fetch_bigmint_from_sitemap():
-        title = link.split("/")[-1].replace("-"," ").title()
-        if title in seen:
-            continue
-        seen.add(title)
-        all_articles.append({
-            "media": "BigMint",
-            "title": title,
-            "summary": deepl_translate(title),
-            "score": importance_score(title),
-            "published": now_jst.strftime("%Y-%m-%d %H:%M"),
-            "link": link
-        })
-
-    for link in fetch_kallanish_from_sitemap():
-        title = link.split("/")[-1].replace("-"," ").title()
-        if title in seen:
-            continue
-        seen.add(title)
-        all_articles.append({
-            "media": "Kallanish",
-            "title": title,
-            "summary": deepl_translate(title),
-            "score": importance_score(title),
-            "published": now_jst.strftime("%Y-%m-%d %H:%M"),
-            "link": link
-        })
-
-    for link in fetch_fastmarkets_from_sitemap():
-        title = link.split("/")[-1].replace("-"," ").title()
-        if title in seen:
-            continue
-        seen.add(title)
-        all_articles.append({
-            "media": "Fastmarkets",
-            "title": title,
-            "summary": deepl_translate(title),
-            "score": importance_score(title),
-            "published": now_jst.strftime("%Y-%m-%d %H:%M"),
-            "link": link
-        })
-
-    for link in fetch_argus_from_sitemap():
-        title = link.split("/")[-1].replace("-"," ").title()
-        if title in seen:
-            continue
-        seen.add(title)
-        all_articles.append({
-            "media": "Argus",
-            "title": title,
-            "summary": deepl_translate(title),
-            "score": importance_score(title),
-            "published": now_jst.strftime("%Y-%m-%d %H:%M"),
-            "link": link
-        })
+    for media, fetcher in [
+        ("BigMint", fetch_bigmint_from_sitemap),
+        ("Kallanish", fetch_kallanish_from_sitemap),
+        ("Fastmarkets", fetch_fastmarkets_from_sitemap),
+        ("Argus", fetch_argus_from_sitemap)
+    ]:
+        for link in fetcher():
+            dt = fetch_published_from_article(link)
+            if not dt:
+                continue
+            title = link.split("/")[-1].replace("-"," ").title()
+            if title in seen:
+                continue
+            seen.add(title)
+            all_articles.append({
+                "media": media,
+                "title": title,
+                "summary": deepl_translate(title),
+                "score": importance_score(title),
+                "published": dt.strftime("%Y-%m-%d %H:%M"),
+                "link": link
+            })
 
     for media, feeds in MEDIA.items():
         for url in feeds:
