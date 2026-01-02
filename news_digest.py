@@ -36,6 +36,7 @@ MEDIA = {
         30,
         ["https://news.google.com/rss/search?q=site:nikkei.com+-NIKKEI+COMPASS+-会社情報+-与信管理+-人事+-訃報+-文化+-スポーツ&hl=ja&gl=JP&ceid=JP:ja"]
     ),
+
     "Bloomberg": (
         30,
         ["https://news.google.com/rss/search?q=Bloomberg&hl=ja&gl=JP&ceid=JP:ja"]
