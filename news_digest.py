@@ -236,3 +236,11 @@ def send_mail(html):
         server.login(MAIL_FROM, MAIL_PASSWORD)
         server.send_message(msg)
 
+# =====================
+# 実行
+# =====================
+if __name__ == "__main__":
+    html = generate_html()
+    send_mail(html)
+
+
