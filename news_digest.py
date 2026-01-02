@@ -333,7 +333,7 @@ def generate_html():
             </div>
         """
         # ▶ 元記事（アンカー行を正しく出力）
-        body_html += f'{a[▶ 元記事</a>\n</div>\n'
+        body_html += f'<a href="{a["link"]}">▶ 元記事</a>\n</div>\n'
     body_html += "</body></html>"
     return body_html
 
@@ -342,7 +342,7 @@ def send_mail(html):
     msg["Subject"] = f"主要ニュースまとめ｜{now_jst.strftime('%Y-%m-%d')}"
     msg["From"] = MAIL_FROM
     msg["To"] = MAIL_TO
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
+   SMTP_SERVER, SMTP_PORT) as s:
         s.starttls()
         s.login(MAIL_FROM, MAIL_PASSWORD)
         s.send_message(msg)
