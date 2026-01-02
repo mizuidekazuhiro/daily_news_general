@@ -23,28 +23,33 @@ now_jst = datetime.now(JST)
 IS_MONDAY = now_jst.weekday() == 0  # 月曜
 
 # =====================
-# 媒体設定（最新30件）※Google News RSS置換済み
+# 媒体設定（最新30件）
+# ※ Reuters / Bloomberg は英語RSS追加
 # =====================
 MEDIA = {
     "日経新聞": (
         30,
         ["https://news.google.com/rss/search?q=site:nikkei.com+-NIKKEI+COMPASS+-会社情報+-与信管理+-人事+-訃報+-文化+-スポーツ&hl=ja&gl=JP&ceid=JP:ja"]
-
     ),
     "Bloomberg": (
         30,
-        ["https://news.google.com/rss/search?q=Bloomberg&hl=ja&gl=JP&ceid=JP:ja"]
+        [
+            "https://news.google.com/rss/search?q=Bloomberg&hl=ja&gl=JP&ceid=JP:ja",
+            "https://news.google.com/rss/search?q=Bloomberg&hl=en-US&gl=US&ceid=US:en"
+        ]
     ),
     "Reuters": (
         30,
-        ["https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja"]
+        [
+            "https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja",
+            "https://news.google.com/rss/search?q=Reuters&hl=en-US&gl=US&ceid=US:en"
+        ]
     ),
     "東洋経済": (
         30,
         ["https://toyokeizai.net/list/feed/rss"]
     )
 }
-
 
 # =====================
 # 重要度キーワード
@@ -81,11 +86,51 @@ def published_date(entry):
         return datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
     return "N/A"
 
-def is_within_last_week(entry):
+def is_yesterday_or_older(entry):
     if not hasattr(entry, "published_parsed"):
         return False
     published = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
-    return published >= datetime.now(timezone.utc) - timedelta(days=7)
+    return published < now_jst.replace(hour=0, minute=0, second=0)
+
+# =====================
+# 重要度が低すぎる場合に遡る取得ロジック
+# =====================
+def collect_entries(feeds, target_count):
+    collected = []
+    seen = set()
+
+    while True:
+        batch = []
+        for url in feeds:
+            batch.extend(feedparser.parse(url).entries)
+
+        for e in batch:
+            uid = e.get("id") or e.get("link")
+            if uid in seen:
+                continue
+            seen.add(uid)
+            collected.append(e)
+
+        collected = sorted(
+            collected,
+            key=lambda e: e.published_parsed if hasattr(e, "published_parsed") else 0,
+            reverse=True
+        )
+
+        sample = collected[:target_count]
+        low = 0
+        for e in sample:
+            text = clean_html(e.get("title", "")) + clean_html(e.get("summary", ""))
+            if importance_score(text) == 0:
+                low += 1
+
+        if low < 25:
+            break
+
+        if all(is_yesterday_or_older(e) for e in collected):
+            break
+
+    return collected[:target_count]
 
 # =====================
 # 週次振り返り生成
@@ -96,7 +141,10 @@ def weekly_review(entries):
     titles = []
 
     for e in entries:
-        if not is_within_last_week(e):
+        if not hasattr(e, "published_parsed"):
+            continue
+        published = datetime(*e.published_parsed[:6], tzinfo=timezone.utc)
+        if published < datetime.now(timezone.utc) - timedelta(days=7):
             continue
 
         title = clean_html(e.get("title", ""))
@@ -148,58 +196,12 @@ def generate_html():
                  background:#f8fafc;padding:20px;">
     <div style="max-width:900px;margin:auto;background:#ffffff;padding:24px;">
       <h2 style="color:#0f2a44;">主要ニュース速報</h2>
-      <p style="color:#555;">
-        ニュースサマリ
-      </p>
+      <p style="color:#555;">ニュースサマリ</p>
       <hr style="border:1px solid #e2e8f0;">
     """
 
-    if IS_MONDAY:
-        body += """
-        <div style="background:#f1f5f9;border-left:6px solid #0f2a44;
-                    padding:16px;margin-bottom:24px;">
-          <h3 style="margin-top:0;color:#0f2a44;">📊 先週1週間の振り返り</h3>
-        """
-
     for media, (count, feeds) in MEDIA.items():
-        entries = []
-        for url in feeds:
-            entries.extend(feedparser.parse(url).entries)
-
-        entries = sorted(
-            entries,
-            key=lambda e: e.published_parsed if hasattr(e, "published_parsed") else 0,
-            reverse=True
-        )[:count]
-
-        if IS_MONDAY:
-            total, important, titles = weekly_review(entries)
-            if total > 0:
-                body += f"""
-                <div style="margin-bottom:12px;">
-                  <strong>{media}</strong><br>
-                  ・掲載記事数：{total}件<br>
-                  ・重要記事（★★★）：{important}件
-                """
-                if titles:
-                    body += "<br>・主なトピック："
-                    for t in titles:
-                        body += f"<br>　- {t}"
-                body += "</div>"
-
-    if IS_MONDAY:
-        body += "</div><hr style='border:1px solid #e2e8f0;'>"
-
-    for media, (count, feeds) in MEDIA.items():
-        entries = []
-        for url in feeds:
-            entries.extend(feedparser.parse(url).entries)
-
-        entries = sorted(
-            entries,
-            key=lambda e: e.published_parsed if hasattr(e, "published_parsed") else 0,
-            reverse=True
-        )[:count]
+        entries = collect_entries(feeds, count)
 
         top_articles, other_articles = [], []
 
@@ -254,5 +256,3 @@ def send_mail(html):
 if __name__ == "__main__":
     html = generate_html()
     send_mail(html)
-
-
