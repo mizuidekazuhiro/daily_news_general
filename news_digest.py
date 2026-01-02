@@ -30,21 +30,6 @@ JST = timezone(timedelta(hours=9))
 now_jst = datetime.now(JST)
 
 # =====================
-# 天気取得（★追加）
-# =====================
-def get_today_weather():
-    try:
-        rss = feedparser.parse(
-            "https://rss.weather.yahoo.co.jp/rss/days/4410.xml"  # 東京
-        )
-        if rss.entries:
-            title = rss.entries[0].title
-            return f"☀ 本日の東京の天気：{title}"
-    except:
-        pass
-    return "☀ 本日の東京の天気：取得できませんでした"
-
-# =====================
 # 媒体設定（変更なし）
 # =====================
 MEDIA = {
@@ -127,7 +112,11 @@ def is_nikkei_noise(title, summary):
     noise = [
         "会社情報","与信管理","NIKKEI COMPASS",
         "セミナー","イベント","説明会","講演",
-        "参加者募集","オンライン開催","受講料","主催"
+        "参加者募集","オンライン開催","受講料","主催",
+        "キャンペーン","SALE","セール","発売",
+        "初売り","無料","最大","OFF",
+        "新製品","サービス開始","提供開始",
+        "PR","提供","公式","【","［"
     ]
     return any(n in title or n in summary for n in noise)
 
@@ -160,10 +149,9 @@ def deepl_translate(text):
         return text
 
 # =====================
-# HTML生成（★天気行を冒頭に追加）
+# HTML生成（天気削除のみ）
 # =====================
 def generate_html():
-    weather_line = get_today_weather()
     media_articles = {}
     seen = set()
 
@@ -208,10 +196,9 @@ def generate_html():
             reverse=True
         )[:15]
 
-    body = f"""
+    body = """
     <html>
     <body style="font-family:'Meiryo UI','Segoe UI',sans-serif;">
-    <p style="font-size:14px;color:#333;">{weather_line}</p>
     <h2>主要ニュース速報</h2>
     """
 
