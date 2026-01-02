@@ -1,4 +1,3 @@
-
 import feedparser
 import smtplib
 import re
@@ -301,7 +300,7 @@ def generate_html():
 
         # 重要度3→2→1のみで最大15件を選定（到達で打ち切り）
         selected = []
-        for score in [3, 2, 1, 0]:  # ← ここだけ変更（0で補完）
+        for score in [3, 2, 1, 0]:  # 重要度0で補完
             for a in sorted(media_items, key=lambda x: x["published"], reverse=True):
                 if a["score"] == score and a not in selected:
                     selected.append(a)
@@ -310,7 +309,6 @@ def generate_html():
             if len(selected) >= 15:
                 break
 
-        # 重要度1〜3だけで15件未満でも、そのまま確定（要件に合わせて重要度0は採用しない）
         final_articles.extend(selected)
 
     # 翻訳はここでのみ実行
@@ -320,18 +318,23 @@ def generate_html():
 
     all_articles = sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True)
 
-    # ===== HTML本文（プレーンタグ）=====    
+    # ===== HTML本文（プレーンタグ）=====
     body_html = "<html><body><h2>主要ニュース速報（重要度順）</h2>"
     for a in all_articles:
         stars = "★"*a["score"] if a["score"] else "－"
-
-    body_html += f"""
-        <div style="font-size:12px;color:#555;">
-            {a['media']}｜重要度:{stars}｜{a['published']}
+        body_html += f"""
+        <div style="background:{COLOR_BG[a['score']]}; border-left:5px solid {COLOR_BORDER[a['score']]}; padding:12px;margin-bottom:14px;">
+            <b>{a['title']}</b><br>
+        """
+        if a["summary"]:
+            body_html += f"<div>{a['summary']}</div>"
+        body_html += f"""
+            <div style="font-size:12px;color:#555;">
+                {a['media']}｜重要度:{stars}｜{a['published']}
+            </div>
+            <a href="{a['link']}">▶ 元記事</a>
         </div>
-        <a href="{a['link']}">▶ 元記事</a>
-    </div>
-    """
+        """
     body_html += "</body></html>"
     return body_html
 
@@ -341,8 +344,7 @@ def send_mail(html):
     msg["From"] = MAIL_FROM
     msg["To"] = MAIL_TO
     with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
-        s.starttls()
-        s.login(MAIL_FROM, MAIL_PASSWORD)
+          s.login(MAIL_FROM, MAIL_PASSWORD)
         s.send_message(msg)
 
 if __name__ == "__main__":
