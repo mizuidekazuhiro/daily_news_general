@@ -119,13 +119,19 @@ def safe_parse(url):
 
 def is_nikkei_noise(title, summary):
     noise = [
+def is_nikkei_noise(title, summary):
+    noise = [
         "会社情報","与信管理","NIKKEI COMPASS",
+        "会社概要","現状と将来性","業界の動向",
+        "経営・財務","リスク情報","企業分析","基本情報",
         "セミナー","イベント","説明会","講演",
         "参加者募集","オンライン開催","受講料","主催",
         "キャンペーン","SALE","セール","発売",
         "初売り","無料","最大","OFF",
         "新製品","サービス開始","提供開始",
         "PR","提供","公式","【","［"
+    ]
+    return any(n in title or n in summary for n in noise)
     ]
     return any(n in title or n in summary for n in noise)
 
