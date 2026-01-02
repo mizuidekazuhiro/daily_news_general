@@ -317,23 +317,24 @@ def generate_html():
 
     all_articles = sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True)
 
-    body_html = "&lt;html&gt;&lt;body&gt;&lt;h2&gt;主要ニュース速報（重要度順）&lt;/h2&gt;"
+    # ===== HTML本文（エンコード文字→プレーンタグに修正）=====
+    body_html = "<html><body><h2>主要ニュース速報（重要度順）</h2>"
     for a in all_articles:
         stars = "★"*a["score"] if a["score"] else "－"
         body_html += f"""
-        &lt;div style="background:{COLOR_BG[a['score']]}; border-left:5px solid {COLOR_BORDER[a['score']]}; padding:12px;margin-bottom:14px;"&gt;
-            &lt;b&gt;{a['title']}&lt;/b&gt;&lt;br&gt;
+        <div style="background:{COLOR_BG[a['score']]}; border-left:5px solid {COLOR_BORDER[a['score']]}; padding:12px;margin-bottom:14px;">
+            <b>{a['title']}</b><br>
         """
         if a["summary"]:
-            body_html += f"&lt;div&gt;{a['summary']}&lt;/div&gt;"
+            body_html += f"<div>{a['summary']}</div>"
         body_html += f"""
-            &lt;div style="font-size:12px;color:#555;"&gt;
+            <div style="font-size:12px;color:#555;">
                 {a['media']}｜重要度:{stars}｜{a['published']}
-            &lt;/div&gt;
-            &lt;a href="{a['link']}"&gt;▶ 元記事&lt;/a&gt;
-        &lt;/div&gt;
+            </div>
+            <a href="{a['link']}">▶ 元記事</a>
+        </div>
         """
-    body_html += "&lt;/body&gt;&lt;/html&gt;"
+    body_html += "</body></html>"
     return body_html
 
 def send_mail(html):
