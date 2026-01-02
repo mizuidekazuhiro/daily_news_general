@@ -122,6 +122,13 @@ def normalize_link(url):
     url = re.sub(r"&utm_.*", "", url)
     return url.strip()
 
+def normalize_title(title):
+    t = title.lower()
+    t = re.sub(r"（.*?）|\(.*?\)", "", t)
+    t = re.sub(r"\s*-\s*.*$", "", t)
+    t = re.sub(r"\s+", " ", t)
+    return t.strip()
+
 def is_nikkei_noise(title, summary):
     noise = [
         "会社情報","与信管理","NIKKEI COMPASS",
@@ -218,8 +225,8 @@ def fetch_argus_from_sitemap():
 
 def generate_html():
     all_articles = []
-    seen = set()
-    seen_links = set()   # ← 追加（重複対策）
+    seen_links = set()
+    seen_norm_titles = set()
     raw_media = {"Kallanish","BigMint","Fastmarkets","Argus"}
 
     # sitemap
@@ -236,11 +243,10 @@ def generate_html():
             if not dt:
                 continue
             title = link.split("/")[-1].replace("-"," ").title()
-            if "重複記事を削除します" in title:
+            norm = normalize_title(title)
+            if norm in seen_norm_titles:
                 continue
-            if title in seen:
-                continue
-            seen.add(title)
+            seen_norm_titles.add(norm)
             seen_links.add(link)
             all_articles.append({
                 "media": media,
@@ -256,18 +262,16 @@ def generate_html():
         for url in feeds:
             for e in safe_parse(url):
                 title = clean(e.get("title", ""))
-                if "重複記事を削除します" in title:
-                    continue
                 summary_raw = clean(e.get("summary", ""))
                 if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
                     continue
                 link = normalize_link(e.get("link",""))
+                norm = normalize_title(title)
+                if media in {"Reuters","Bloomberg"} and norm in seen_norm_titles:
+                    continue
+                seen_norm_titles.add(norm)
                 if link in seen_links:
                     continue
-                dedup_key = re.sub(r"（.*?）|- .*?$", "", title)
-                if dedup_key in seen:
-                    continue
-                seen.add(dedup_key)
                 seen_links.add(link)
                 all_articles.append({
                     "media": media,
