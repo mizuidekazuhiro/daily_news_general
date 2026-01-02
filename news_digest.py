@@ -3,113 +3,70 @@ import smtplib
 import re
 import os
 import socket
+import requests
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 
 # =====================
-# タイムアウト設定（②採用）
+# タイムアウト設定
 # =====================
 socket.setdefaulttimeout(10)
 
 # =====================
-# メール設定（GitHub Secrets）
+# 環境変数（GitHub Secrets）
 # =====================
 MAIL_FROM = os.environ["MAIL_FROM"]
 MAIL_TO = os.environ["MAIL_TO"]
 MAIL_PASSWORD = os.environ["MAIL_PASSWORD"]
+DEEPL_API_KEY = os.environ["DEEPL_API_KEY"]
 
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
 # =====================
-# JST判定
+# JST
 # =====================
 JST = timezone(timedelta(hours=9))
 now_jst = datetime.now(JST)
 
 # =====================
-# 媒体設定（Google News RSS）
+# 媒体設定（15記事）
 # =====================
 MEDIA = {
     "日経新聞": (
-        30,
+        15,
         [
-            "https://news.google.com/rss/search?q=日本経済新聞+経済&hl=ja&gl=JP&ceid=JP:ja",
-            "https://news.google.com/rss/search?q=日本経済新聞+企業&hl=ja&gl=JP&ceid=JP:ja",
-            "https://news.google.com/rss/search?q=日本経済新聞+金融&hl=ja&gl=JP&ceid=JP:ja",
-            "https://news.google.com/rss/search?q=日本経済新聞+政策&hl=ja&gl=JP&ceid=JP:ja"
+            "https://news.google.com/rss/search?q=site:nikkei.com+経済&hl=ja&gl=JP&ceid=JP:ja",
+            "https://news.google.com/rss/search?q=site:nikkei.com+企業&hl=ja&gl=JP&ceid=JP:ja"
         ]
     ),
     "Bloomberg": (
-        30,
-        ["https://news.google.com/rss/search?q=Bloomberg&hl=ja&gl=JP&ceid=JP:ja"]
+        15,
+        ["https://news.google.com/rss/search?q=Bloomberg&hl=en&gl=US&ceid=US:en"]
     ),
     "Reuters": (
-        30,
-        ["https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja"]
+        15,
+        ["https://news.google.com/rss/search?q=Reuters&hl=en&gl=US&ceid=US:en"]
     ),
-    "Fastmarkets": (  # ★追加
-        30,
-        ["https://news.google.com/rss/search?q=Fastmarkets+steel+metal+raw+materials&hl=en&gl=US&ceid=US:en"]
+    "Fastmarkets": (
+        15,
+        ["https://news.google.com/rss/search?q=Fastmarkets&hl=en&gl=US&ceid=US:en"]
     ),
-    "東洋経済": (
-        30,
-        ["https://toyokeizai.net/list/feed/rss"]
+    "BigMint": (
+        15,
+        ["https://news.google.com/rss/search?q=BigMint&hl=en&gl=US&ceid=US:en"]
     )
 }
 
 # =====================
 # 重要度キーワード
 # =====================
-IMPORTANT_KEYWORDS = {
-    "鉄鋼": [
-        "steel", "iron", "scrap", "rebar", "hbi", "dri",
-        "製鉄", "鉄鋼", "高炉", "電炉", "スクラップ",
-        "automotive", "construction", "infrastructure",
-        "橋梁", "建材"
-    ],
-    "建設": [
-        "construction", "infrastructure", "real estate",
-        "housing", "property", "developer",
-        "建設", "土木", "不動産", "住宅", "再開発",
-        "公共事業", "インフラ"
-    ],
-    "AI": [
-        "ai", "artificial intelligence", "machine learning",
-        "semiconductor", "chip", "gpu", "data center",
-        "生成ai", "半導体", "データセンター",
-        "nvidia", "openai"
-    ],
-    "銀行": [
-        "bank", "banking", "lender", "financial institution",
-        "融資", "貸出", "銀行", "金融機関",
-        "credit", "loan", "default"
-    ],
-    "政治": [
-        "government", "policy", "administration",
-        "政権", "政策", "法案", "規制",
-        "election", "geopolitical", "military", "conflict"
-    ],
-    "企業": [
-        "company", "corp", "firm",
-        "決算", "業績", "m&a", "acquisition",
-        "investment", "joint venture", "subsidiary"
-    ],
-    "金融": [
-        "market", "interest", "rate", "yield",
-        "fx", "currency", "bond", "equity",
-        "金融", "金利", "市場", "株式", "債券"
-    ],
-    "通商": [
-        "trade", "tariff", "sanction",
-        "export", "import", "quota",
-        "輸出", "輸入", "関税", "制裁"
-    ],
-    "重点国": [
-        "india", "indian", "インド",
-        "vietnam", "ベトナム", "viet"
-    ]
-}
+IMPORTANT_KEYWORDS = [
+    "steel","iron","scrap","rebar","dri","hbi","鉄鋼","製鉄","高炉","電炉",
+    "construction","建設","インフラ","ai","artificial intelligence","半導体",
+    "bank","銀行","金融","interest","rate","trade","tariff","関税",
+    "india","インド","vietnam","ベトナム"
+]
 
 # =====================
 # ユーティリティ
@@ -118,22 +75,38 @@ def clean_html(text):
     return re.sub("<[^<]+?>", "", text).strip()
 
 def importance_score(text):
-    score = 0
-    text = text.lower()
-    for words in IMPORTANT_KEYWORDS.values():
-        for w in words:
-            if w in text:
-                score += 1
+    score = sum(1 for k in IMPORTANT_KEYWORDS if k.lower() in text.lower())
     return min(score, 3)
-
-def simple_summary(entry):
-    summary = clean_html(entry.get("summary", ""))
-    return summary[:200] + "…" if len(summary) > 200 else summary
 
 def published_date(entry):
     if hasattr(entry, "published_parsed") and entry.published_parsed:
         return datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
     return "N/A"
+
+def is_english(text):
+    return re.search(r"[a-zA-Z]", text) is not None
+
+# =====================
+# DeepL翻訳（英語→日本語）
+# =====================
+def deepl_translate(text):
+    if not text or not is_english(text):
+        return text
+
+    try:
+        r = requests.post(
+            "https://api-free.deepl.com/v2/translate",
+            data={
+                "auth_key": DEEPL_API_KEY,
+                "text": text,
+                "target_lang": "JA"
+            },
+            timeout=8
+        )
+        return r.json()["translations"][0]["text"]
+    except Exception as e:
+        print("[WARN] DeepL失敗:", e)
+        return text
 
 # =====================
 # RSS安全取得
@@ -141,60 +114,39 @@ def published_date(entry):
 def safe_parse(url):
     try:
         return feedparser.parse(url).entries
-    except Exception:
+    except Exception as e:
+        print("[WARN] RSS失敗:", url, e)
         return []
-
-# =====================
-# HTML描画
-# =====================
-def render_articles(articles, highlight=False):
-    bg = "#fff5f5" if highlight else "#ffffff"
-    border = "#c53030" if highlight else "#d0d7de"
-
-    html = ""
-    for a in articles:
-        stars = "★" * a["score"] if a["score"] > 0 else "－"
-        html += f"""
-        <div style="margin-bottom:18px;padding:12px;
-                    background:{bg};border-left:4px solid {border};">
-          <div style="font-weight:bold;color:#1a365d;">{a['title']}</div>
-          <div style="margin:6px 0;color:#333;">{a['summary']}</div>
-          <div style="font-size:12px;color:#555;">
-            重要度：{stars} ｜ Published：{a['published']}
-          </div>
-          <div style="font-size:12px;">
-            <a href="{a['link']}" target="_blank">▶ 元記事を読む</a>
-          </div>
-        </div>
-        """
-    return html
 
 # =====================
 # HTML生成
 # =====================
 def generate_html():
     body = """
-    <html><body style="font-family:'Meiryo UI','Segoe UI',sans-serif;">
-    <div style="max-width:900px;margin:auto;">
+    <html>
+    <body style="font-family:'Meiryo UI','Segoe UI',sans-serif;background:#f8fafc;padding:20px;">
+    <div style="max-width:900px;margin:auto;background:#ffffff;padding:24px;">
     <h2>主要ニュース速報</h2>
-    <p>ニュースサマリ</p><hr>
+    <p>ニュースサマリ</p>
+    <hr>
     """
 
-    for media, (count, feeds) in MEDIA.items():
+    for media, (limit, feeds) in MEDIA.items():
         entries = []
-        for url in feeds:
-            entries.extend(safe_parse(url))
+        for f in feeds:
+            entries.extend(safe_parse(f))
 
         entries = sorted(
             entries,
             key=lambda e: e.published_parsed if hasattr(e, "published_parsed") else 0,
             reverse=True
-        )[:count]
+        )
 
         articles = []
         for e in entries:
-            title = clean_html(e.get("title", ""))
-            summary = simple_summary(e)
+            title = clean_html(e.get("title",""))
+            summary_raw = clean_html(e.get("summary",""))
+            summary = deepl_translate(summary_raw[:300])
             score = importance_score(title + summary)
 
             articles.append({
@@ -202,19 +154,29 @@ def generate_html():
                 "summary": summary,
                 "score": score,
                 "published": published_date(e),
-                "link": e.get("link", "")
+                "link": e.get("link","")
             })
 
-        # 重要度 → 新しさ順
-        articles = sorted(
-            articles,
-            key=lambda x: (x["score"], x["published"]),
-            reverse=True
-        )
+            if len(articles) >= limit:
+                break
 
-        body += f"<h3>【{media}｜最新{len(articles)}件】</h3>"
-        body += render_articles([a for a in articles if a["score"] == 3], highlight=True)
-        body += render_articles([a for a in articles if a["score"] < 3])
+        articles.sort(key=lambda x: x["score"], reverse=True)
+
+        body += f"<h3>【{media}｜{len(articles)}件】</h3>"
+
+        for a in articles:
+            stars = "★"*a["score"] if a["score"] else "－"
+            body += f"""
+            <div style="margin-bottom:16px;padding:12px;border-left:4px solid #3182ce;">
+              <div style="font-weight:bold">{a['title']}</div>
+              <div style="margin:6px 0">{a['summary']}</div>
+              <div style="font-size:12px;color:#555">
+                重要度：{stars} ｜ Published：{a['published']}
+              </div>
+              <a href="{a['link']}" target="_blank">▶ 元記事</a>
+            </div>
+            """
+
         body += "<hr>"
 
     body += "</div></body></html>"
@@ -229,14 +191,18 @@ def send_mail(html):
     msg["From"] = MAIL_FROM
     msg["To"] = MAIL_TO
 
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-        server.starttls()
-        server.login(MAIL_FROM, MAIL_PASSWORD)
-        server.send_message(msg)
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
+        s.starttls()
+        s.login(MAIL_FROM, MAIL_PASSWORD)
+        s.send_message(msg)
 
 # =====================
 # 実行
 # =====================
 if __name__ == "__main__":
-    html = generate_html()
+    try:
+        html = generate_html()
+    except Exception as e:
+        html = f"<pre>ニュース取得失敗\n{e}</pre>"
+
     send_mail(html)
