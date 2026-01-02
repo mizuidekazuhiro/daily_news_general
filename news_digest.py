@@ -4,6 +4,7 @@ import re
 import os
 import socket
 import requests
+import urllib.parse
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 
@@ -85,9 +86,6 @@ COLOR_BORDER = {3:"#c53030",2:"#dd6b20",1:"#3182ce",0:"#d0d7de"}
 def clean(text):
     return re.sub("<[^<]+?>", "", text).strip()
 
-def is_english(text):
-    return re.search(r"[A-Za-z]", text) is not None
-
 def importance_score(text):
     text = text.lower()
     return min(sum(w in text for v in IMPORTANT_KEYWORDS.values() for w in v), 3)
@@ -119,11 +117,7 @@ def deepl_translate(text):
     try:
         r = requests.post(
             "https://api-free.deepl.com/v2/translate",
-            data={
-                "auth_key": DEEPL_API_KEY,
-                "text": text,
-                "target_lang": "JA"
-            },
+            data={"auth_key":DEEPL_API_KEY,"text":text,"target_lang":"JA"},
             timeout=10
         )
         return r.json()["translations"][0]["text"]
@@ -132,7 +126,7 @@ def deepl_translate(text):
 
 def normalize_link(url):
     if "news.google.com" in url and "url=" in url:
-        url = re.sub(r".*url=", "", url)
+        url = urllib.parse.unquote(re.sub(r".*url=", "", url))
     url = re.sub(r"&utm_.*", "", url)
     return url.strip()
 
@@ -163,13 +157,11 @@ def is_within_24h(entry):
     return dt.astimezone(JST) >= now_jst - timedelta(hours=24)
 
 def generate_html():
-    media_articles = {}
+    all_articles = []
     seen = set()
     raw_media = {"Kallanish","BigMint","Fastmarkets","Argus"}
 
     for media, feeds in MEDIA.items():
-        articles = []
-
         for url in feeds:
             for e in safe_parse(url):
                 if not is_within_24h(e):
@@ -181,9 +173,7 @@ def generate_html():
                 if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
                     continue
 
-                raw_link = e.get("link","")
-                final_url = resolve_final_url(raw_link)
-                link = normalize_link(final_url)
+                final_url = normalize_link(resolve_final_url(e.get("link","")))
 
                 dedup_key = re.sub(r"（.*?）|- .*?$", "", title)
                 if dedup_key in seen:
@@ -193,47 +183,44 @@ def generate_html():
                 score = importance_score(title + summary_raw)
 
                 if media in raw_media:
-                    body_text = scrape_article_text(link)
-                    summary = deepl_translate(body_text[:1000])
+                    body = scrape_article_text(final_url)
+                    summary = deepl_translate(title)
                 else:
-                    body_text = ""
-                    summary = summary_raw[:300]
+                    body = ""
+                    summary = ""
 
-                articles.append({
+                all_articles.append({
+                    "media": media,
                     "title": title,
                     "summary": summary,
-                    "body": body_text,
+                    "body": body,
                     "score": score,
                     "published": published(e),
-                    "link": link
+                    "link": final_url
                 })
 
-        media_articles[media] = sorted(
-            articles, key=lambda x:(x["score"],x["published"]), reverse=True
-        )[:15]
+    all_articles = sorted(all_articles, key=lambda x:(x["score"],x["published"]), reverse=True)
 
-    body = "<html><body><h2>主要ニュース速報</h2>"
-    for media, articles in media_articles.items():
-        body += f"<h3>【{media}｜{len(articles)}件】</h3>"
-        for a in articles:
-            stars = "★"*a["score"] if a["score"] else "－"
-            body += f"""
-            <div style="background:{COLOR_BG[a['score']]};
-            border-left:5px solid {COLOR_BORDER[a['score']]};
-            padding:12px;margin-bottom:14px;">
-            <b>{a['title']}</b><br>
-            <div><b>要約：</b><br>{a['summary']}</div>"""
-            if media in raw_media:
-                body += f"""<div><b>本文：</b><br><div style="white-space:pre-wrap;">{a['body']}</div></div>"""
-            body += f"""
-            <div style="font-size:12px;color:#555;">
-            {media}｜重要度:{stars}｜{a['published']}
-            </div>
-            <a href="{a['link']}">▶ 元記事</a>
-            </div>"""
-        body += "<hr>"
-    body += "</body></html>"
-    return body
+    body_html = "<html><body><h2>主要ニュース速報（重要度順）</h2>"
+    for a in all_articles:
+        stars = "★"*a["score"] if a["score"] else "－"
+        body_html += f"""
+        <div style="background:{COLOR_BG[a['score']]};
+        border-left:5px solid {COLOR_BORDER[a['score']]};
+        padding:12px;margin-bottom:14px;">
+        <b>{a['title']}</b><br>"""
+        if a["summary"]:
+            body_html += f"<div>{a['summary']}</div>"
+        if a["body"]:
+            body_html += f"<div style='white-space:pre-wrap;'>{a['body']}</div>"
+        body_html += f"""
+        <div style="font-size:12px;color:#555;">
+        {a['media']}｜重要度:{stars}｜{a['published']}
+        </div>
+        <a href="{a['link']}">▶ 元記事</a>
+        </div>"""
+    body_html += "</body></html>"
+    return body_html
 
 def send_mail(html):
     msg = MIMEText(html, "html", "utf-8")
