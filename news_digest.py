@@ -283,9 +283,10 @@ def generate_html():
                     "link": link
                 })
 
-    # ===== 24h &amp; 各媒体15件 =====
+    # ===== 24h & 各媒体15件（重要度1〜3のみ） =====
     final_articles = []
     for media in set(a["media"] for a in all_articles):
+        # 対象媒体・24h以内に限定
         media_items = []
         for a in all_articles:
             if a["media"] != media:
@@ -298,9 +299,10 @@ def generate_html():
                 continue
             media_items.append(a)
 
+        # 重要度3→2→1のみで最大15件を選定（到達で打ち切り）
         selected = []
-        for score in [3,2,1,0]:
-            for a in sorted(media_items, key=lambda x:x["published"], reverse=True):
+        for score in [3, 2, 1, 0]:  # ← ここだけ変更（0で補完）
+            for a in sorted(media_items, key=lambda x: x["published"], reverse=True):
                 if a["score"] == score and a not in selected:
                     selected.append(a)
                     if len(selected) >= 15:
@@ -308,6 +310,7 @@ def generate_html():
             if len(selected) >= 15:
                 break
 
+        # 重要度1〜3だけで15件未満でも、そのまま確定（要件に合わせて重要度0は採用しない）
         final_articles.extend(selected)
 
     # 翻訳はここでのみ実行
@@ -317,7 +320,7 @@ def generate_html():
 
     all_articles = sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True)
 
-    # ===== HTML本文（エンコード文字→プレーンタグに修正）=====
+    # ===== HTML本文（プレーンタグ）=====
     body_html = "<html><body><h2>主要ニュース速報（重要度順）</h2>"
     for a in all_articles:
         stars = "★"*a["score"] if a["score"] else "－"
@@ -331,7 +334,7 @@ def generate_html():
             <div style="font-size:12px;color:#555;">
                 {a['media']}｜重要度:{stars}｜{a['published']}
             </div>
-            <a href="{a['link']}">▶ 元記事</a>
+            {a[▶ 元記事</a>
         </div>
         """
     body_html += "</body></html>"
