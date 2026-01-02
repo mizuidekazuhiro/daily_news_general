@@ -30,6 +30,21 @@ JST = timezone(timedelta(hours=9))
 now_jst = datetime.now(JST)
 
 # =====================
+# 天気取得（★追加）
+# =====================
+def get_today_weather():
+    try:
+        rss = feedparser.parse(
+            "https://rss.weather.yahoo.co.jp/rss/days/4410.xml"  # 東京
+        )
+        if rss.entries:
+            title = rss.entries[0].title
+            return f"☀ 本日の東京の天気：{title}"
+    except:
+        pass
+    return "☀ 本日の東京の天気：取得できませんでした"
+
+# =====================
 # 媒体設定（変更なし）
 # =====================
 MEDIA = {
@@ -57,10 +72,8 @@ IMPORTANT_KEYWORDS = {
     "鉄鋼": ["steel","iron","scrap","rebar","製鉄","鉄鋼","高炉","電炉"],
     "建設": ["construction","infrastructure","建設","再開発"],
     "AI": ["ai","artificial intelligence","semiconductor","半導体","生成ai"],
-    "銀行": ["bank","banking","loan","credit","銀行","金融機関"],
     "政治": ["government","policy","election","政権","政策","規制"],
     "企業": ["company","earnings","決算","m&a","投資"],
-    "金融": ["market","interest","rate","金利","市場"],
     "通商": ["trade","tariff","sanction","関税","制裁"],
     "重点国": ["india","indian","インド","vietnam","ベトナム"]
 }
@@ -111,8 +124,22 @@ def safe_parse(url):
         return []
 
 def is_nikkei_noise(title, summary):
-    noise = ["会社情報", "与信管理", "NIKKEI COMPASS"]
+    noise = [
+        "会社情報","与信管理","NIKKEI COMPASS",
+        "セミナー","イベント","説明会","講演",
+        "参加者募集","オンライン開催","受講料","主催"
+    ]
     return any(n in title or n in summary for n in noise)
+
+# =====================
+# 24時間以内判定（変更なし）
+# =====================
+def is_within_24h(entry):
+    if not hasattr(entry, "published_parsed") or not entry.published_parsed:
+        return False
+    published_utc = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc)
+    published_jst = published_utc.astimezone(JST)
+    return published_jst >= now_jst - timedelta(hours=24)
 
 # =====================
 # DeepL 要約（変更なし）
@@ -133,9 +160,10 @@ def deepl_translate(text):
         return text
 
 # =====================
-# HTML生成（★ここだけ変更）
+# HTML生成（★天気行を冒頭に追加）
 # =====================
 def generate_html():
+    weather_line = get_today_weather()
     media_articles = {}
     seen = set()
 
@@ -144,6 +172,9 @@ def generate_html():
 
         for url in feeds:
             for e in safe_parse(url):
+                if not is_within_24h(e):
+                    continue
+
                 title = clean(e.get("title", ""))
                 summary_raw = clean(e.get("summary", ""))
 
@@ -177,9 +208,10 @@ def generate_html():
             reverse=True
         )[:15]
 
-    body = """
+    body = f"""
     <html>
     <body style="font-family:'Meiryo UI','Segoe UI',sans-serif;">
+    <p style="font-size:14px;color:#333;">{weather_line}</p>
     <h2>主要ニュース速報</h2>
     """
 
