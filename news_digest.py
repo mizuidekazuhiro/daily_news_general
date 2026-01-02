@@ -125,21 +125,8 @@ def deepl_translate(text):
         return text
 
 def normalize_link(url):
-    if "news.google.com" in url and "url=" in url:
-        url = urllib.parse.unquote(re.sub(r".*url=", "", url))
     url = re.sub(r"&utm_.*", "", url)
     return url.strip()
-
-def resolve_final_url(url):
-    try:
-        return requests.get(
-            url,
-            timeout=10,
-            allow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0"}
-        ).url
-    except:
-        return url
 
 def is_nikkei_noise(title, summary):
     noise = [
@@ -178,7 +165,8 @@ def generate_html():
                 if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
                     continue
 
-                final_url = normalize_link(resolve_final_url(e.get("link","")))
+                raw_url = e.source.href if hasattr(e, "source") and "href" in e.source else e.get("link","")
+                final_url = normalize_link(raw_url)
 
                 dedup_key = re.sub(r"（.*?）|- .*?$", "", title)
                 if dedup_key in seen:
