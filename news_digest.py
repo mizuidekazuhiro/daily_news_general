@@ -32,16 +32,16 @@ IS_MONDAY = now_jst.weekday() == 0  # 月曜
 # 媒体設定（Google News RSS）
 # =====================
 MEDIA = {
+
     "日経新聞": (
         30,
         [
-            "https://www.nikkei.com/rss/news/politics.xml",
-            "https://www.nikkei.com/rss/news/economy.xml",
-            "https://www.nikkei.com/rss/news/industry.xml",
-            "https://www.nikkei.com/rss/news/markets.xml"
+            "https://news.google.com/rss/search?q=日本経済新聞+経済&hl=ja&gl=JP&ceid=JP:ja",
+            "https://news.google.com/rss/search?q=日本経済新聞+企業&hl=ja&gl=JP&ceid=JP:ja",
+            "https://news.google.com/rss/search?q=日本経済新聞+金融&hl=ja&gl=JP&ceid=JP:ja",
+            "https://news.google.com/rss/search?q=日本経済新聞+政策&hl=ja&gl=JP&ceid=JP:ja"
         ]
     ),
-
 
     "Bloomberg": (
         30,
