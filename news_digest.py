@@ -59,9 +59,9 @@ MEDIA = {
     "Reuters": [
         "https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja",
         "https://news.google.com/rss/search?q=Reuters&hl=en&ceid=US:en"
-    ]
+    ],
     "MySteel": [
-        "https://news.google.com/rss/search?q=site:argusmedia.com&hl=en&ceid=US:en"
+        "https://news.google.com/rss/search?q=steel+mysteel&hl=en&ceid=US:en"
     ],
 }
 
