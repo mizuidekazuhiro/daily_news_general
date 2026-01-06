@@ -60,6 +60,9 @@ MEDIA = {
         "https://news.google.com/rss/search?q=Reuters&hl=ja&gl=JP&ceid=JP:ja",
         "https://news.google.com/rss/search?q=Reuters&hl=en&ceid=US:en"
     ]
+    "MySteel": [
+        "https://news.google.com/rss/search?q=site:argusmedia.com&hl=en&ceid=US:en"
+    ],
 }
 
 # =====================
@@ -238,7 +241,7 @@ def generate_html():
 
     # ★翻訳ルール（英語のみ）
     for a in final_articles:
-        if a["media"] in {"Kallanish","BigMint","Fastmarkets","Argus","Reuters","Bloomberg"}:
+        if a["media"] in {"Kallanish","BigMint","Fastmarkets","Argus","MySteel","Reuters","Bloomberg"}:
             if not is_japanese(a["title"]):
                 a["summary"] = deepl_translate(a["title"])
 
