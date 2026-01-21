@@ -5,6 +5,7 @@ import os
 import socket
 import requests
 import urllib.parse
+import logging
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 
@@ -12,6 +13,14 @@ from datetime import datetime, timedelta, timezone
 # タイムアウト設定
 # =====================
 socket.setdefaulttimeout(10)
+
+# =====================
+# logging
+# =====================
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s"
+)
 
 # =====================
 # メール設定
@@ -126,8 +135,15 @@ def deepl_translate(text):
             },
             timeout=10
         )
-        return r.json()["translations"][0]["text"]
-    except:
+        r.raise_for_status()
+        payload = r.json()
+        return payload["translations"][0]["text"]
+    except requests.RequestException as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", "unknown")
+        logging.warning("DeepL request failed (status=%s): %s", status, exc)
+        return text
+    except (KeyError, ValueError) as exc:
+        logging.warning("DeepL response parse failed: %s", exc)
         return text
 
 def normalize_link(url):
