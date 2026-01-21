@@ -3,11 +3,14 @@ import smtplib
 import re
 import os
 import socket
-import requests
 import urllib.parse
 import logging
+import json
+from pathlib import Path
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
+
+from openai import OpenAI
 
 # =====================
 # タイムアウト設定
@@ -28,7 +31,6 @@ logging.basicConfig(
 MAIL_FROM = os.environ["MAIL_FROM"]
 MAIL_TO = os.environ["MAIL_TO"]
 MAIL_PASSWORD = os.environ["MAIL_PASSWORD"]
-DEEPL_API_KEY = os.environ["DEEPL_API_KEY"]
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
@@ -93,6 +95,17 @@ COLOR_BG = {3:"#fff5f5",2:"#fffaf0",1:"#f0f9ff",0:"#ffffff"}
 COLOR_BORDER = {3:"#c53030",2:"#dd6b20",1:"#3182ce",0:"#d0d7de"}
 
 # =====================
+# 翻訳設定
+# =====================
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "512"))
+OPENAI_TRANSLATION_BATCH_SIZE = int(os.getenv("OPENAI_TRANSLATION_BATCH_SIZE", "30"))
+TITLE_TRANSLATION_CACHE_PATH = os.getenv(
+    "TITLE_TRANSLATION_CACHE_PATH",
+    os.path.join("data", "title_translation_cache.json")
+)
+
+# =====================
 # ユーティリティ
 # =====================
 def clean(text):
@@ -123,28 +136,6 @@ def safe_parse(url):
         return feedparser.parse(url).entries
     except:
         return []
-
-def deepl_translate(text):
-    try:
-        r = requests.post(
-            "https://api-free.deepl.com/v2/translate",
-            data={
-                "auth_key": DEEPL_API_KEY,
-                "text": text,
-                "target_lang": "JA"
-            },
-            timeout=10
-        )
-        r.raise_for_status()
-        payload = r.json()
-        return payload["translations"][0]["text"]
-    except requests.RequestException as exc:
-        status = getattr(getattr(exc, "response", None), "status_code", "unknown")
-        logging.warning("DeepL request failed (status=%s): %s", status, exc)
-        return text
-    except (KeyError, ValueError) as exc:
-        logging.warning("DeepL response parse failed: %s", exc)
-        return text
 
 def normalize_link(url):
     if "news.google.com" in url and "url=" in url:
@@ -178,6 +169,123 @@ def normalize_title(title):
 
 def is_japanese(text):
     return bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", text))
+
+def normalize_cache_key(title):
+    return re.sub(r"\s+", " ", title.strip())
+
+def load_translation_cache(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+        logging.warning("Translation cache is not a dict. Reinitializing.")
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        logging.warning("Failed to load translation cache: %s", exc)
+        return {}
+
+def save_translation_cache(path, cache):
+    cache_path = Path(path)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_path.with_suffix(cache_path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
+    tmp_path.replace(cache_path)
+
+def translate_titles_to_ja(titles):
+    total_titles = len(titles)
+    if total_titles == 0:
+        return []
+
+    cache = load_translation_cache(TITLE_TRANSLATION_CACHE_PATH)
+    normalized_titles = [normalize_cache_key(title) for title in titles]
+    translations = [None] * total_titles
+    cache_hits = 0
+    cache_misses = 0
+    missing_keys = []
+    key_to_title = {}
+    key_to_indices = {}
+
+    for idx, (title, key) in enumerate(zip(titles, normalized_titles)):
+        if key in cache:
+            translations[idx] = cache[key]
+            cache_hits += 1
+        else:
+            cache_misses += 1
+            if key not in key_to_title:
+                key_to_title[key] = title
+                missing_keys.append(key)
+            key_to_indices.setdefault(key, []).append(idx)
+
+    api_calls = 0
+    prompt_tokens = 0
+    completion_tokens = 0
+    total_tokens = 0
+
+    if missing_keys:
+        if not os.getenv("OPENAI_API_KEY"):
+            logging.warning("OPENAI_API_KEY is not set. Using original titles.")
+        else:
+            client = OpenAI()
+            system_prompt = (
+                "あなたは翻訳エンジン。入力の配列を日本語に翻訳し、厳密JSONのみ返す。"
+                "固有名詞/企業名/略語は原則保持し、意訳しすぎない。"
+            )
+            for start in range(0, len(missing_keys), OPENAI_TRANSLATION_BATCH_SIZE):
+                batch_keys = missing_keys[start:start + OPENAI_TRANSLATION_BATCH_SIZE]
+                batch_titles = [key_to_title[key] for key in batch_keys]
+                try:
+                    response = client.chat.completions.create(
+                        model=OPENAI_MODEL,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": json.dumps(batch_titles, ensure_ascii=False)}
+                        ],
+                        temperature=0,
+                        max_tokens=OPENAI_MAX_OUTPUT_TOKENS,
+                        response_format={"type": "json_object"}
+                    )
+                    api_calls += 1
+                    usage = getattr(response, "usage", None)
+                    if usage:
+                        prompt_tokens += getattr(usage, "prompt_tokens", 0) or 0
+                        completion_tokens += getattr(usage, "completion_tokens", 0) or 0
+                        total_tokens += getattr(usage, "total_tokens", 0) or 0
+
+                    content = response.choices[0].message.content
+                    payload = json.loads(content)
+                    batch_translations = payload.get("translations")
+                    if not isinstance(batch_translations, list) or len(batch_translations) != len(batch_titles):
+                        raise ValueError("Invalid translation response format.")
+
+                    for key, translated in zip(batch_keys, batch_translations):
+                        cache[key] = translated
+                        for idx in key_to_indices.get(key, []):
+                            translations[idx] = translated
+                except Exception as exc:
+                    logging.warning("OpenAI translation failed: %s", exc)
+
+    for idx, title in enumerate(titles):
+        if translations[idx] is None:
+            translations[idx] = title
+
+    if cache_misses:
+        save_translation_cache(TITLE_TRANSLATION_CACHE_PATH, cache)
+
+    logging.info(
+        "Translation stats: total=%s, cache_hits=%s, cache_misses=%s, api_calls=%s, tokens_prompt=%s, tokens_completion=%s, tokens_total=%s",
+        total_titles,
+        cache_hits,
+        cache_misses,
+        api_calls,
+        prompt_tokens,
+        completion_tokens,
+        total_tokens
+    )
+    return translations
 
 # =====================
 # generate
@@ -232,6 +340,7 @@ def generate_html():
                     item = {
                         "media": media,
                         "title": title,
+                        "title_ja": "",
                         "summary": "",
                         "score": score,
                         "published": published(e),
@@ -256,10 +365,20 @@ def generate_html():
         final_articles.extend(collected)
 
     # ★翻訳ルール（英語のみ）
-    for a in final_articles:
-        if a["media"] in {"Kallanish","BigMint","Fastmarkets","Argus","MySteel","Reuters","Bloomberg"}:
-            if not is_japanese(a["title"]):
-                a["summary"] = deepl_translate(a["title"])
+    target_media = {"Kallanish","BigMint","Fastmarkets","Argus","MySteel","Reuters","Bloomberg"}
+    to_translate = []
+    translate_indices = []
+    for idx, article in enumerate(final_articles):
+        if article["media"] in target_media and not is_japanese(article["title"]):
+            to_translate.append(article["title"])
+            translate_indices.append(idx)
+        else:
+            article["title_ja"] = article["title"]
+
+    if to_translate:
+        translated = translate_titles_to_ja(to_translate)
+        for idx, translated_title in zip(translate_indices, translated):
+            final_articles[idx]["title_ja"] = translated_title
 
     body_html = """
     <html>
@@ -276,11 +395,12 @@ def generate_html():
 
     for a in sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True):
         stars = "★"*a["score"] if a["score"] else "－"
+        display_title = a.get("title_ja") or a["title"]
         body_html += f"""
         <div style="background:{COLOR_BG[a['score']]};
                     border-left:5px solid {COLOR_BORDER[a['score']]};
                     padding:12px;margin-bottom:14px;">
-            <b>{a['title']}</b><br>
+            <b>{display_title}</b><br>
         """
         if a["summary"]:
             body_html += f"<div>{a['summary']}</div>"
