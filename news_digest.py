@@ -28,9 +28,9 @@ logging.basicConfig(
 # =====================
 # メール設定
 # =====================
-MAIL_FROM = os.environ["MAIL_FROM"]
-MAIL_TO = os.environ["MAIL_TO"]
-MAIL_PASSWORD = os.environ["MAIL_PASSWORD"]
+MAIL_FROM = os.getenv("MAIL_FROM", "")
+MAIL_TO = os.getenv("MAIL_TO", "")
+MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 
@@ -97,13 +97,14 @@ COLOR_BORDER = {3:"#c53030",2:"#dd6b20",1:"#3182ce",0:"#d0d7de"}
 # =====================
 # 翻訳設定
 # =====================
-OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-2024-08-06")
 OPENAI_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_MAX_OUTPUT_TOKENS", "512"))
 OPENAI_TRANSLATION_BATCH_SIZE = int(os.getenv("OPENAI_TRANSLATION_BATCH_SIZE", "30"))
 TITLE_TRANSLATION_CACHE_PATH = os.getenv(
     "TITLE_TRANSLATION_CACHE_PATH",
     os.path.join("data", "title_translation_cache.json")
 )
+OPENAI_RESPONSE_TRUNCATE_CHARS = int(os.getenv("OPENAI_RESPONSE_TRUNCATE_CHARS", "500"))
 
 # =====================
 # ユーティリティ
@@ -127,9 +128,23 @@ def importance_score(text):
     return min(score, 3)
 
 def published(entry):
+    published_dt = get_published_datetime(entry)
+    if not published_dt:
+        return "N/A"
+    return published_dt.strftime("%Y-%m-%d %H:%M")
+
+def get_published_datetime(entry):
+    parsed = None
     if hasattr(entry, "published_parsed") and entry.published_parsed:
-        return datetime(*entry.published_parsed[:6]).strftime("%Y-%m-%d %H:%M")
-    return "N/A"
+        parsed = entry.published_parsed
+    elif hasattr(entry, "updated_parsed") and entry.updated_parsed:
+        parsed = entry.updated_parsed
+    if parsed:
+        try:
+            return datetime(*parsed[:6], tzinfo=timezone.utc).astimezone(JST)
+        except (TypeError, ValueError):
+            return None
+    return None
 
 def safe_parse(url):
     try:
@@ -157,7 +172,8 @@ def is_nikkei_noise(title, summary):
     return any(n in title or n in summary for n in noise)
 
 def is_within_24h(dt):
-    return dt >= now_jst - timedelta(hours=24)
+    current = datetime.now(JST)
+    return dt >= current - timedelta(hours=24)
 
 def normalize_title(title):
     t = title.lower()
@@ -181,10 +197,10 @@ def load_translation_cache(path):
             data = json.load(f)
         if isinstance(data, dict):
             return data
-        logging.warning("Translation cache is not a dict. Reinitializing.")
+        logging.warning("Translation cache is not a dict. Reinitializing to empty cache.")
         return {}
     except (OSError, json.JSONDecodeError) as exc:
-        logging.warning("Failed to load translation cache: %s", exc)
+        logging.warning("Failed to load translation cache; reinitializing: %s", exc)
         return {}
 
 def save_translation_cache(path, cache):
@@ -195,7 +211,98 @@ def save_translation_cache(path, cache):
         json.dump(cache, f, ensure_ascii=False, indent=2)
     tmp_path.replace(cache_path)
 
-def translate_titles_to_ja(titles):
+def truncate_for_log(text, limit):
+    if text is None:
+        return ""
+    text = str(text)
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "...(truncated)"
+
+def estimate_max_output_tokens(titles):
+    total_chars = sum(len(title) for title in titles)
+    estimated_tokens = max(128, total_chars // 2)
+    return max(OPENAI_MAX_OUTPUT_TOKENS, min(2048, estimated_tokens))
+
+def normalize_translations_payload(payload):
+    if isinstance(payload, list):
+        return payload
+    if isinstance(payload, dict):
+        if "translations" in payload:
+            translations = payload["translations"]
+            if isinstance(translations, list):
+                return translations
+            if isinstance(translations, dict):
+                payload = translations
+            else:
+                return None
+        if all(isinstance(k, str) and k.isdigit() for k in payload.keys()):
+            ordered_keys = sorted(payload.keys(), key=lambda x: int(x))
+            return [payload[key] for key in ordered_keys]
+    return None
+
+def parse_translation_response(content, expected_len):
+    payload = json.loads(content)
+    translations = normalize_translations_payload(payload)
+    if not isinstance(translations, list) or len(translations) != expected_len:
+        raise ValueError("Invalid translation response format.")
+    return translations
+
+def is_valid_translation(source, translated):
+    if not isinstance(translated, str):
+        return False
+    candidate = translated.strip()
+    if not candidate:
+        return False
+    if candidate == source.strip():
+        return False
+    return True
+
+def build_translation_messages(titles):
+    system_prompt = (
+        "あなたは翻訳エンジン。入力配列を日本語の配列に翻訳して返す。"
+        "固有名詞/企業名/略語は原則保持し、過度な意訳を避ける。"
+        "タイトルなので短く自然な日本語にする。入力順序を必ず維持する。"
+        "出力は{\"translations\":[...]}の厳密JSONのみ。"
+    )
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": json.dumps(titles, ensure_ascii=False)}
+    ]
+
+def build_response_format(use_schema):
+    if use_schema:
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "translation_response",
+                "schema": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "translations": {
+                            "type": "array",
+                            "items": {"type": "string"}
+                        }
+                    },
+                    "required": ["translations"]
+                }
+            }
+        }
+    return {"type": "json_object"}
+
+def request_translations(client, titles, model, use_schema):
+    response_format = build_response_format(use_schema)
+    response = client.chat.completions.create(
+        model=model,
+        messages=build_translation_messages(titles),
+        temperature=0,
+        max_tokens=estimate_max_output_tokens(titles),
+        response_format=response_format
+    )
+    return response, response_format["type"]
+
+def translate_titles_to_ja(titles, client_factory=OpenAI):
     total_titles = len(titles)
     if total_titles == 0:
         return []
@@ -224,29 +331,35 @@ def translate_titles_to_ja(titles):
     prompt_tokens = 0
     completion_tokens = 0
     total_tokens = 0
+    cached_updates = 0
 
     if missing_keys:
         if not os.getenv("OPENAI_API_KEY"):
-            logging.warning("OPENAI_API_KEY is not set. Using original titles.")
-        else:
-            client = OpenAI()
-            system_prompt = (
-                "あなたは翻訳エンジン。入力の配列を日本語に翻訳し、厳密JSONのみ返す。"
-                "固有名詞/企業名/略語は原則保持し、意訳しすぎない。"
+            logging.warning(
+                "OPENAI_API_KEY is not set. Using original titles for %s items.",
+                len(missing_keys)
             )
+        else:
+            client = client_factory()
             for start in range(0, len(missing_keys), OPENAI_TRANSLATION_BATCH_SIZE):
                 batch_keys = missing_keys[start:start + OPENAI_TRANSLATION_BATCH_SIZE]
                 batch_titles = [key_to_title[key] for key in batch_keys]
+                response_format_type = "json_schema"
                 try:
-                    response = client.chat.completions.create(
-                        model=OPENAI_MODEL,
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": json.dumps(batch_titles, ensure_ascii=False)}
-                        ],
-                        temperature=0,
-                        max_tokens=OPENAI_MAX_OUTPUT_TOKENS,
-                        response_format={"type": "json_object"}
+                    logging.info(
+                        "Translation batch: api_calls=%s batch_size=%s model=%s response_format=%s cache_hits=%s cache_misses=%s",
+                        api_calls,
+                        len(batch_titles),
+                        OPENAI_MODEL,
+                        response_format_type,
+                        cache_hits,
+                        cache_misses
+                    )
+                    response, response_format_type = request_translations(
+                        client,
+                        batch_titles,
+                        OPENAI_MODEL,
+                        use_schema=True
                     )
                     api_calls += 1
                     usage = getattr(response, "usage", None)
@@ -256,23 +369,67 @@ def translate_titles_to_ja(titles):
                         total_tokens += getattr(usage, "total_tokens", 0) or 0
 
                     content = response.choices[0].message.content
-                    payload = json.loads(content)
-                    batch_translations = payload.get("translations")
-                    if not isinstance(batch_translations, list) or len(batch_translations) != len(batch_titles):
-                        raise ValueError("Invalid translation response format.")
-
-                    for key, translated in zip(batch_keys, batch_translations):
-                        cache[key] = translated
-                        for idx in key_to_indices.get(key, []):
-                            translations[idx] = translated
+                    batch_translations = parse_translation_response(content, len(batch_titles))
                 except Exception as exc:
-                    logging.warning("OpenAI translation failed: %s", exc)
+                    raw_content = ""
+                    if "content" in locals():
+                        raw_content = truncate_for_log(content, OPENAI_RESPONSE_TRUNCATE_CHARS)
+                    logging.warning(
+                        "OpenAI translation failed with json_schema: %s; raw_content=%s",
+                        exc,
+                        raw_content
+                    )
+                    response_format_type = "json_object"
+                    try:
+                        logging.info(
+                            "Translation batch: api_calls=%s batch_size=%s model=%s response_format=%s cache_hits=%s cache_misses=%s",
+                            api_calls,
+                            len(batch_titles),
+                            OPENAI_MODEL,
+                            response_format_type,
+                            cache_hits,
+                            cache_misses
+                        )
+                        response, response_format_type = request_translations(
+                            client,
+                            batch_titles,
+                            OPENAI_MODEL,
+                            use_schema=False
+                        )
+                        api_calls += 1
+                        usage = getattr(response, "usage", None)
+                        if usage:
+                            prompt_tokens += getattr(usage, "prompt_tokens", 0) or 0
+                            completion_tokens += getattr(usage, "completion_tokens", 0) or 0
+                            total_tokens += getattr(usage, "total_tokens", 0) or 0
+                        content = response.choices[0].message.content
+                        batch_translations = parse_translation_response(content, len(batch_titles))
+                    except Exception as retry_exc:
+                        raw_content = ""
+                        if "content" in locals():
+                            raw_content = truncate_for_log(content, OPENAI_RESPONSE_TRUNCATE_CHARS)
+                        logging.warning(
+                            "OpenAI translation failed after fallback: %s; raw_content=%s",
+                            retry_exc,
+                            raw_content
+                        )
+                        continue
+
+                for key, translated in zip(batch_keys, batch_translations):
+                    source_title = key_to_title[key]
+                    if is_valid_translation(source_title, translated):
+                        cache[key] = translated
+                        cached_updates += 1
+                    else:
+                        translated = source_title
+                    for idx in key_to_indices.get(key, []):
+                        translations[idx] = translated
 
     for idx, title in enumerate(titles):
         if translations[idx] is None:
             translations[idx] = title
 
-    if cache_misses:
+    if cached_updates:
         save_translation_cache(TITLE_TRANSLATION_CACHE_PATH, cache)
 
     logging.info(
@@ -315,11 +472,8 @@ def generate_html():
                     summary_raw = clean(e.get("summary", ""))
                     link = normalize_link(e.get("link",""))
 
-                    try:
-                        dt = datetime.strptime(
-                            published(e), "%Y-%m-%d %H:%M"
-                        ).replace(tzinfo=JST)
-                    except:
+                    dt = get_published_datetime(e)
+                    if not dt:
                         continue
 
                     if not is_within_24h(dt):
@@ -375,6 +529,11 @@ def generate_html():
         else:
             article["title_ja"] = article["title"]
 
+    logging.info(
+        "Article collection: collected=%s translate_targets=%s",
+        len(final_articles),
+        len(to_translate)
+    )
     if to_translate:
         translated = translate_titles_to_ja(to_translate)
         for idx, translated_title in zip(translate_indices, translated):
