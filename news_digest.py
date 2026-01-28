@@ -557,12 +557,19 @@ def generate_html():
     for a in sorted(final_articles, key=lambda x:(x["score"],x["published"]), reverse=True):
         stars = "★"*a["score"] if a["score"] else "－"
         display_title = a.get("title_ja") or a["title"]
+        is_english_article = not is_japanese(a["title"])
         body_html += f"""
         <div style="background:{COLOR_BG[a['score']]};
                     border-left:5px solid {COLOR_BORDER[a['score']]};
                     padding:12px;margin-bottom:14px;">
             <b>{display_title}</b><br>
         """
+        if is_english_article:
+            body_html += f"""
+            <div style="font-size:12px;color:#666;font-style:italic;margin-top:4px;">
+                🇬🇧 EN: {a['title']}
+            </div>
+            """
         if a["summary"]:
             body_html += f"<div>{a['summary']}</div>"
         body_html += f"""
