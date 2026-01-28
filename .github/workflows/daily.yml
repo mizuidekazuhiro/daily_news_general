@@ -23,3 +23,5 @@ jobs:
           MAIL_TO: ${{ secrets.MAIL_TO }}
           MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
           DEEPL_API_KEY: ${{ secrets.DEEPL_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-4o-mini
