@@ -334,6 +334,8 @@ def translate_titles_to_ja(titles, client_factory=OpenAI):
     cached_updates = 0
 
     if missing_keys:
+        logging.info("OPENAI_API_KEY is set? %s", bool(os.getenv("OPENAI_API_KEY")))
+        logging.info("OPENAI_MODEL=%s", OPENAI_MODEL)
         if not os.getenv("OPENAI_API_KEY"):
             logging.warning(
                 "OPENAI_API_KEY is not set. Using original titles for %s items.",
