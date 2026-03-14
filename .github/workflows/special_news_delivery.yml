@@ -1,0 +1,30 @@
+name: special-news-delivery
+
+on:
+  schedule:
+    - cron: '0 20 * * *' # JST 05:00
+  workflow_dispatch:
+
+jobs:
+  send-special-news:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run special news delivery
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          SPECIAL_NEWS_MAIL_TO: ${{ secrets.SPECIAL_NEWS_MAIL_TO }}
+          SPECIAL_NEWS_MAIL_CC: ${{ secrets.SPECIAL_NEWS_MAIL_CC }}
+          SPECIAL_NEWS_MAIL_BCC: ${{ secrets.SPECIAL_NEWS_MAIL_BCC }}
+          SPECIAL_NEWS_MAIL_SUBJECT_PREFIX: ${{ secrets.SPECIAL_NEWS_MAIL_SUBJECT_PREFIX }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_SPECIAL_NEWS_DB_ID: ${{ secrets.NOTION_SPECIAL_NEWS_DB_ID }}
+          NOTION_SPECIAL_NEWS_ENABLED: ${{ secrets.NOTION_SPECIAL_NEWS_ENABLED }}
+        run: python news_digest.py --job special
