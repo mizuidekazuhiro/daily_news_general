@@ -1,0 +1,28 @@
+{
+  "delivery_enabled": true,
+  "max_items_total": 50,
+  "media": [
+    {
+      "enabled": true,
+      "media_name": "鉄鋼新聞",
+      "alert_ids": ["steel-news-alert"],
+      "alert_feeds": [
+        "https://www.google.com/alerts/feeds/00000000000000000000/steel-news-alert"
+      ],
+      "display_order": 1,
+      "max_items": 20,
+      "subject_prefix": "【専門紙記事一覧】"
+    },
+    {
+      "enabled": true,
+      "media_name": "産業新聞",
+      "alert_ids": ["industrial-news-alert"],
+      "alert_feeds": [
+        "https://www.google.com/alerts/feeds/00000000000000000000/industrial-news-alert"
+      ],
+      "display_order": 2,
+      "max_items": 20,
+      "subject_prefix": "【専門紙記事一覧】"
+    }
+  ]
+}

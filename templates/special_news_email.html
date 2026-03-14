@@ -1,0 +1,25 @@
+<html>
+  <body style="margin:0;padding:0;background:#f5f7fa;font-family:'Meiryo UI','Yu Gothic','Hiragino Kaku Gothic ProN',sans-serif;color:#1f2937;">
+    <div style="max-width:680px;margin:0 auto;padding:20px 12px;">
+      <div style="background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;padding:20px;">
+        <h2 style="margin:0 0 8px 0;font-size:20px;">専門紙記事一覧メール</h2>
+        <p style="margin:0 0 4px 0;font-size:14px;">対象日: <strong>{target_date}</strong> 更新分</p>
+        <p style="margin:0 0 16px 0;font-size:14px;">総件数: <strong>{total_items}</strong> 件</p>
+
+        {media_sections}
+
+        <hr style="border:none;border-top:1px solid #e5e7eb;margin:16px 0;" />
+        <p style="font-size:12px;color:#6b7280;margin:0 0 6px 0;">※本メールは Google Alert を参照して自動生成しています。</p>
+        <p style="font-size:12px;color:#6b7280;margin:0;">※本メールは自動配信です。返信には対応していません。</p>
+      </div>
+    </div>
+  </body>
+  <style>
+    h3 { margin: 16px 0 4px 0; font-size: 17px; border-left:4px solid #2563eb; padding-left:8px; }
+    p.count { margin: 0 0 8px 0; font-size: 13px; color:#4b5563; }
+    ol { margin: 0 0 8px 20px; padding: 0; }
+    li { margin: 0 0 8px 0; line-height: 1.55; font-size: 14px; }
+    a { color:#1d4ed8; text-decoration:none; }
+    .meta { font-size:12px;color:#6b7280; margin-left: 4px; }
+  </style>
+</html>

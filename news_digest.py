@@ -4,11 +4,15 @@ import re
 import os
 import socket
 import urllib.parse
+import urllib.request
 import logging
 import json
+import argparse
 from pathlib import Path
 from email.mime.text import MIMEText
+from email.utils import formataddr
 from datetime import datetime, timedelta, timezone
+from html import escape
 
 from openai import OpenAI
 
@@ -33,6 +37,18 @@ MAIL_TO = os.getenv("MAIL_TO", "")
 MAIL_PASSWORD = os.getenv("MAIL_PASSWORD", "")
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
+
+SPECIAL_NEWS_MAIL_TO = os.getenv("SPECIAL_NEWS_MAIL_TO", "")
+SPECIAL_NEWS_MAIL_CC = os.getenv("SPECIAL_NEWS_MAIL_CC", "")
+SPECIAL_NEWS_MAIL_BCC = os.getenv("SPECIAL_NEWS_MAIL_BCC", "")
+SPECIAL_NEWS_MAIL_SUBJECT_PREFIX = os.getenv("SPECIAL_NEWS_MAIL_SUBJECT_PREFIX", "【専門紙記事一覧】")
+SPECIAL_NEWS_CONFIG_PATH = os.getenv("SPECIAL_NEWS_CONFIG_PATH", os.path.join("config", "special_news_media.json"))
+SPECIAL_NEWS_TEMPLATE_PATH = os.getenv("SPECIAL_NEWS_TEMPLATE_PATH", os.path.join("templates", "special_news_email.html"))
+SPECIAL_NEWS_MAX_ITEMS_TOTAL = int(os.getenv("SPECIAL_NEWS_MAX_ITEMS_TOTAL", "50"))
+SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA = int(os.getenv("SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA", "20"))
+NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
+NOTION_SPECIAL_NEWS_DB_ID = os.getenv("NOTION_SPECIAL_NEWS_DB_ID", "")
+NOTION_SPECIAL_NEWS_ENABLED = os.getenv("NOTION_SPECIAL_NEWS_ENABLED", "true").lower() == "true"
 
 # =====================
 # JST
@@ -151,6 +167,222 @@ def safe_parse(url):
         return feedparser.parse(url).entries
     except:
         return []
+
+def mask_email(addr):
+    if "@" not in addr:
+        return "***"
+    local, domain = addr.split("@", 1)
+    if len(local) <= 2:
+        masked_local = local[0] + "*"
+    else:
+        masked_local = local[0] + "*" * (len(local) - 2) + local[-1]
+    return f"{masked_local}@{domain}"
+
+def parse_mail_recipients(raw):
+    if not raw:
+        return []
+    return [r.strip() for r in raw.split(",") if r.strip()]
+
+def notion_headers():
+    return {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+    }
+
+def extract_notion_property_value(prop):
+    if not prop:
+        return None
+    ptype = prop.get("type")
+    if ptype == "checkbox":
+        return prop.get("checkbox")
+    if ptype == "number":
+        return prop.get("number")
+    if ptype == "url":
+        return prop.get("url")
+    if ptype == "select":
+        selected = prop.get("select")
+        return selected.get("name") if selected else None
+    if ptype == "multi_select":
+        return [s.get("name") for s in prop.get("multi_select", []) if s.get("name")]
+    if ptype == "rich_text":
+        return "".join(part.get("plain_text", "") for part in prop.get("rich_text", []))
+    if ptype == "title":
+        return "".join(part.get("plain_text", "") for part in prop.get("title", []))
+    return None
+
+def fetch_special_news_config_from_notion():
+    if not NOTION_SPECIAL_NEWS_ENABLED:
+        logging.info("Notion special-news setting disabled by NOTION_SPECIAL_NEWS_ENABLED=false")
+        return None
+    if not NOTION_TOKEN or not NOTION_SPECIAL_NEWS_DB_ID:
+        logging.info("Notion credentials for special-news are not fully configured; fallback to local config")
+        return None
+
+    url = f"https://api.notion.com/v1/databases/{NOTION_SPECIAL_NEWS_DB_ID}/query"
+    req = urllib.request.Request(url, data=json.dumps({}).encode("utf-8"), headers=notion_headers(), method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as res:
+            payload = json.loads(res.read().decode("utf-8"))
+    except Exception as exc:
+        logging.error("Failed to fetch Notion special-news config: %s", exc)
+        raise
+
+    media_rows = []
+    for row in payload.get("results", []):
+        props = row.get("properties", {})
+        media_rows.append({
+            "enabled": bool(extract_notion_property_value(props.get("Enabled"))),
+            "media_name": extract_notion_property_value(props.get("MediaName")),
+            "alert_ids": extract_notion_property_value(props.get("GoogleAlertIds")) or [],
+            "alert_feeds": [
+                v.strip() for v in (extract_notion_property_value(props.get("GoogleAlertFeeds")) or "").splitlines() if v.strip()
+            ],
+            "display_order": int(extract_notion_property_value(props.get("DisplayOrder")) or 999),
+            "max_items": int(extract_notion_property_value(props.get("MaxItemsPerMedia")) or SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA),
+            "subject_prefix": extract_notion_property_value(props.get("SubjectPrefix")) or SPECIAL_NEWS_MAIL_SUBJECT_PREFIX,
+            "delivery_enabled": bool(extract_notion_property_value(props.get("DeliveryEnabled"))),
+            "max_items_total": int(extract_notion_property_value(props.get("MaxItemsTotal")) or SPECIAL_NEWS_MAX_ITEMS_TOTAL),
+        })
+    return media_rows
+
+def load_special_news_media_config():
+    notion_rows = fetch_special_news_config_from_notion()
+    if notion_rows is not None:
+        active = [m for m in notion_rows if m.get("enabled") and m.get("media_name")]
+        if not active:
+            logging.warning("No enabled media in Notion config for special-news")
+        return active
+
+    path = Path(SPECIAL_NEWS_CONFIG_PATH)
+    if not path.exists():
+        raise FileNotFoundError(f"Special news config not found: {path}")
+    with path.open("r", encoding="utf-8") as f:
+        payload = json.load(f)
+
+    media = payload.get("media", [])
+    active = [
+        {
+            "enabled": bool(m.get("enabled", True)),
+            "media_name": m.get("media_name", ""),
+            "alert_ids": m.get("alert_ids", []),
+            "alert_feeds": m.get("alert_feeds", []),
+            "display_order": int(m.get("display_order", 999)),
+            "max_items": int(m.get("max_items", SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA)),
+            "subject_prefix": m.get("subject_prefix", SPECIAL_NEWS_MAIL_SUBJECT_PREFIX),
+            "delivery_enabled": bool(payload.get("delivery_enabled", True)),
+            "max_items_total": int(payload.get("max_items_total", SPECIAL_NEWS_MAX_ITEMS_TOTAL)),
+        }
+        for m in media
+        if m.get("enabled", True) and m.get("media_name")
+    ]
+    return sorted(active, key=lambda x: x["display_order"])
+
+def extract_entries_for_target_date(entries, target_date):
+    filtered = []
+    for e in entries:
+        dt = get_published_datetime(e)
+        if not dt:
+            continue
+        if dt.date() != target_date.date():
+            continue
+        filtered.append({
+            "title": clean(e.get("title", "")),
+            "link": normalize_link(e.get("link", "")),
+            "published": dt.strftime("%Y-%m-%d %H:%M"),
+        })
+    return filtered
+
+def collect_special_news_articles(target_date):
+    logging.info("Special-news job started")
+    logging.info("Special-news target_date=%s timezone=Asia/Tokyo", target_date.strftime("%Y-%m-%d"))
+    media_config = load_special_news_media_config()
+    results = []
+    delivery_enabled = True
+    max_items_total = SPECIAL_NEWS_MAX_ITEMS_TOTAL
+
+    for media in media_config:
+        delivery_enabled = media.get("delivery_enabled", delivery_enabled)
+        max_items_total = media.get("max_items_total", max_items_total)
+        all_entries = []
+        for feed in media.get("alert_feeds", []):
+            all_entries.extend(safe_parse(feed))
+        logging.info("Special-news media=%s fetched=%s", media["media_name"], len(all_entries))
+        filtered = extract_entries_for_target_date(all_entries, target_date)
+        unique = []
+        seen = set()
+        for item in filtered:
+            key = normalize_title(item["title"])
+            if key in seen:
+                continue
+            seen.add(key)
+            unique.append(item)
+        limited = unique[:media.get("max_items", SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA)]
+        logging.info("Special-news media=%s filtered=%s", media["media_name"], len(limited))
+        results.append({
+            "media_name": media["media_name"],
+            "items": limited,
+            "display_order": media["display_order"],
+            "subject_prefix": media.get("subject_prefix", SPECIAL_NEWS_MAIL_SUBJECT_PREFIX),
+        })
+
+    results = sorted(results, key=lambda x: x["display_order"])
+    total = 0
+    for media_result in results:
+        remain = max(0, max_items_total - total)
+        media_result["items"] = media_result["items"][:remain]
+        total += len(media_result["items"])
+
+    return {
+        "delivery_enabled": delivery_enabled,
+        "media_results": results,
+        "total_items": total,
+    }
+
+def render_special_news_html(target_date, media_results, total_items):
+    template = Path(SPECIAL_NEWS_TEMPLATE_PATH).read_text(encoding="utf-8")
+    section_html = []
+    for media in media_results:
+        items = media["items"]
+        lis = "".join(
+            f'<li><a href="{escape(i["link"])}">{escape(i["title"])}</a>'
+            f'<span class="meta">（{escape(i["published"])}）</span></li>'
+            for i in items
+        )
+        if not lis:
+            lis = "<li>対象記事はありませんでした。</li>"
+        section_html.append(
+            f"<section><h3>{escape(media['media_name'])}</h3>"
+            f"<p class='count'>件数: {len(items)}件</p><ol>{lis}</ol></section>"
+        )
+
+    if not section_html:
+        section_html.append("<section><h3>対象媒体</h3><p>対象記事はありませんでした。</p></section>")
+
+    return template.format(
+        target_date=target_date.strftime("%Y-%m-%d"),
+        total_items=total_items,
+        media_sections="\n".join(section_html),
+    )
+
+def build_special_news_subject(target_date, media_results):
+    media_names = "・".join(m["media_name"] for m in media_results)
+    return f"{SPECIAL_NEWS_MAIL_SUBJECT_PREFIX}{target_date.strftime('%Y-%m-%d')}更新分（{media_names}）"
+
+def send_mail_generic(html, subject, to_list, cc_list=None, bcc_list=None):
+    cc_list = cc_list or []
+    bcc_list = bcc_list or []
+    msg = MIMEText(html, "html", "utf-8")
+    msg["Subject"] = subject
+    msg["From"] = formataddr(("Daily News Bot", MAIL_FROM))
+    msg["To"] = ", ".join(to_list)
+    if cc_list:
+        msg["Cc"] = ", ".join(cc_list)
+    recipients = to_list + cc_list + bcc_list
+    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
+        s.starttls()
+        s.login(MAIL_FROM, MAIL_PASSWORD)
+        s.sendmail(MAIL_FROM, recipients, msg.as_string())
 
 def normalize_link(url):
     if "news.google.com" in url and "url=" in url:
@@ -583,14 +815,43 @@ def generate_html():
     return body_html
 
 def send_mail(html):
-    msg = MIMEText(html, "html", "utf-8")
-    msg["Subject"] = f"主要ニュースまとめ｜{now_jst.strftime('%Y-%m-%d')}"
-    msg["From"] = MAIL_FROM
-    msg["To"] = MAIL_TO
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
-        s.starttls()
-        s.login(MAIL_FROM, MAIL_PASSWORD)
-        s.send_message(msg)
+    send_mail_generic(
+        html=html,
+        subject=f"主要ニュースまとめ｜{now_jst.strftime('%Y-%m-%d')}",
+        to_list=parse_mail_recipients(MAIL_TO),
+    )
+
+def run_special_news_delivery():
+    target_date = datetime.now(JST) - timedelta(days=1)
+    result = collect_special_news_articles(target_date)
+    if not result["delivery_enabled"]:
+        logging.info("Special-news delivery disabled by configuration")
+        return
+
+    to_list = parse_mail_recipients(SPECIAL_NEWS_MAIL_TO)
+    cc_list = parse_mail_recipients(SPECIAL_NEWS_MAIL_CC)
+    bcc_list = parse_mail_recipients(SPECIAL_NEWS_MAIL_BCC)
+    if not to_list:
+        logging.error("SPECIAL_NEWS_MAIL_TO is required but not configured")
+        raise ValueError("SPECIAL_NEWS_MAIL_TO is required")
+
+    logging.info(
+        "Special-news recipients to=%s cc=%s bcc=%s",
+        [mask_email(v) for v in to_list],
+        [mask_email(v) for v in cc_list],
+        [mask_email(v) for v in bcc_list],
+    )
+    html = render_special_news_html(target_date, result["media_results"], result["total_items"])
+    subject = build_special_news_subject(target_date, result["media_results"])
+    send_mail_generic(html, subject, to_list, cc_list, bcc_list)
+    logging.info("Special-news email delivered successfully; total_items=%s", result["total_items"])
 
 if __name__ == "__main__":
-    send_mail(generate_html())
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--job", choices=["main", "special", "all"], default="main")
+    args = parser.parse_args()
+
+    if args.job in {"main", "all"}:
+        send_mail(generate_html())
+    if args.job in {"special", "all"}:
+        run_special_news_delivery()

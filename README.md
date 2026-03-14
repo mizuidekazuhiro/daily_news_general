@@ -1,195 +1,220 @@
 # daily_news_general
 
-特定ソースのニュースを収集し、**記事タイトル（英語）を日本語に翻訳**してメール配信するためのニュース配信プログラムです。**本文の翻訳や要約は行いません**。翻訳には DeepL ではなく **OpenAI API** を使用し、**バッチ翻訳 + キャッシュ + 重複排除**でコスト最小化を図っています。
+既存の「主要ニュース配信」に加えて、新機能 **「専門紙記事一覧メール配信」** を追加しました。  
+この新機能は **Google Alert 起点**で記事を取得し、**前日更新分のみ**を毎朝 5:00（Asia/Tokyo）に **既存配信とは完全に別宛先・別件名・別HTMLテンプレート** で配信します。
 
 ---
 
-## 1. 概要（何をする／しない）
+## 1. この機能が何をするか
 
-### すること
-- Google News の RSS から **特定ソースの記事**を取得する。
-- **記事タイトルのみ**を日本語に翻訳する（英語タイトルが対象）。
-- 日本語タイトルを **メール本文（HTML）として出力**する。
+- 鉄鋼新聞・産業新聞（初期対象）の記事を Google Alert フィードから取得
+- 実行日の前日（JST）に更新された記事だけを抽出
+- 媒体ごとにタイトル+リンクを見やすい HTML メールで配信
+- 対象 0 件でも「対象記事はありませんでした」を明記して送信
 
-### しないこと
-- **本文の翻訳**（タイトル以外は扱いません）。
-- **要約生成**（要約は一切行いません）。
+### 既存ニュース配信との違い
 
-> 実装は `news_digest.py` に集約されています。【F:news_digest.py†L1-L353】
+- 既存: `python news_digest.py --job main`
+- 新機能: `python news_digest.py --job special`
+- 同時実行: `python news_digest.py --job all`
 
----
-
-## 2. 全体アーキテクチャ（処理フロー）
-
-1. **取得**：Google News RSS を読み込み  
-2. **フィルタ**：媒体ごとの取得対象やノイズ除去  
-3. **重複排除**：正規化タイトルで重複排除  
-4. **翻訳**：英語タイトルのみ OpenAI API でバッチ翻訳  
-5. **キャッシュ保存**：翻訳結果を JSON に保存  
-6. **出力**：メール本文（HTML）として送信
-
-実際のフローは `generate_html()` 内で処理されます。【F:news_digest.py†L206-L335】
-
-```
-取得 → フィルタ → 重複排除 → タイトル翻訳（OpenAIバッチ）
-     → キャッシュ保存 → メール出力
-```
+> 既存配信ロジック・送信先とは分離されています。
 
 ---
 
-## 3. コスト最小化の工夫（重要）
+## 2. システム構成
 
-- **タイトルだけ送る**：本文は OpenAI に送らない。  
-- **バッチ翻訳**：複数タイトルをまとめて 1 API コールにする。  
-- **キャッシュ**：同一タイトルは再翻訳しない。  
-- **チャンク上限**：`OPENAI_TRANSLATION_BATCH_SIZE` でバッチサイズ制御。  
-- **出力上限**：`OPENAI_MAX_OUTPUT_TOKENS` で生成トークンを制限。  
-- **失敗時は英語のまま継続**：API失敗時に無限リトライしない。
+- 取得元: Google Alert RSS（媒体ごとの `alert_feeds`）
+- 設定管理:
+  - 優先: Notion DB（操作パネル用途のみ）
+  - フォールバック: `config/special_news_media.json`
+- メール描画: `templates/special_news_email.html`
+- 送信: 既存 SMTP 共通処理（件名/宛先/本文は別）
 
-これらは `translate_titles_to_ja()` で実装されています。【F:news_digest.py†L133-L205】
+### データの流れ
+
+1. 実行開始（JST で前日を対象日として計算）
+2. Notion DB から媒体設定を取得（失敗時は明確にエラー）
+3. Notion 無効時はローカル設定 JSON を使用
+4. Google Alert フィードを媒体ごとに読み込み
+5. 前日更新分にフィルタ、重複排除、件数制限
+6. 専門紙専用 HTML テンプレートで本文生成
+7. 専門紙専用宛先（To/Cc/Bcc）へ送信
 
 ---
 
-## 4. セットアップ手順
+## 3. Google Alert をどう参照するか
 
-### 前提
-- Python 3.x（一般的に 3.9 以上を推奨）
-- `pip` が利用可能
+- 本機能では、媒体設定ごとに `alert_feeds`（Google Alert RSS URL）を保持
+- その RSS エントリの `published_parsed / updated_parsed` を JST に変換
+- 対象日（前日）に一致する記事のみ採用
 
-### インストール
+---
+
+## 4. Notion は何のために使うか
+
+### 用途（保存するもの）
+- 配信 ON/OFF
+- 媒体有効/無効
+- 媒体名
+- Google Alert 識別子（任意）
+- Google Alert RSS URL 群
+- 表示順
+- 件名プレフィックス
+- 1媒体あたり最大掲載件数
+- 全体最大掲載件数
+
+### Notion に保存しないもの
+- 記事本文・記事データ
+- 配信結果
+- 実行ログ
+
+---
+
+## 5. 必要な環境変数一覧
+
+### 既存配信用（main）
+- `MAIL_FROM`
+- `MAIL_TO`
+- `MAIL_PASSWORD`
+
+### 専門紙配信用（special）
+- `SPECIAL_NEWS_MAIL_TO`（必須。未設定ならエラー終了）
+- `SPECIAL_NEWS_MAIL_CC`（任意、カンマ区切り）
+- `SPECIAL_NEWS_MAIL_BCC`（任意、カンマ区切り）
+- `SPECIAL_NEWS_MAIL_SUBJECT_PREFIX`（既定: `【専門紙記事一覧】`）
+- `SPECIAL_NEWS_CONFIG_PATH`（既定: `config/special_news_media.json`）
+- `SPECIAL_NEWS_TEMPLATE_PATH`（既定: `templates/special_news_email.html`）
+- `SPECIAL_NEWS_MAX_ITEMS_TOTAL`（既定: `50`）
+- `SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA`（既定: `20`）
+
+### Notion 操作パネル用
+- `NOTION_TOKEN`
+- `NOTION_SPECIAL_NEWS_DB_ID`
+- `NOTION_SPECIAL_NEWS_ENABLED`（`true`/`false`、既定 `true`）
+
+---
+
+## 6. Notion DB の作成方法（初期スキーマ案）
+
+DB名例: `SpecialNewsDeliveryConfig`
+
+### 必須プロパティ
+- `Enabled` (Checkbox): 媒体の有効/無効
+- `MediaName` (Title): 媒体名（鉄鋼新聞など）
+- `GoogleAlertIds` (Multi-select): Google Alert 識別子
+- `GoogleAlertFeeds` (Rich text): RSS URL を改行区切りで記載
+- `DisplayOrder` (Number): 表示順
+- `MaxItemsPerMedia` (Number): 媒体ごとの最大掲載件数
+- `SubjectPrefix` (Rich text): 件名プレフィックス
+- `DeliveryEnabled` (Checkbox): 全体配信 ON/OFF
+- `MaxItemsTotal` (Number): 全媒体合計の最大件数
+
+### サンプルレコード
+- Enabled: ✅
+- MediaName: 鉄鋼新聞
+- GoogleAlertIds: steel-news-alert
+- GoogleAlertFeeds: `https://www.google.com/alerts/feeds/.../steel-news-alert`
+- DisplayOrder: 1
+- MaxItemsPerMedia: 20
+- SubjectPrefix: 【専門紙記事一覧】
+- DeliveryEnabled: ✅
+- MaxItemsTotal: 50
+
+---
+
+## 7. 配信スケジュール
+
+GitHub Actions で毎日 JST 5:00 に実行（UTC 20:00）。
+
+- Workflow: `.github/workflows/special_news_delivery.yml`
+- Cron: `0 20 * * *`
+
+---
+
+## 8. ローカル確認方法
+
 ```bash
 pip install -r requirements.txt
+python news_digest.py --job special
 ```
-`feedparser` と `openai` を使用します。【F:requirements.txt†L1-L2】
 
-### 環境変数
-
-#### 必須
-- `OPENAI_API_KEY`：OpenAI API キー  
-- `MAIL_FROM`：送信元メールアドレス  
-- `MAIL_TO`：送信先メールアドレス  
-- `MAIL_PASSWORD`：SMTP パスワード（Gmailの場合はアプリパスワード）
-
-#### 任意（チューニング）
-- `OPENAI_MODEL`：翻訳に使うモデル（既定: `gpt-4o-mini`）  
-- `OPENAI_MAX_OUTPUT_TOKENS`：翻訳出力の上限トークン数（既定: `512`）  
-- `OPENAI_TRANSLATION_BATCH_SIZE`：1回の翻訳で処理するタイトル数（既定: `30`）  
-- `TITLE_TRANSLATION_CACHE_PATH`：翻訳キャッシュの保存先（既定: `data/title_translation_cache.json`）
-
-#### 不要になったもの
-- **DeepL は使用しません**（このリポジトリでは不要）。
-
-> 変数の読み込みとデフォルト値の定義は `news_digest.py` にあります。【F:news_digest.py†L63-L92】
-
-### .env サンプル
-```env
-OPENAI_API_KEY=sk-xxxxxxxx
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_MAX_OUTPUT_TOKENS=512
-OPENAI_TRANSLATION_BATCH_SIZE=30
-TITLE_TRANSLATION_CACHE_PATH=data/title_translation_cache.json
-
-MAIL_FROM=you@example.com
-MAIL_TO=recipient@example.com
-MAIL_PASSWORD=app-password
-```
+確認ポイント:
+- 対象日ログ（前日/JST）
+- 媒体ごとの取得件数ログ
+- フィルタ後件数ログ
+- 宛先マスクログ
+- 送信成否ログ
 
 ---
 
-## 5. 実行方法
+## 9. 本番運用方法
 
-### ローカル実行
+1. Secrets 設定（SMTP/宛先/Notion）
+2. Notion DB を作成して `NOTION_SPECIAL_NEWS_DB_ID` を設定
+3. 必要なら `config/special_news_media.json` をフォールバックとして管理
+4. 毎朝 5:00 の定期実行で監視
+
+---
+
+## 10. テスト方法
+
 ```bash
-python news_digest.py
-```
-実行すると、24時間以内のニュースを集めてメール送信します。【F:news_digest.py†L206-L353】
-
-### GitHub Actions
-現時点では **Actions 設定はありません**（将来的に追加する場合は cron の UTC/JST 差に注意してください）。
-
----
-
-## 6. 出力仕様
-
-### 記事データ構造
-各記事は以下のフィールドを持ちます：
-
-```json
-{
-  "media": "Reuters",
-  "title": "English title",
-  "title_ja": "日本語タイトル",
-  "summary": "",
-  "score": 2,
-  "published": "2024-01-01 12:00",
-  "link": "https://example.com"
-}
+pytest -q
+python -m py_compile news_digest.py
 ```
 
-> 実際に生成される構造は `generate_html()` 内で定義されています。【F:news_digest.py†L248-L263】
+---
 
-### メール本文
-- HTML で整形
-- 重要度（★）・媒体名・日時を併記
-- 記事リンク付き
+## 11. よくあるエラー
 
-メール送信処理は `send_mail()` で行います。【F:news_digest.py†L337-L351】
-
-### Notion 出力
-**現状は未実装**です。必要であれば「将来オプション」として追加を検討してください。
+- `SPECIAL_NEWS_MAIL_TO is required`
+  - To 未設定。環境変数を設定してください。
+- Notion 設定取得失敗
+  - `NOTION_TOKEN` / DB 権限 / DB ID を確認
+- Google Alert 取得失敗
+  - RSS URL の誤り、期限切れ、アクセス制限を確認
+- メール送信失敗
+  - `MAIL_FROM` / `MAIL_PASSWORD` / SMTP 制限を確認
 
 ---
 
-## 7. キャッシュ仕様
+## 12. 宛先変更方法
 
-- **キャッシュファイル**：`data/title_translation_cache.json`  
-- **キー**：正規化した英語タイトル（空白の正規化）  
-- **値**：翻訳済みの日本語タイトル  
-- **破損時の扱い**：読み込み失敗時は警告ログを出し、空キャッシュで再生成  
+- `SPECIAL_NEWS_MAIL_TO`
+- `SPECIAL_NEWS_MAIL_CC`
+- `SPECIAL_NEWS_MAIL_BCC`
 
-キャッシュの読み書きは `load_translation_cache()` / `save_translation_cache()` で管理しています。【F:news_digest.py†L117-L145】
-
----
-
-## 8. トラブルシューティング
-
-- **OpenAIが失敗する**  
-  - 翻訳が失敗したタイトルは **英語のまま**出力されます（処理停止しません）。【F:news_digest.py†L186-L195】
-
-- **文字化け／長いタイトル**  
-  - `OPENAI_MAX_OUTPUT_TOKENS` を調整してください。  
-
-- **レート制限**  
-  - バッチサイズを下げる（`OPENAI_TRANSLATION_BATCH_SIZE`）。  
-
-- **環境変数ミス**  
-  - `OPENAI_API_KEY` が未設定の場合は英語のまま継続します。  
-  - `MAIL_FROM` / `MAIL_TO` / `MAIL_PASSWORD` の未設定は実行時に例外になります。  
+を変更するだけで既存配信へ影響なく反映されます。
 
 ---
 
-## 9. 開発者向けメモ
+## 13. 媒体を追加する方法
 
-- **設計方針**：  
-  - 小さな関数に分割し、ユーティリティは独立させる。  
-  - 翻訳処理・キャッシュ処理・出力処理を分離して再利用性を確保。  
+### Notion 運用時
+1. DB に新しい行を追加
+2. `MediaName`, `GoogleAlertFeeds`, `DisplayOrder`, `MaxItemsPerMedia` を設定
+3. `Enabled` を ON
 
-- **翻訳モデルや上限の変更**：  
-  - `OPENAI_MODEL` / `OPENAI_MAX_OUTPUT_TOKENS` / `OPENAI_TRANSLATION_BATCH_SIZE` を調整。  
-  - 実装は `translate_titles_to_ja()` 内を確認。【F:news_digest.py†L146-L205】
+### JSON 運用時
+`config/special_news_media.json` の `media` に1オブジェクト追加。
+
+> 媒体ロジックは媒体非依存で共通処理されるため、設定追加のみで拡張可能です。
 
 ---
 
-## 付録：媒体ソース一覧
+## 14. HTMLメールの見た目を変更する方法
 
-Google News RSS から以下の媒体を取得します（例）：
-- Kallanish
-- BigMint
-- Fastmarkets
-- Argus
-- 日経新聞
-- Bloomberg
-- Reuters
-- MySteel
+- `templates/special_news_email.html` を編集
+- 媒体セクションや記事リストはプレースホルダ `{media_sections}` に注入
 
-媒体設定は `MEDIA` 定義を参照してください。【F:news_digest.py†L33-L59】
+---
+
+## 15. 変更ファイル
+
+- 実装: `news_digest.py`
+- 新規テンプレート: `templates/special_news_email.html`
+- 新規媒体設定: `config/special_news_media.json`
+- スケジュール: `.github/workflows/special_news_delivery.yml`
+- テスト: `tests/test_special_news.py`
+
