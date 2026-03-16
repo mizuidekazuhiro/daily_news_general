@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from pathlib import Path
 from email.mime.text import MIMEText
 from email.utils import formataddr
+from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta, timezone
 from html import escape
 
@@ -48,6 +49,7 @@ SPECIAL_NEWS_CONFIG_PATH = os.getenv("SPECIAL_NEWS_CONFIG_PATH", os.path.join("c
 SPECIAL_NEWS_TEMPLATE_PATH = os.getenv("SPECIAL_NEWS_TEMPLATE_PATH", os.path.join("templates", "special_news_email.html"))
 SPECIAL_NEWS_MAX_ITEMS_TOTAL = int(os.getenv("SPECIAL_NEWS_MAX_ITEMS_TOTAL", "50"))
 SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA = int(os.getenv("SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA", "20"))
+SPECIAL_NEWS_WINDOW_HOURS = int(os.getenv("SPECIAL_NEWS_WINDOW_HOURS", "24"))
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
 NOTION_SPECIAL_NEWS_DB_ID = os.getenv("NOTION_SPECIAL_NEWS_DB_ID", "")
 
@@ -166,6 +168,47 @@ def get_published_datetime(entry):
         except (TypeError, ValueError):
             return None
     return None
+
+
+def parse_special_news_article_datetime(entry: Any) -> Optional[Dict[str, str]]:
+    source_order = ["published_parsed", "updated_parsed", "published", "updated"]
+    source = None
+    raw_value: Any = None
+    article_dt_aware: Optional[datetime] = None
+
+    for field in source_order:
+        value = getattr(entry, field, None)
+        if not value:
+            continue
+        source = field
+        raw_value = value
+        if field.endswith("_parsed"):
+            try:
+                article_dt_aware = datetime(*value[:6], tzinfo=timezone.utc)
+            except (TypeError, ValueError):
+                article_dt_aware = None
+        else:
+            if isinstance(value, datetime):
+                article_dt_aware = value
+            else:
+                try:
+                    article_dt_aware = parsedate_to_datetime(str(value))
+                except (TypeError, ValueError):
+                    article_dt_aware = None
+        break
+
+    if not article_dt_aware:
+        return None
+    if article_dt_aware.tzinfo is None:
+        article_dt_aware = article_dt_aware.replace(tzinfo=timezone.utc)
+
+    article_dt_jst = article_dt_aware.astimezone(JST)
+    return {
+        "source": source or "unknown",
+        "raw": str(raw_value),
+        "article_dt_jst": article_dt_jst,
+        "article_dt_original": article_dt_aware,
+    }
 
 def safe_parse(url):
     try:
@@ -427,26 +470,59 @@ def load_special_news_media_config() -> Dict[str, Any]:
     }
 
 
-def extract_entries_for_target_date(entries: List[Any], target_date: datetime, media_name: str, feed_url: str) -> List[Dict[str, str]]:
+def extract_entries_for_special_window(
+    entries: List[Any],
+    window_start: datetime,
+    window_end: datetime,
+    media_name: str,
+    feed_url: str,
+) -> List[Dict[str, str]]:
     filtered = []
     for e in entries:
-        dt = get_published_datetime(e)
-        if not dt:
-            logging.warning("Special-news media=%s feed=%s item skipped: missing published date", media_name, shorten_url(feed_url))
+        parsed_dt_info = parse_special_news_article_datetime(e)
+        title = clean(e.get("title", ""))
+        if not parsed_dt_info:
+            logging.warning(
+                "Special-news media=%s feed=%s title=%s item skipped: missing or invalid datetime",
+                media_name,
+                shorten_url(feed_url),
+                title or "(no title)",
+            )
             continue
-        if dt.date() != target_date.date():
+        article_dt_jst = parsed_dt_info["article_dt_jst"]
+        in_window = window_start <= article_dt_jst < window_end
+        reason = "accepted" if in_window else "out_of_window"
+        logging.info(
+            "Special-news media=%s feed=%s title=%s datetime_source=%s original_datetime=%s article_dt_jst=%s decision=%s",
+            media_name,
+            shorten_url(feed_url),
+            title or "(no title)",
+            parsed_dt_info["source"],
+            parsed_dt_info["article_dt_original"].isoformat(),
+            article_dt_jst.isoformat(),
+            reason,
+        )
+        if not in_window:
             continue
         filtered.append({
-            "title": clean(e.get("title", "")),
+            "title": title,
             "link": normalize_link(e.get("link", "")),
-            "published": dt.strftime("%Y-%m-%d %H:%M"),
+            "published": article_dt_jst.strftime("%Y-%m-%d %H:%M"),
         })
     return filtered
 
 
-def collect_special_news_articles(target_date: datetime) -> Dict[str, Any]:
+def collect_special_news_articles(now_jst: Optional[datetime] = None) -> Dict[str, Any]:
+    now_jst = now_jst or datetime.now(JST)
+    window_start = now_jst - timedelta(hours=SPECIAL_NEWS_WINDOW_HOURS)
+
     logging.info("Special-news job started")
-    logging.info("Special-news target_date=%s timezone=Asia/Tokyo", target_date.strftime("%Y-%m-%d"))
+    logging.info(
+        "Special-news window_start=%s window_end=%s timezone=Asia/Tokyo hours=%s",
+        window_start.isoformat(),
+        now_jst.isoformat(),
+        SPECIAL_NEWS_WINDOW_HOURS,
+    )
     config = load_special_news_media_config()
     media_config = config["media"]
     results = []
@@ -477,7 +553,13 @@ def collect_special_news_articles(target_date: datetime) -> Dict[str, Any]:
                 logging.error("Special-news media=%s feed=%s fetch=failed reason=%s", media["media_name"], feed_short, exc)
                 continue
             all_entries.extend(entries)
-            filtered_items = extract_entries_for_target_date(entries, target_date, media["media_name"], feed)
+            filtered_items = extract_entries_for_special_window(
+                entries,
+                window_start,
+                now_jst,
+                media["media_name"],
+                feed,
+            )
             logging.info(
                 "Special-news media=%s feed=%s filtered=%s",
                 media["media_name"],
@@ -1015,8 +1097,8 @@ def send_mail(html):
     )
 
 def run_special_news_delivery():
-    target_date = datetime.now(JST) - timedelta(days=1)
-    result = collect_special_news_articles(target_date)
+    now_jst = datetime.now(JST)
+    result = collect_special_news_articles(now_jst)
     if not result["delivery_enabled"]:
         logging.info("Special-news delivery disabled by configuration")
         return
@@ -1037,16 +1119,16 @@ def run_special_news_delivery():
         [mask_email(v) for v in bcc_list],
     )
     try:
-        html = render_special_news_html(target_date, result.get("media_results"), result.get("total_items", 0))
+        html = render_special_news_html(now_jst, result.get("media_results"), result.get("total_items", 0))
     except Exception as exc:
         raise RuntimeError(f"Failed to render special-news HTML: {exc}") from exc
 
     subject = build_special_news_subject(
-        target_date,
+        now_jst,
         result.get("media_results", []),
         subject_prefix=result.get("subject_prefix", SPECIAL_NEWS_MAIL_SUBJECT_PREFIX),
     )
-    text_fallback = f"専門紙記事一覧\n対象日: {target_date.strftime('%Y-%m-%d')}\n総件数: {result.get('total_items', 0)}件"
+    text_fallback = f"専門紙記事一覧\n対象日: {now_jst.strftime('%Y-%m-%d')}\n総件数: {result.get('total_items', 0)}件"
     send_mail_generic(html, subject, to_list, cc_list, bcc_list, text_fallback=text_fallback)
     logging.info("Special-news email delivered successfully; total_items=%s", result.get("total_items", 0))
 
