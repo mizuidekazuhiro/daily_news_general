@@ -13,6 +13,7 @@ from news_digest import (
     parse_env_bool,
     parse_mail_recipients,
     parse_feed_urls,
+    parse_special_news_datetime_with_rule,
     render_special_news_html,
     normalize_special_date_rule,
 )
@@ -243,3 +244,44 @@ def test_extract_entries_for_special_window_date_granularity_date():
     actual = extract_entries_for_special_window([entry], now_jst, "媒体A", "https://example.com/feed", rule)
     assert len(actual) == 1
     assert actual[0]["published"] == "2026-03-12"
+
+
+def test_parse_special_news_datetime_with_rule_uses_selector_datetime_first():
+    entry = DummyEntry(title="鉄鋼", link="https://example.com/steel")
+    html_cache = {
+        "https://example.com/steel": '<html><time class="article-header__published" datetime="2026/03/12 10:30">2026/03/12 11:59</time></html>'
+    }
+    rule = normalize_special_date_rule(
+        "日刊鉄鋼新聞",
+        {
+            "date_source_type": "article_html",
+            "date_css_selector": "time.article-header__published",
+            "date_parse_pattern": r"\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}",
+            "date_granularity": "datetime",
+        },
+    )
+
+    actual = parse_special_news_datetime_with_rule(entry, "日刊鉄鋼新聞", rule, html_cache)
+    assert actual["ok"] is True
+    # datetime属性(10:30)が優先され、要素テキスト(11:59)は使われない
+    assert actual["datetime"].astimezone(JST).strftime("%Y-%m-%d %H:%M") == "2026-03-12 10:30"
+
+
+def test_parse_special_news_datetime_with_rule_uses_selector_text_when_no_datetime_attr():
+    entry = DummyEntry(title="産業", link="https://example.com/sangyo")
+    html_cache = {
+        "https://example.com/sangyo": '<html><span class="font06">2026年3月12日</span></html>'
+    }
+    rule = normalize_special_date_rule(
+        "日刊産業新聞",
+        {
+            "date_source_type": "article_html",
+            "date_css_selector": "span.font06",
+            "date_parse_pattern": r"\d{4}年\d{1,2}月\d{1,2}日",
+            "date_granularity": "date",
+        },
+    )
+
+    actual = parse_special_news_datetime_with_rule(entry, "日刊産業新聞", rule, html_cache)
+    assert actual["ok"] is True
+    assert actual["datetime"].astimezone(JST).strftime("%Y-%m-%d") == "2026-03-12"
