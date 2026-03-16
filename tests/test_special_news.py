@@ -14,6 +14,7 @@ from news_digest import (
     parse_mail_recipients,
     parse_feed_urls,
     render_special_news_html,
+    normalize_special_date_rule,
 )
 
 
@@ -49,10 +50,10 @@ def test_extract_entries_for_special_window_includes_within_24h():
 
     actual = extract_entries_for_special_window(
         [_entry("A", "https://example.com/a", within)],
-        window_start,
         now_jst,
         "媒体A",
         "https://example.com/feed",
+        normalize_special_date_rule("媒体A"),
     )
     assert len(actual) == 1
     assert actual[0]["title"] == "A"
@@ -65,10 +66,10 @@ def test_extract_entries_for_special_window_excludes_older_than_24h():
 
     actual = extract_entries_for_special_window(
         [_entry("A", "https://example.com/a", older)],
-        window_start,
         now_jst,
         "媒体A",
         "https://example.com/feed",
+        normalize_special_date_rule("媒体A"),
     )
     assert actual == []
 
@@ -81,10 +82,10 @@ def test_extract_entries_for_special_window_handles_utc_to_jst_date_boundary():
 
     actual = extract_entries_for_special_window(
         [_entry("Boundary", "https://example.com/b", cross_day_utc)],
-        window_start,
         now_jst,
         "媒体A",
         "https://example.com/feed",
+        normalize_special_date_rule("媒体A"),
     )
     assert len(actual) == 1
     assert actual[0]["published"] == "2026-03-12 00:30"
@@ -97,13 +98,13 @@ def test_extract_entries_for_special_window_excludes_missing_datetime(caplog):
 
     actual = extract_entries_for_special_window(
         [missing],
-        window_start,
         now_jst,
         "媒体A",
         "https://example.com/feed",
+        normalize_special_date_rule("媒体A"),
     )
     assert actual == []
-    assert "missing or invalid datetime" in caplog.text
+    assert "rss datetime not found" in caplog.text
 
 
 def test_extract_entries_for_special_window_datetime_source_priority():
@@ -115,10 +116,10 @@ def test_extract_entries_for_special_window_datetime_source_priority():
 
     actual = extract_entries_for_special_window(
         [entry],
-        window_start,
         now_jst,
         "媒体A",
         "https://example.com/feed",
+        normalize_special_date_rule("媒体A"),
     )
     assert actual == []
 
@@ -216,3 +217,29 @@ def test_run_special_news_delivery_skips_when_recipient_empty(monkeypatch):
 
     news_digest.run_special_news_delivery()
     assert sent["called"] is False
+
+
+def test_build_special_media_row_has_date_rule_defaults():
+    row = build_special_media_row(
+        media_name="媒体A",
+        enabled=True,
+        alert_ids=[],
+        alert_feeds_raw="https://example.com/a",
+        display_order=None,
+        max_items=None,
+        subject_prefix=None,
+        delivery_enabled=True,
+        max_items_total=10,
+    )
+    assert row is not None
+    assert row["date_rule"]["date_source_type"] == "rss"
+    assert row["date_rule"]["date_granularity"] == "datetime"
+
+
+def test_extract_entries_for_special_window_date_granularity_date():
+    now_jst = datetime(2026, 3, 12, 12, 0, tzinfo=JST)
+    entry = _entry_with_field("A", "https://example.com/a", "published", "Thu, 12 Mar 2026 00:10:00 +0900")
+    rule = normalize_special_date_rule("媒体A", {"date_granularity": "date", "target_date_mode": "calendar_day"})
+    actual = extract_entries_for_special_window([entry], now_jst, "媒体A", "https://example.com/feed", rule)
+    assert len(actual) == 1
+    assert actual[0]["published"] == "2026-03-12"

@@ -16,6 +16,7 @@ from email.utils import formataddr
 from email.utils import parsedate_to_datetime
 from datetime import datetime, timedelta, timezone
 from html import escape
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from openai import OpenAI
 
@@ -56,6 +57,39 @@ NOTION_SPECIAL_NEWS_DB_ID = os.getenv("NOTION_SPECIAL_NEWS_DB_ID", "")
 SPECIAL_NEWS_NOTION_ENABLED_DEFAULT = False
 ENV_BOOL_TRUE_VALUES = {"true", "1", "yes", "on"}
 ENV_BOOL_FALSE_VALUES = {"false", "0", "no", "off"}
+
+DEFAULT_SPECIAL_DATE_RULE = {
+    "date_source_type": "rss",
+    "date_parse_pattern": "",
+    "date_css_selector": "",
+    "date_timezone": "Asia/Tokyo",
+    "date_granularity": "datetime",
+    "target_date_mode": "rolling_24h",
+    "lookback_hours": SPECIAL_NEWS_WINDOW_HOURS,
+    "fallback_date_source_type": "",
+    "fallback_date_parse_pattern": "",
+}
+
+SPECIAL_DATE_RULE_PRESETS = {
+    "日刊鉄鋼新聞": {
+        "date_source_type": "article_html",
+        "date_parse_pattern": r"\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}",
+        "date_granularity": "datetime",
+        "target_date_mode": "rolling_24h",
+        "date_timezone": "Asia/Tokyo",
+    },
+    "日刊産業新聞": {
+        "date_source_type": "article_html",
+        "date_parse_pattern": r"\d{4}年\d{1,2}月\d{1,2}日",
+        "date_granularity": "date",
+        "target_date_mode": "calendar_day",
+        "date_timezone": "Asia/Tokyo",
+    },
+}
+
+VALID_DATE_SOURCE_TYPES = {"rss", "article_html", "meta", "json_ld"}
+VALID_DATE_GRANULARITY = {"datetime", "date"}
+VALID_TARGET_DATE_MODE = {"rolling_24h", "calendar_day"}
 
 # =====================
 # JST
@@ -326,6 +360,213 @@ def parse_feed_urls(raw_feeds: str, media_name: str) -> List[str]:
     return urls
 
 
+
+
+def normalize_special_date_rule(media_name: str, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    rule = dict(DEFAULT_SPECIAL_DATE_RULE)
+    if media_name in SPECIAL_DATE_RULE_PRESETS:
+        rule.update(SPECIAL_DATE_RULE_PRESETS[media_name])
+    if overrides:
+        for k, v in overrides.items():
+            if v is None:
+                continue
+            if isinstance(v, str):
+                rule[k] = v.strip()
+            else:
+                rule[k] = v
+
+    date_source = str(rule.get("date_source_type") or "").strip().lower()
+    if date_source not in VALID_DATE_SOURCE_TYPES:
+        date_source = DEFAULT_SPECIAL_DATE_RULE["date_source_type"]
+    rule["date_source_type"] = date_source
+
+    fallback_source = str(rule.get("fallback_date_source_type") or "").strip().lower()
+    if fallback_source and fallback_source not in VALID_DATE_SOURCE_TYPES:
+        fallback_source = ""
+    rule["fallback_date_source_type"] = fallback_source
+
+    granularity = str(rule.get("date_granularity") or "").strip().lower()
+    if granularity not in VALID_DATE_GRANULARITY:
+        granularity = DEFAULT_SPECIAL_DATE_RULE["date_granularity"]
+    rule["date_granularity"] = granularity
+
+    target_mode = str(rule.get("target_date_mode") or "").strip().lower()
+    if target_mode not in VALID_TARGET_DATE_MODE:
+        target_mode = "calendar_day" if granularity == "date" else DEFAULT_SPECIAL_DATE_RULE["target_date_mode"]
+    rule["target_date_mode"] = target_mode
+
+    rule["lookback_hours"] = safe_int(rule.get("lookback_hours"), SPECIAL_NEWS_WINDOW_HOURS)
+    if rule["lookback_hours"] <= 0:
+        rule["lookback_hours"] = SPECIAL_NEWS_WINDOW_HOURS
+
+    tz_name = str(rule.get("date_timezone") or "Asia/Tokyo").strip() or "Asia/Tokyo"
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError:
+        tz_name = "Asia/Tokyo"
+        tz = ZoneInfo("Asia/Tokyo")
+    rule["date_timezone"] = tz_name
+    rule["timezone"] = tz
+    return rule
+
+
+def fetch_article_html(link: str) -> str:
+    if not link or not is_valid_http_url(link):
+        return ""
+    req = urllib.request.Request(
+        link,
+        headers={"User-Agent": "Mozilla/5.0 (special-news-date-extractor)"},
+        method="GET",
+    )
+    with urllib.request.urlopen(req, timeout=10) as res:
+        charset = res.headers.get_content_charset() or "utf-8"
+        body = res.read()
+    return body.decode(charset, errors="replace")
+
+
+def _extract_from_meta(html: str, selector: str) -> List[str]:
+    values = []
+    pattern = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+    content_pattern = re.compile(r'content=["\']([^"\']+)["\']', re.IGNORECASE)
+    selector_lower = (selector or "").strip().lower()
+    for tag in pattern.findall(html):
+        tag_l = tag.lower()
+        if selector_lower and selector_lower not in tag_l:
+            continue
+        m = content_pattern.search(tag)
+        if m:
+            values.append(m.group(1))
+    return values
+
+
+def _extract_from_json_ld(html: str, selector: str) -> List[str]:
+    blocks = re.findall(
+        r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        html,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if selector:
+        return [b for b in blocks if selector in b]
+    return blocks
+
+
+def _extract_date_text_candidates(entry: Any, rule: Dict[str, Any], html_cache: Dict[str, str]) -> Dict[str, Any]:
+    source_type = rule["date_source_type"]
+    link = normalize_link(entry.get("link", ""))
+
+    if source_type == "rss":
+        rss_parsed = parse_special_news_article_datetime(entry)
+        if not rss_parsed:
+            return {"ok": False, "reason": "rss datetime not found"}
+        return {"ok": True, "source": rss_parsed.get("source", "rss"), "text": rss_parsed["article_dt_original"].isoformat(), "datetime": rss_parsed["article_dt_original"]}
+
+    html = html_cache.get(link)
+    if html is None:
+        try:
+            html = fetch_article_html(link)
+        except Exception as exc:
+            return {"ok": False, "reason": f"article fetch failed: {exc}"}
+        html_cache[link] = html
+
+    if source_type == "article_html":
+        selector = rule.get("date_css_selector", "")
+        if selector:
+            if selector in html:
+                return {"ok": True, "source": "article_html(selector)", "text": html}
+            return {"ok": False, "reason": f"selector not found: {selector}"}
+        return {"ok": True, "source": "article_html", "text": html}
+
+    if source_type == "meta":
+        values = _extract_from_meta(html, rule.get("date_css_selector", ""))
+        if not values:
+            return {"ok": False, "reason": "meta content not found"}
+        return {"ok": True, "source": "meta", "text": "\n".join(values)}
+
+    if source_type == "json_ld":
+        values = _extract_from_json_ld(html, rule.get("date_css_selector", ""))
+        if not values:
+            return {"ok": False, "reason": "json_ld block not found"}
+        return {"ok": True, "source": "json_ld", "text": "\n".join(values)}
+
+    return {"ok": False, "reason": f"unsupported source type: {source_type}"}
+
+
+def parse_special_news_datetime_with_rule(entry: Any, media_name: str, rule: Dict[str, Any], html_cache: Dict[str, str]) -> Dict[str, Any]:
+    def try_extract(source_type: str, pattern: str) -> Dict[str, Any]:
+        local_rule = dict(rule)
+        local_rule["date_source_type"] = source_type
+        extracted = _extract_date_text_candidates(entry, local_rule, html_cache)
+        if not extracted.get("ok"):
+            return {"ok": False, "source_type": source_type, "reason": extracted.get("reason", "extract failed")}
+
+        direct_dt = extracted.get("datetime")
+        if isinstance(direct_dt, datetime):
+            dt_aware = direct_dt if direct_dt.tzinfo else direct_dt.replace(tzinfo=timezone.utc)
+            return {"ok": True, "source_type": source_type, "adopted_source": extracted.get("source", source_type), "datetime": dt_aware}
+
+        text = str(extracted.get("text") or "")
+        if not pattern:
+            return {"ok": False, "source_type": source_type, "reason": "date parse pattern is empty"}
+        m = re.search(pattern, text, flags=re.DOTALL)
+        if not m:
+            return {"ok": False, "source_type": source_type, "reason": "date text not matched by pattern"}
+        matched = m.group(0).strip()
+        try:
+            dt_aware = parse_flexible_datetime(matched, rule["timezone"], rule["date_granularity"])
+        except ValueError as exc:
+            return {"ok": False, "source_type": source_type, "reason": str(exc)}
+        return {"ok": True, "source_type": source_type, "adopted_source": extracted.get("source", source_type), "datetime": dt_aware, "matched_text": matched}
+
+    primary = try_extract(rule["date_source_type"], rule.get("date_parse_pattern", ""))
+    if primary.get("ok"):
+        return primary
+
+    fallback_type = rule.get("fallback_date_source_type") or ""
+    if not fallback_type:
+        return primary
+
+    fallback = try_extract(fallback_type, rule.get("fallback_date_parse_pattern") or rule.get("date_parse_pattern", ""))
+    if fallback.get("ok"):
+        fallback["primary_failure_reason"] = primary.get("reason")
+        return fallback
+    return {
+        "ok": False,
+        "source_type": fallback_type,
+        "reason": f"primary={primary.get('reason')}; fallback={fallback.get('reason')}",
+    }
+
+
+def parse_flexible_datetime(raw: str, tz: ZoneInfo, granularity: str) -> datetime:
+    text = raw.strip()
+    normalized = text.replace("年", "-").replace("月", "-").replace("日", "").replace("/", "-")
+    normalized = re.sub(r"\s+", " ", normalized)
+
+    fmts = [
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%d",
+    ]
+    dt_naive = None
+    for f in fmts:
+        try:
+            dt_naive = datetime.strptime(normalized, f)
+            break
+        except ValueError:
+            continue
+    if dt_naive is None:
+        try:
+            dt_any = parsedate_to_datetime(text)
+        except (TypeError, ValueError):
+            raise ValueError(f"unparseable datetime text: {text}")
+        if dt_any.tzinfo is None:
+            dt_any = dt_any.replace(tzinfo=tz)
+        return dt_any.astimezone(tz)
+
+    dt_aware = dt_naive.replace(tzinfo=tz)
+    if granularity == "date":
+        dt_aware = dt_aware.replace(hour=0, minute=0, second=0, microsecond=0)
+    return dt_aware
+
 def build_special_media_row(
     media_name: Optional[str],
     enabled: bool,
@@ -336,6 +577,15 @@ def build_special_media_row(
     subject_prefix: Optional[str],
     delivery_enabled: Any,
     max_items_total: Any,
+    date_source_type: Optional[str] = None,
+    date_parse_pattern: Optional[str] = None,
+    date_css_selector: Optional[str] = None,
+    date_timezone: Optional[str] = None,
+    date_granularity: Optional[str] = None,
+    target_date_mode: Optional[str] = None,
+    lookback_hours: Any = None,
+    fallback_date_source_type: Optional[str] = None,
+    fallback_date_parse_pattern: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
     name = (media_name or "").strip()
     if not name:
@@ -357,6 +607,21 @@ def build_special_media_row(
     else:
         normalized_ids = []
 
+    date_rule = normalize_special_date_rule(
+        name,
+        {
+            "date_source_type": date_source_type,
+            "date_parse_pattern": date_parse_pattern,
+            "date_css_selector": date_css_selector,
+            "date_timezone": date_timezone,
+            "date_granularity": date_granularity,
+            "target_date_mode": target_date_mode,
+            "lookback_hours": lookback_hours,
+            "fallback_date_source_type": fallback_date_source_type,
+            "fallback_date_parse_pattern": fallback_date_parse_pattern,
+        },
+    )
+
     row = {
         "enabled": True,
         "media_name": name,
@@ -367,13 +632,17 @@ def build_special_media_row(
         "subject_prefix": (subject_prefix or SPECIAL_NEWS_MAIL_SUBJECT_PREFIX).strip() or SPECIAL_NEWS_MAIL_SUBJECT_PREFIX,
         "delivery_enabled": bool(delivery_enabled) if delivery_enabled is not None else True,
         "max_items_total": safe_int(max_items_total, SPECIAL_NEWS_MAX_ITEMS_TOTAL),
+        "date_rule": date_rule,
     }
     logging.info(
-        "Special-news media loaded name=%s enabled=%s feeds=%s alert_ids=%s",
+        "Special-news media loaded name=%s enabled=%s feeds=%s alert_ids=%s DateSourceType=%s DateGranularity=%s TargetDateMode=%s",
         row["media_name"],
         row["enabled"],
         len(row["alert_feeds"]),
         len(row["alert_ids"]),
+        row["date_rule"]["date_source_type"],
+        row["date_rule"]["date_granularity"],
+        row["date_rule"]["target_date_mode"],
     )
     return row
 
@@ -414,6 +683,15 @@ def fetch_special_news_config_from_notion() -> Optional[List[Dict[str, Any]]]:
             subject_prefix=extract_notion_property_value(props.get("SubjectPrefix")),
             delivery_enabled=extract_notion_property_value(props.get("DeliveryEnabled")),
             max_items_total=extract_notion_property_value(props.get("MaxItemsTotal")),
+            date_source_type=extract_notion_property_value(props.get("DateSourceType")),
+            date_parse_pattern=extract_notion_property_value(props.get("DateParsePattern")),
+            date_css_selector=extract_notion_property_value(props.get("DateCssSelector")),
+            date_timezone=extract_notion_property_value(props.get("DateTimezone")),
+            date_granularity=extract_notion_property_value(props.get("DateGranularity")),
+            target_date_mode=extract_notion_property_value(props.get("TargetDateMode")),
+            lookback_hours=extract_notion_property_value(props.get("LookbackHours")),
+            fallback_date_source_type=extract_notion_property_value(props.get("FallbackDateSourceType")),
+            fallback_date_parse_pattern=extract_notion_property_value(props.get("FallbackDateParsePattern")),
         )
         if normalized is None:
             logging.warning("Notion media row index=%s skipped due to invalid settings", idx)
@@ -455,6 +733,15 @@ def load_special_news_media_config() -> Dict[str, Any]:
             subject_prefix=m.get("subject_prefix"),
             delivery_enabled=payload.get("delivery_enabled", True),
             max_items_total=payload.get("max_items_total", SPECIAL_NEWS_MAX_ITEMS_TOTAL),
+            date_source_type=m.get("date_source_type"),
+            date_parse_pattern=m.get("date_parse_pattern"),
+            date_css_selector=m.get("date_css_selector"),
+            date_timezone=m.get("date_timezone"),
+            date_granularity=m.get("date_granularity"),
+            target_date_mode=m.get("target_date_mode"),
+            lookback_hours=m.get("lookback_hours"),
+            fallback_date_source_type=m.get("fallback_date_source_type"),
+            fallback_date_parse_pattern=m.get("fallback_date_parse_pattern"),
         )
         if normalized is None:
             logging.warning("Local media row index=%s skipped due to invalid settings", idx)
@@ -472,54 +759,71 @@ def load_special_news_media_config() -> Dict[str, Any]:
 
 def extract_entries_for_special_window(
     entries: List[Any],
-    window_start: datetime,
-    window_end: datetime,
+    now_jst: datetime,
     media_name: str,
     feed_url: str,
+    date_rule: Dict[str, Any],
+    html_cache: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, str]]:
     filtered = []
+    html_cache = html_cache if html_cache is not None else {}
+    tz = date_rule["timezone"]
+    now_local = now_jst.astimezone(tz)
+    window_start = now_local - timedelta(hours=date_rule["lookback_hours"])
+    target_day = now_local.date()
+
     for e in entries:
-        parsed_dt_info = parse_special_news_article_datetime(e)
         title = clean(e.get("title", ""))
-        if not parsed_dt_info:
+        parsed_dt_info = parse_special_news_datetime_with_rule(e, media_name, date_rule, html_cache)
+        if not parsed_dt_info.get("ok"):
             logging.warning(
-                "Special-news media=%s feed=%s title=%s item skipped: missing or invalid datetime",
+                "Special-news media=%s DateSourceType=%s DateGranularity=%s TargetDateMode=%s feed=%s title=%s extraction_failed reason=%s",
                 media_name,
+                date_rule["date_source_type"],
+                date_rule["date_granularity"],
+                date_rule["target_date_mode"],
                 shorten_url(feed_url),
                 title or "(no title)",
+                parsed_dt_info.get("reason", "unknown"),
             )
             continue
-        article_dt_jst = parsed_dt_info["article_dt_jst"]
-        in_window = window_start <= article_dt_jst < window_end
+
+        article_dt_local = parsed_dt_info["datetime"].astimezone(tz)
+        if date_rule["target_date_mode"] == "calendar_day" or date_rule["date_granularity"] == "date":
+            in_window = article_dt_local.date() == target_day
+        else:
+            in_window = window_start <= article_dt_local < now_local
+
         reason = "accepted" if in_window else "out_of_window"
         logging.info(
-            "Special-news media=%s feed=%s title=%s datetime_source=%s original_datetime=%s article_dt_jst=%s decision=%s",
+            "Special-news media=%s DateSourceType=%s DateGranularity=%s TargetDateMode=%s feed=%s title=%s adopted_source=%s article_dt=%s decision=%s",
             media_name,
+            date_rule["date_source_type"],
+            date_rule["date_granularity"],
+            date_rule["target_date_mode"],
             shorten_url(feed_url),
             title or "(no title)",
-            parsed_dt_info["source"],
-            parsed_dt_info["article_dt_original"].isoformat(),
-            article_dt_jst.isoformat(),
+            parsed_dt_info.get("adopted_source", parsed_dt_info.get("source_type", "unknown")),
+            article_dt_local.isoformat(),
             reason,
         )
         if not in_window:
             continue
+
+        published_text = article_dt_local.strftime("%Y-%m-%d") if date_rule["date_granularity"] == "date" else article_dt_local.strftime("%Y-%m-%d %H:%M")
         filtered.append({
             "title": title,
             "link": normalize_link(e.get("link", "")),
-            "published": article_dt_jst.strftime("%Y-%m-%d %H:%M"),
+            "published": published_text,
         })
     return filtered
 
 
 def collect_special_news_articles(now_jst: Optional[datetime] = None) -> Dict[str, Any]:
     now_jst = now_jst or datetime.now(JST)
-    window_start = now_jst - timedelta(hours=SPECIAL_NEWS_WINDOW_HOURS)
-
     logging.info("Special-news job started")
     logging.info(
-        "Special-news window_start=%s window_end=%s timezone=Asia/Tokyo hours=%s",
-        window_start.isoformat(),
+        "Special-news window_end=%s default_timezone=Asia/Tokyo default_hours=%s",
         now_jst.isoformat(),
         SPECIAL_NEWS_WINDOW_HOURS,
     )
@@ -540,6 +844,8 @@ def collect_special_news_articles(now_jst: Optional[datetime] = None) -> Dict[st
     for media in media_config:
         all_entries = []
         feed_filtered = []
+        html_cache: Dict[str, str] = {}
+        date_rule = media.get("date_rule", normalize_special_date_rule(media["media_name"]))
         for feed in media.get("alert_feeds", []):
             feed_short = shorten_url(feed)
             try:
@@ -555,10 +861,11 @@ def collect_special_news_articles(now_jst: Optional[datetime] = None) -> Dict[st
             all_entries.extend(entries)
             filtered_items = extract_entries_for_special_window(
                 entries,
-                window_start,
                 now_jst,
                 media["media_name"],
                 feed,
+                date_rule,
+                html_cache,
             )
             logging.info(
                 "Special-news media=%s feed=%s filtered=%s",
