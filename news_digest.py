@@ -8,6 +8,7 @@ import urllib.request
 import logging
 import json
 import argparse
+from html.parser import HTMLParser
 from string import Template
 from typing import Any, Dict, List, Optional
 from pathlib import Path
@@ -73,6 +74,7 @@ DEFAULT_SPECIAL_DATE_RULE = {
 SPECIAL_DATE_RULE_PRESETS = {
     "日刊鉄鋼新聞": {
         "date_source_type": "article_html",
+        "date_css_selector": "time.article-header__published",
         "date_parse_pattern": r"\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}",
         "date_granularity": "datetime",
         "target_date_mode": "rolling_24h",
@@ -80,6 +82,7 @@ SPECIAL_DATE_RULE_PRESETS = {
     },
     "日刊産業新聞": {
         "date_source_type": "article_html",
+        "date_css_selector": "span.font06",
         "date_parse_pattern": r"\d{4}年\d{1,2}月\d{1,2}日",
         "date_granularity": "date",
         "target_date_mode": "calendar_day",
@@ -450,6 +453,103 @@ def _extract_from_json_ld(html: str, selector: str) -> List[str]:
     return blocks
 
 
+class _SimpleHtmlNode:
+    def __init__(self, tag: str, attrs: Dict[str, str], parent: Optional["_SimpleHtmlNode"] = None):
+        self.tag = tag
+        self.attrs = attrs
+        self.parent = parent
+        self.children: List["_SimpleHtmlNode"] = []
+        self.text_parts: List[str] = []
+
+    def get_text(self, strip: bool = False) -> str:
+        chunks = list(self.text_parts)
+        for child in self.children:
+            child_text = child.get_text(strip=False)
+            if child_text:
+                chunks.append(child_text)
+        text = " ".join(c for c in chunks if c)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip() if strip else text
+
+
+class _SimpleHtmlParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.root = _SimpleHtmlNode("document", {})
+        self.stack: List[_SimpleHtmlNode] = [self.root]
+
+    def handle_starttag(self, tag: str, attrs: List[tuple]):
+        attrs_dict = {str(k): str(v) for k, v in attrs if k}
+        node = _SimpleHtmlNode(tag.lower(), attrs_dict, parent=self.stack[-1])
+        self.stack[-1].children.append(node)
+        self.stack.append(node)
+
+    def handle_endtag(self, _tag: str):
+        if len(self.stack) > 1:
+            self.stack.pop()
+
+    def handle_data(self, data: str):
+        if self.stack:
+            self.stack[-1].text_parts.append(data)
+
+
+def _parse_simple_selector(selector_part: str) -> Dict[str, Any]:
+    token = selector_part.strip()
+    if not token:
+        return {"tag": "", "id": "", "classes": []}
+    tag_match = re.match(r"^[a-zA-Z][a-zA-Z0-9_-]*", token)
+    tag = tag_match.group(0).lower() if tag_match else ""
+    node_id = ""
+    id_match = re.search(r"#([a-zA-Z0-9_-]+)", token)
+    if id_match:
+        node_id = id_match.group(1)
+    classes = re.findall(r"\.([a-zA-Z0-9_-]+)", token)
+    return {"tag": tag, "id": node_id, "classes": classes}
+
+
+def _selector_matches(node: _SimpleHtmlNode, selector_part: str) -> bool:
+    parsed = _parse_simple_selector(selector_part)
+    if parsed["tag"] and node.tag != parsed["tag"]:
+        return False
+    if parsed["id"] and node.attrs.get("id", "") != parsed["id"]:
+        return False
+    if parsed["classes"]:
+        classes = set((node.attrs.get("class", "") or "").split())
+        if any(cls not in classes for cls in parsed["classes"]):
+            return False
+    return True
+
+
+def _select_one(html: str, selector: str) -> Optional[_SimpleHtmlNode]:
+    parts = [p for p in (selector or "").strip().split() if p]
+    if not html or not parts:
+        return None
+
+    parser = _SimpleHtmlParser()
+    parser.feed(html)
+
+    def walk(node: _SimpleHtmlNode):
+        for child in node.children:
+            yield child
+            yield from walk(child)
+
+    for node in walk(parser.root):
+        if not _selector_matches(node, parts[-1]):
+            continue
+        ancestor = node.parent
+        idx = len(parts) - 2
+        while idx >= 0:
+            while ancestor and not _selector_matches(ancestor, parts[idx]):
+                ancestor = ancestor.parent
+            if not ancestor:
+                break
+            ancestor = ancestor.parent
+            idx -= 1
+        if idx < 0:
+            return node
+    return None
+
+
 def _extract_date_text_candidates(entry: Any, rule: Dict[str, Any], html_cache: Dict[str, str]) -> Dict[str, Any]:
     source_type = rule["date_source_type"]
     link = normalize_link(entry.get("link", ""))
@@ -469,12 +569,66 @@ def _extract_date_text_candidates(entry: Any, rule: Dict[str, Any], html_cache: 
         html_cache[link] = html
 
     if source_type == "article_html":
-        selector = rule.get("date_css_selector", "")
+        selector = (rule.get("date_css_selector", "") or "").strip()
         if selector:
-            if selector in html:
-                return {"ok": True, "source": "article_html(selector)", "text": html}
-            return {"ok": False, "reason": f"selector not found: {selector}"}
-        return {"ok": True, "source": "article_html", "text": html}
+            selected = _select_one(html, selector)
+            if not selected:
+                return {
+                    "ok": False,
+                    "reason": f"selector not found: {selector}",
+                    "failure_reason": "selector_not_found",
+                    "selector": selector,
+                    "selector_found": False,
+                    "decision": "fallback_used",
+                }
+
+            selected_tag = selected.tag
+            selected_datetime_attr = (selected.attrs.get("datetime", "") or "").strip()
+            selected_text = selected.get_text(strip=True)
+            if selected_datetime_attr:
+                used_value = selected_datetime_attr
+            else:
+                used_value = selected_text
+
+            if not used_value:
+                return {
+                    "ok": False,
+                    "reason": "selector value is empty",
+                    "failure_reason": "selector_empty",
+                    "selector": selector,
+                    "selector_found": True,
+                    "selected_tag": selected_tag,
+                    "selected_text": selected_text,
+                    "selected_datetime_attr": selected_datetime_attr,
+                    "used_value_for_parse": "",
+                    "decision": "fallback_used",
+                }
+
+            return {
+                "ok": True,
+                "source": "article_html(selector)",
+                "text": used_value,
+                "selector": selector,
+                "selector_found": True,
+                "selected_tag": selected_tag,
+                "selected_text": selected_text,
+                "selected_datetime_attr": selected_datetime_attr,
+                "used_value_for_parse": used_value,
+                "failure_reason": "datetime_attr_missing" if not selected_datetime_attr else "",
+                "decision": "selector_value_used",
+                "allow_fallback": False,
+            }
+
+        return {
+            "ok": True,
+            "source": "article_html",
+            "text": html,
+            "selector": "",
+            "selector_found": False,
+            "decision": "fallback_used",
+            "failure_reason": "fallback_used",
+            "allow_fallback": True,
+        }
 
     if source_type == "meta":
         values = _extract_from_meta(html, rule.get("date_css_selector", ""))
@@ -497,7 +651,27 @@ def parse_special_news_datetime_with_rule(entry: Any, media_name: str, rule: Dic
         local_rule["date_source_type"] = source_type
         extracted = _extract_date_text_candidates(entry, local_rule, html_cache)
         if not extracted.get("ok"):
-            return {"ok": False, "source_type": source_type, "reason": extracted.get("reason", "extract failed")}
+            logging.info(
+                "Special-news date-extract media=%s source_type=%s selector=%s selector_found=%s selected_tag=%s selected_text=%s selected_datetime_attr=%s used_value_for_parse=%s pattern=%s decision=%s failure_reason=%s",
+                media_name,
+                source_type,
+                extracted.get("selector", ""),
+                extracted.get("selector_found", False),
+                extracted.get("selected_tag", ""),
+                extracted.get("selected_text", ""),
+                extracted.get("selected_datetime_attr", ""),
+                extracted.get("used_value_for_parse", ""),
+                pattern,
+                "extract_failed",
+                extracted.get("failure_reason", extracted.get("reason", "extract failed")),
+            )
+            return {
+                "ok": False,
+                "source_type": source_type,
+                "reason": extracted.get("reason", "extract failed"),
+                "failure_reason": extracted.get("failure_reason", extracted.get("reason", "extract failed")),
+                "allow_fallback": extracted.get("failure_reason") in {"selector_not_found", "selector_empty", "fallback_used"},
+            }
 
         direct_dt = extracted.get("datetime")
         if isinstance(direct_dt, datetime):
@@ -505,16 +679,71 @@ def parse_special_news_datetime_with_rule(entry: Any, media_name: str, rule: Dic
             return {"ok": True, "source_type": source_type, "adopted_source": extracted.get("source", source_type), "datetime": dt_aware}
 
         text = str(extracted.get("text") or "")
+        used_value_for_parse = extracted.get("used_value_for_parse", text)
         if not pattern:
-            return {"ok": False, "source_type": source_type, "reason": "date parse pattern is empty"}
-        m = re.search(pattern, text, flags=re.DOTALL)
+            logging.info(
+                "Special-news date-extract media=%s source_type=%s selector=%s selector_found=%s selected_tag=%s selected_text=%s selected_datetime_attr=%s used_value_for_parse=%s pattern=%s decision=%s failure_reason=%s",
+                media_name,
+                source_type,
+                extracted.get("selector", ""),
+                extracted.get("selector_found", False),
+                extracted.get("selected_tag", ""),
+                extracted.get("selected_text", ""),
+                extracted.get("selected_datetime_attr", ""),
+                used_value_for_parse,
+                pattern,
+                "pattern_skipped",
+                "pattern_not_matched",
+            )
+            return {
+                "ok": False,
+                "source_type": source_type,
+                "reason": "date parse pattern is empty",
+                "failure_reason": "pattern_not_matched",
+                "allow_fallback": bool(extracted.get("allow_fallback", True)),
+            }
+        m = re.search(pattern, str(used_value_for_parse), flags=re.DOTALL)
         if not m:
-            return {"ok": False, "source_type": source_type, "reason": "date text not matched by pattern"}
+            logging.info(
+                "Special-news date-extract media=%s source_type=%s selector=%s selector_found=%s selected_tag=%s selected_text=%s selected_datetime_attr=%s used_value_for_parse=%s pattern=%s decision=%s failure_reason=%s",
+                media_name,
+                source_type,
+                extracted.get("selector", ""),
+                extracted.get("selector_found", False),
+                extracted.get("selected_tag", ""),
+                extracted.get("selected_text", ""),
+                extracted.get("selected_datetime_attr", ""),
+                used_value_for_parse,
+                pattern,
+                "pattern_not_matched",
+                "pattern_not_matched",
+            )
+            return {
+                "ok": False,
+                "source_type": source_type,
+                "reason": "date text not matched by pattern",
+                "failure_reason": "pattern_not_matched",
+                "allow_fallback": bool(extracted.get("allow_fallback", True)),
+            }
         matched = m.group(0).strip()
         try:
             dt_aware = parse_flexible_datetime(matched, rule["timezone"], rule["date_granularity"])
         except ValueError as exc:
             return {"ok": False, "source_type": source_type, "reason": str(exc)}
+        logging.info(
+            "Special-news date-extract media=%s source_type=%s selector=%s selector_found=%s selected_tag=%s selected_text=%s selected_datetime_attr=%s used_value_for_parse=%s pattern=%s decision=%s failure_reason=%s",
+            media_name,
+            source_type,
+            extracted.get("selector", ""),
+            extracted.get("selector_found", False),
+            extracted.get("selected_tag", ""),
+            extracted.get("selected_text", ""),
+            extracted.get("selected_datetime_attr", ""),
+            used_value_for_parse,
+            pattern,
+            "pattern_matched",
+            "",
+        )
         return {"ok": True, "source_type": source_type, "adopted_source": extracted.get("source", source_type), "datetime": dt_aware, "matched_text": matched}
 
     primary = try_extract(rule["date_source_type"], rule.get("date_parse_pattern", ""))
@@ -522,13 +751,27 @@ def parse_special_news_datetime_with_rule(entry: Any, media_name: str, rule: Dic
         return primary
 
     fallback_type = rule.get("fallback_date_source_type") or ""
-    if not fallback_type:
+    if not fallback_type or not primary.get("allow_fallback", True):
         return primary
 
     fallback = try_extract(fallback_type, rule.get("fallback_date_parse_pattern") or rule.get("date_parse_pattern", ""))
     if fallback.get("ok"):
         fallback["primary_failure_reason"] = primary.get("reason")
         return fallback
+    logging.info(
+        "Special-news date-extract media=%s source_type=%s selector=%s selector_found=%s selected_tag=%s selected_text=%s selected_datetime_attr=%s used_value_for_parse=%s pattern=%s decision=%s failure_reason=%s",
+        media_name,
+        fallback_type,
+        rule.get("date_css_selector", ""),
+        False,
+        "",
+        "",
+        "",
+        "",
+        rule.get("fallback_date_parse_pattern") or rule.get("date_parse_pattern", ""),
+        "fallback_failed",
+        "fallback_used",
+    )
     return {
         "ok": False,
         "source_type": fallback_type,
