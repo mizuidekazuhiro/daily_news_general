@@ -424,3 +424,93 @@ def test_wrapper_html_pattern_not_applied_when_refetch_success(monkeypatch):
     result = parse_special_news_datetime_with_rule(entry, "日刊鉄鋼新聞", rule, {})
     assert result["ok"] is True
     assert result["datetime"].astimezone(JST).strftime("%Y-%m-%d %H:%M") == "2026-03-16 09:10"
+
+
+def test_extract_entries_for_special_window_calendar_day_uses_parsed_date(monkeypatch, caplog):
+    now_jst = datetime(2026, 3, 16, 12, 0, tzinfo=JST)
+    entry = DummyEntry(title="産業", link="https://www.japanmetal.com/news-t20260316148097.html")
+    rule = normalize_special_date_rule(
+        "日刊産業新聞",
+        {
+            "date_source_type": "url",
+            "date_parse_pattern": r"news-t(\d{4})(\d{2})(\d{2})\d+\.html",
+            "date_granularity": "date",
+            "target_date_mode": "calendar_day",
+        },
+    )
+    monkeypatch.setattr(
+        news_digest,
+        "fetch_article_document",
+        lambda link, cache: {
+            "source_url": link,
+            "initial_url": link,
+            "final_url": link,
+            "canonical_url": "",
+            "redirect_wrapper_detected": False,
+            "redirect_url": "",
+            "refetched_article_url": "",
+            "refetch_success": False,
+            "html": "",
+        },
+    )
+
+    caplog.set_level("INFO")
+    actual = extract_entries_for_special_window([entry], now_jst, "日刊産業新聞", "https://example.com/feed", rule)
+    assert len(actual) == 1
+    assert "decision=accepted" in caplog.text
+    assert "evaluation_mode=calendar_day" in caplog.text
+    assert "out_of_window" not in caplog.text
+
+
+def test_fetch_special_news_config_from_notion_reads_trimmed_date_css_selector(monkeypatch):
+    class DummyResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return (
+                b'{"results":[{"properties":{"MediaName":{"type":"title","title":[{"plain_text":"\xe6\x97\xa5\xe5\x88\x8a\xe9\x89\x84\xe9\x8b\xbc\xe6\x96\xb0\xe8\x81\x9e"}]},'
+                b'"Enabled":{"type":"checkbox","checkbox":true},'
+                b'"GoogleAlertFeeds":{"type":"rich_text","rich_text":[{"plain_text":"https://example.com/feed"}]},'
+                b'"DateSourceType":{"type":"select","select":{"name":"article_html"}},'
+                b'"DateCssSelector ":{"type":"rich_text","rich_text":[{"plain_text":"  time.article-header__published  "}]}}}]}'
+            )
+
+    monkeypatch.setattr(news_digest, "NOTION_TOKEN", "token")
+    monkeypatch.setattr(news_digest, "NOTION_SPECIAL_NEWS_DB_ID", "db")
+    monkeypatch.setattr(news_digest, "parse_env_bool", lambda *_: True)
+    monkeypatch.setattr(news_digest.urllib.request, "urlopen", lambda *args, **kwargs: DummyResponse())
+
+    rows = news_digest.fetch_special_news_config_from_notion()
+    assert rows is not None
+    steel = rows[0]
+    assert steel["date_rule"]["date_css_selector"] == "time.article-header__published"
+
+
+def test_article_html_meta_fallback_uses_single_date_candidate():
+    entry = DummyEntry(title="鉄鋼", link="https://example.com/steel-meta")
+    html_cache = {
+        "https://example.com/steel-meta": (
+            '<html><head>'
+            '<meta name="viewport" content="width=1098">'
+            '<meta name="description" content="summary">'
+            '<meta property="article:published_time" content="2026-03-16 05:00">'
+            '</head><body></body></html>'
+        )
+    }
+    rule = normalize_special_date_rule(
+        "日刊鉄鋼新聞",
+        {
+            "date_source_type": "article_html",
+            "date_css_selector": "time.article-header__published",
+            "date_parse_pattern": r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}",
+            "fallback_date_source_type": "",
+        },
+    )
+
+    actual = parse_special_news_datetime_with_rule(entry, "日刊鉄鋼新聞", rule, html_cache)
+    assert actual["ok"] is True
+    assert actual["datetime"].astimezone(JST).strftime("%Y-%m-%d %H:%M") == "2026-03-16 05:00"

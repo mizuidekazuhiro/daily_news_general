@@ -474,16 +474,38 @@ def fetch_article_document(link: str, html_cache: Dict[str, Dict[str, Any]]) -> 
 def _extract_from_meta(html: str, selector: str) -> List[str]:
     values = []
     pattern = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
-    content_pattern = re.compile(r'content=["\']([^"\']+)["\']', re.IGNORECASE)
+    attr_pattern = re.compile(r'([a-zA-Z0-9:_-]+)=["\']([^"\']+)["\']')
     selector_lower = (selector or "").strip().lower()
+    date_meta_key = re.compile(r"date|time|published|publish|modified|updated|article", re.IGNORECASE)
+    date_like_value = re.compile(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}")
     for tag in pattern.findall(html):
+        attrs = {k.lower(): v.strip() for k, v in attr_pattern.findall(tag)}
         tag_l = tag.lower()
         if selector_lower and selector_lower not in tag_l:
             continue
-        m = content_pattern.search(tag)
-        if m:
-            values.append(m.group(1))
+        content = attrs.get("content", "")
+        if not content:
+            continue
+        marker = " ".join([
+            attrs.get("property", ""),
+            attrs.get("name", ""),
+            attrs.get("itemprop", ""),
+            attrs.get("http-equiv", ""),
+        ])
+        if not (date_meta_key.search(marker) and date_like_value.search(content)):
+            continue
+        values.append(content)
     return values
+
+
+def _get_notion_property(props: Dict[str, Any], key: str) -> Optional[Any]:
+    if key in props:
+        return props.get(key)
+    key_trimmed = key.strip()
+    for prop_key, value in props.items():
+        if str(prop_key).strip() == key_trimmed:
+            return value
+    return None
 def _extract_from_json_ld(html: str, selector: str) -> List[str]:
     blocks = re.findall(
         r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
@@ -640,6 +662,7 @@ def _extract_date_text_candidates(entry: Any, rule: Dict[str, Any], html_cache: 
         "refetched_article_url": doc.get("refetched_article_url", ""),
         "refetch_success": doc.get("refetch_success", False),
         "selector": selector,
+        "selector_state": "configured" if selector else "selector_empty",
     }
     if source_type == "article_html":
         if selector:
@@ -696,11 +719,12 @@ def _extract_date_text_candidates(entry: Any, rule: Dict[str, Any], html_cache: 
             }
         meta_values = _extract_from_meta(html, "")
         if meta_values:
+            meta_value = meta_values[0]
             return {
                 "ok": True,
                 "source": "article_html(meta)",
-                "text": "\n".join(meta_values),
-                "used_value_for_parse": "\n".join(meta_values),
+                "text": meta_value,
+                "used_value_for_parse": meta_value,
                 "datetime_source": "meta",
                 **common,
             }
@@ -724,7 +748,8 @@ def _extract_date_text_candidates(entry: Any, rule: Dict[str, Any], html_cache: 
         values = _extract_from_meta(html, rule.get("date_css_selector", ""))
         if not values:
             return {"ok": False, "reason": "meta content not found", "failure_reason": "meta_not_found", **common}
-        return {"ok": True, "source": "meta", "text": "\n".join(values), "used_value_for_parse": "\n".join(values), "datetime_source": "meta", **common}
+        value = values[0]
+        return {"ok": True, "source": "meta", "text": value, "used_value_for_parse": value, "datetime_source": "meta", **common}
     if source_type == "json_ld":
         values = _extract_from_json_ld(html, rule.get("date_css_selector", ""))
         if not values:
@@ -733,7 +758,7 @@ def _extract_date_text_candidates(entry: Any, rule: Dict[str, Any], html_cache: 
     return {"ok": False, "reason": f"unsupported source type: {source_type}", "failure_reason": "pattern_not_matched", **common}
 def _log_special_date_extract(media_name: str, source_type: str, payload: Dict[str, Any], pattern: str, decision: str, failure_reason: str) -> None:
     logging.info(
-        "Special-news date-extract media=%s source_url=%s initial_url=%s final_url=%s redirect_wrapper_detected=%s redirect_url=%s refetched_article_url=%s refetch_success=%s source_type=%s selector=%s selector_found=%s selected_tag=%s selected_text=%s selected_datetime_attr=%s datetime_source=%s raw_datetime_text=%s parsed_datetime=%s parsed_date=%s pattern=%s decision=%s failure_reason=%s",
+        "Special-news date-extract media=%s source_url=%s initial_url=%s final_url=%s redirect_wrapper_detected=%s redirect_url=%s refetched_article_url=%s refetch_success=%s source_type=%s selector=%s selector_state=%s selector_found=%s selected_tag=%s selected_text=%s selected_datetime_attr=%s datetime_source=%s raw_datetime_text=%s parsed_datetime=%s parsed_date=%s target_date=%s evaluation_mode=%s pattern=%s decision=%s failure_reason=%s",
         media_name,
         payload.get("source_url", ""),
         payload.get("initial_url", ""),
@@ -744,6 +769,7 @@ def _log_special_date_extract(media_name: str, source_type: str, payload: Dict[s
         payload.get("refetch_success", False),
         source_type,
         payload.get("selector", ""),
+        payload.get("selector_state", ""),
         payload.get("selector_found", False),
         payload.get("selected_tag", ""),
         payload.get("selected_text", ""),
@@ -752,6 +778,8 @@ def _log_special_date_extract(media_name: str, source_type: str, payload: Dict[s
         payload.get("used_value_for_parse", payload.get("text", "")),
         payload.get("parsed_datetime", ""),
         payload.get("parsed_date", ""),
+        payload.get("target_date", ""),
+        payload.get("evaluation_mode", ""),
         pattern,
         decision,
         failure_reason,
@@ -798,7 +826,14 @@ def parse_special_news_datetime_with_rule(entry: Any, media_name: str, rule: Dic
         extracted["parsed_date"] = dt_local.date().isoformat()
         extracted["datetime_source"] = extracted.get("datetime_source", source_type)
         _log_special_date_extract(media_name, source_type, extracted, pattern, "pattern_matched", "")
-        return {"ok": True, "source_type": source_type, "adopted_source": extracted.get("source", source_type), "datetime": dt_aware, "matched_text": matched}
+        return {
+            "ok": True,
+            "source_type": source_type,
+            "adopted_source": extracted.get("source", source_type),
+            "datetime": dt_aware,
+            "matched_text": matched,
+            "parsed_date": extracted.get("parsed_date", ""),
+        }
     primary = try_extract(rule["date_source_type"], rule.get("date_parse_pattern", ""))
     if primary.get("ok"):
         return primary
@@ -941,15 +976,17 @@ def fetch_special_news_config_from_notion() -> Optional[List[Dict[str, Any]]]:
     for idx, row in enumerate(rows):
         props = row.get("properties", {})
         media_name_raw = extract_notion_property_value(props.get("MediaName"))
-        selector_prop_exists = "DateCssSelector" in props
-        selector_raw = extract_notion_property_value(props.get("DateCssSelector")) if selector_prop_exists else None
-        selector_state = "missing_column" if not selector_prop_exists else ("empty" if (selector_raw or "") == "" else "set")
+        selector_prop = _get_notion_property(props, "DateCssSelector")
+        selector_prop_exists = selector_prop is not None
+        selector_raw = extract_notion_property_value(selector_prop) if selector_prop_exists else None
+        selector_value = str(selector_raw or "").strip()
+        selector_state = "missing_column" if not selector_prop_exists else ("empty_value" if selector_value == "" else "present_value")
         logging.info(
             "Special-news Notion row index=%s media=%s DateCssSelector_state=%s DateCssSelector_value=%s",
             idx,
             media_name_raw or "",
             selector_state,
-            selector_raw or "",
+            selector_value,
         )
         normalized = build_special_media_row(
             media_name=media_name_raw,
@@ -963,7 +1000,7 @@ def fetch_special_news_config_from_notion() -> Optional[List[Dict[str, Any]]]:
             max_items_total=extract_notion_property_value(props.get("MaxItemsTotal")),
             date_source_type=extract_notion_property_value(props.get("DateSourceType")),
             date_parse_pattern=extract_notion_property_value(props.get("DateParsePattern")),
-            date_css_selector=selector_raw,
+            date_css_selector=selector_value,
             date_timezone=extract_notion_property_value(props.get("DateTimezone")),
             date_granularity=extract_notion_property_value(props.get("DateGranularity")),
             target_date_mode=extract_notion_property_value(props.get("TargetDateMode")),
@@ -1058,13 +1095,25 @@ def extract_entries_for_special_window(
             )
             continue
         article_dt_local = parsed_dt_info["datetime"].astimezone(tz)
-        if date_rule["target_date_mode"] == "calendar_day" or date_rule["date_granularity"] == "date":
-            in_window = article_dt_local.date() == target_day
+        parsed_date_text = str(parsed_dt_info.get("parsed_date") or "")
+        evaluation_mode = "rolling_24h"
+        decision = "accepted"
+        failure_reason = ""
+        in_window = False
+        if date_rule["target_date_mode"] == "calendar_day":
+            evaluation_mode = "calendar_day"
+            article_date = datetime.strptime(parsed_date_text, "%Y-%m-%d").date() if parsed_date_text else article_dt_local.date()
+            in_window = article_date == target_day
+            if not in_window:
+                decision = "target_date_mismatch"
+                failure_reason = "target_date_mismatch"
         else:
             in_window = window_start <= article_dt_local < now_local
-        reason = "accepted" if in_window else "out_of_window"
+            if not in_window:
+                decision = "out_of_window"
+                failure_reason = "out_of_window"
         logging.info(
-            "Special-news media=%s DateSourceType=%s DateGranularity=%s TargetDateMode=%s feed=%s title=%s adopted_source=%s article_dt=%s decision=%s",
+            "Special-news media=%s DateSourceType=%s DateGranularity=%s TargetDateMode=%s feed=%s title=%s adopted_source=%s article_dt=%s parsed_date=%s target_date=%s evaluation_mode=%s decision=%s failure_reason=%s",
             media_name,
             date_rule["date_source_type"],
             date_rule["date_granularity"],
@@ -1073,7 +1122,11 @@ def extract_entries_for_special_window(
             title or "(no title)",
             parsed_dt_info.get("adopted_source", parsed_dt_info.get("source_type", "unknown")),
             article_dt_local.isoformat(),
-            reason,
+            parsed_date_text,
+            target_day.isoformat(),
+            evaluation_mode,
+            decision,
+            failure_reason,
         )
         if not in_window:
             continue
