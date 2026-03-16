@@ -79,7 +79,7 @@
 - `MAIL_PASSWORD`
 
 ### 専門紙配信用（special）
-- `SPECIAL_NEWS_MAIL_TO`（必須。未設定ならエラー終了）
+- `SPECIAL_NEWS_MAIL_TO`（任意。To/Cc/Bcc がすべて空なら送信せず警告ログで終了）
 - `SPECIAL_NEWS_MAIL_CC`（任意、カンマ区切り）
 - `SPECIAL_NEWS_MAIL_BCC`（任意、カンマ区切り）
 - `SPECIAL_NEWS_MAIL_SUBJECT_PREFIX`（既定: `【専門紙記事一覧】`）
@@ -91,9 +91,18 @@
 ### Notion 操作パネル用
 - `NOTION_TOKEN`
 - `NOTION_SPECIAL_NEWS_DB_ID`
-- `NOTION_SPECIAL_NEWS_ENABLED`（`true`/`false`、既定 `true`）
+- `NOTION_SPECIAL_NEWS_ENABLED`（`true`/`1`/`yes`/`on` で有効、`false`/`0`/`no`/`off` で無効、未設定/空文字は既定 `false`）
 
 ---
+
+
+### special-news 設定優先順位
+1. 環境変数
+2. Notion DB
+3. コード既定値
+
+- Notion 設定読み込みが失敗・空・不正な場合は `config/special_news_media.json` に安全フォールバックします。
+- `GoogleAlertFeeds` は Rich text の**改行区切り URL**として解釈され、空行除外・trim・重複除外・不正 URL スキップを行います。
 
 ## 6. Notion DB の作成方法（初期スキーマ案）
 
