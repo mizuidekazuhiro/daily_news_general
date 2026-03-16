@@ -285,3 +285,142 @@ def test_parse_special_news_datetime_with_rule_uses_selector_text_when_no_dateti
     actual = parse_special_news_datetime_with_rule(entry, "日刊産業新聞", rule, html_cache)
     assert actual["ok"] is True
     assert actual["datetime"].astimezone(JST).strftime("%Y-%m-%d") == "2026-03-12"
+
+def test_parse_special_news_datetime_with_rule_url_source_for_japanmetal(monkeypatch):
+    entry = DummyEntry(title="産業", link="https://www.japanmetal.com/news-t20260316148097.html")
+    rule = normalize_special_date_rule(
+        "日刊産業新聞",
+        {
+            "date_source_type": "url",
+            "date_parse_pattern": r"news-t(\d{4})(\d{2})(\d{2})\d+\.html",
+            "date_granularity": "date",
+            "target_date_mode": "calendar_day",
+            "date_timezone": "Asia/Tokyo",
+        },
+    )
+    monkeypatch.setattr(
+        news_digest,
+        "fetch_article_document",
+        lambda link, cache: {
+            "source_url": link,
+            "initial_url": link,
+            "final_url": link,
+            "canonical_url": "",
+            "redirect_wrapper_detected": False,
+            "redirect_url": "",
+            "refetched_article_url": "",
+            "refetch_success": False,
+            "html": "",
+        },
+    )
+    actual = parse_special_news_datetime_with_rule(entry, "日刊産業新聞", rule, {})
+    assert actual["ok"] is True
+    assert actual["datetime"].astimezone(JST).strftime("%Y-%m-%d") == "2026-03-16"
+
+
+def test_parse_special_news_datetime_with_rule_url_fallback_to_rss(monkeypatch):
+    dt = datetime(2026, 3, 16, 1, 0, tzinfo=timezone.utc)
+    entry = _entry("産業", "https://www.japanmetal.com/no-date.html", dt)
+    rule = normalize_special_date_rule(
+        "日刊産業新聞",
+        {
+            "date_source_type": "url",
+            "date_parse_pattern": r"news-t(\d{4})(\d{2})(\d{2})\d+\.html",
+            "fallback_date_source_type": "rss",
+            "date_granularity": "date",
+        },
+    )
+    monkeypatch.setattr(
+        news_digest,
+        "fetch_article_document",
+        lambda link, cache: {
+            "source_url": link,
+            "initial_url": link,
+            "final_url": link,
+            "canonical_url": "",
+            "redirect_wrapper_detected": False,
+            "redirect_url": "",
+            "refetched_article_url": "",
+            "refetch_success": False,
+            "html": "",
+        },
+    )
+    actual = parse_special_news_datetime_with_rule(entry, "日刊産業新聞", rule, {})
+    assert actual["ok"] is True
+    assert actual["source_type"] == "rss"
+
+
+def test_extract_redirect_url_from_google_wrapper_script():
+    html = "<html><script>var redirectUrl='https://www.japanmetaldaily.com/articles/-/256198';</script></html>"
+    info = news_digest._extract_redirect_url_from_wrapper(html)
+    assert info["redirect_wrapper_detected"] is True
+    assert info["redirect_url"] == "https://www.japanmetaldaily.com/articles/-/256198"
+
+
+def test_extract_redirect_url_from_meta_refresh():
+    html = '<html><meta http-equiv="refresh" content="0;url=https://www.japanmetaldaily.com/articles/-/256198"></html>'
+    info = news_digest._extract_redirect_url_from_wrapper(html)
+    assert info["redirect_wrapper_detected"] is True
+    assert info["redirect_url"] == "https://www.japanmetaldaily.com/articles/-/256198"
+
+
+def test_parse_special_news_datetime_refetches_article_before_selector(monkeypatch):
+    entry = DummyEntry(title="鉄鋼", link="https://www.google.com/alerts/some-wrapper")
+    wrapper_html = """
+    <html><script>redirectUrl='https://www.japanmetaldaily.com/articles/-/256198';</script></html>
+    """
+    article_html = '<html><time class="article-header__published" datetime="2026-03-16 07:30">2026/3/16 8:20</time></html>'
+
+    def fake_fetch(link: str):
+        if "google.com/alerts" in link:
+            return {
+                "source_url": link,
+                "initial_url": link,
+                "final_url": link,
+                "html": wrapper_html,
+                "redirect_wrapper_detected": False,
+                "redirect_url": "",
+                "refetched_article_url": "",
+                "refetch_success": False,
+            }
+        return {
+            "source_url": link,
+            "initial_url": link,
+            "final_url": link,
+            "html": article_html,
+            "redirect_wrapper_detected": False,
+            "redirect_url": "",
+            "refetched_article_url": "",
+            "refetch_success": False,
+        }
+
+    monkeypatch.setattr(news_digest, "fetch_article_html", fake_fetch)
+    rule = normalize_special_date_rule("日刊鉄鋼新聞")
+    result = parse_special_news_datetime_with_rule(entry, "日刊鉄鋼新聞", rule, {})
+    assert result["ok"] is True
+    assert result["datetime"].astimezone(JST).strftime("%Y-%m-%d %H:%M") == "2026-03-16 07:30"
+
+
+def test_wrapper_html_pattern_not_applied_when_refetch_success(monkeypatch):
+    entry = DummyEntry(title="鉄鋼", link="https://www.google.com/alerts/some-wrapper")
+    wrapper_html = "<html><meta http-equiv=\"refresh\" content=\"0;url=https://www.japanmetaldaily.com/articles/-/256198\"></html>"
+    article_html = '<html><time class="article-header__published" datetime="2026/03/16 09:10"></time></html>'
+
+    def fake_fetch(link: str):
+        html = wrapper_html if "google.com/alerts" in link else article_html
+        return {
+            "source_url": link,
+            "initial_url": link,
+            "final_url": link,
+            "html": html,
+            "redirect_wrapper_detected": False,
+            "redirect_url": "",
+            "refetched_article_url": "",
+            "refetch_success": False,
+        }
+
+    monkeypatch.setattr(news_digest, "fetch_article_html", fake_fetch)
+    rule = normalize_special_date_rule("日刊鉄鋼新聞")
+    result = parse_special_news_datetime_with_rule(entry, "日刊鉄鋼新聞", rule, {})
+    assert result["ok"] is True
+    assert result["datetime"].astimezone(JST).strftime("%Y-%m-%d %H:%M") == "2026-03-16 09:10"
