@@ -1,229 +1,169 @@
 # daily_news_general
 
-既存の「主要ニュース配信」に加えて、新機能 **「専門紙記事一覧メール配信」** を追加しました。  
-この新機能は **Google Alert 起点**で記事を取得し、**前日更新分のみ**を毎朝 5:00（Asia/Tokyo）に **既存配信とは完全に別宛先・別件名・別HTMLテンプレート** で配信します。
+## special-news の日付抽出ルールを Notion で管理する設計
+
+`--job special` のみを対象に、媒体ごとの日付取得ロジックをコード分岐ではなく **Notion DB 設定**で切り替える方式に変更しました。
 
 ---
 
-## 1. この機能が何をするか
+## 1. 変更概要
 
-- 鉄鋼新聞・産業新聞（初期対象）の記事を Google Alert フィードから取得
-- 実行日の前日（JST）に更新された記事だけを抽出
-- 媒体ごとにタイトル+リンクを見やすい HTML メールで配信
-- 対象 0 件でも「対象記事はありませんでした」を明記して送信
-
-### 既存ニュース配信との違い
-
-- 既存: `python news_digest.py --job main`
-- 新機能: `python news_digest.py --job special`
-- 同時実行: `python news_digest.py --job all`
-
-> 既存配信ロジック・送信先とは分離されています。
+- special-news の媒体設定に「日付抽出ルール」を追加。
+- `DateSourceType`（rss / article_html / meta / json_ld）を起点に共通抽出エンジンが日付を抽出。
+- `DateParsePattern` / `DateCssSelector` / `DateTimezone` / `DateGranularity` / `TargetDateMode` / `LookbackHours` を媒体ごとに適用。
+- 主抽出に失敗した場合は `FallbackDateSourceType` + `FallbackDateParsePattern` を試行。
+- `DateGranularity=date` は日付単位比較、`datetime` は rolling 24h 比較に対応。
+- Notion が未設定・不正・空の場合は既定値を使って安全に動作。
+- main job（`--job main`）には非影響。
 
 ---
 
-## 2. システム構成
+## 2. 追加した Notion プロパティ一覧
 
-- 取得元: Google Alert RSS（媒体ごとの `alert_feeds`）
-- 設定管理:
-  - 優先: Notion DB（操作パネル用途のみ）
-  - フォールバック: `config/special_news_media.json`
-- メール描画: `templates/special_news_email.html`
-- 送信: 既存 SMTP 共通処理（件名/宛先/本文は別）
+以下を Notion DB（SpecialNewsDeliveryConfig）に追加してください。
 
-### データの流れ
+- `DateSourceType` (Select)
+  - `rss`
+  - `article_html`
+  - `meta`
+  - `json_ld`
+- `DateParsePattern` (Rich text)
+- `DateCssSelector` (Rich text)
+- `DateTimezone` (Rich text) 例: `Asia/Tokyo`
+- `DateGranularity` (Select)
+  - `datetime`
+  - `date`
+- `TargetDateMode` (Select)
+  - `rolling_24h`
+  - `calendar_day`
+- `LookbackHours` (Number) 例: `24`
+- `FallbackDateSourceType` (Select)
+  - `rss`
+  - `article_html`
+  - `meta`
+  - `json_ld`
+- `FallbackDateParsePattern` (Rich text)
 
-1. 実行開始（JST で前日を対象日として計算）
-2. Notion DB から媒体設定を取得（失敗時は明確にエラー）
-3. Notion 無効時はローカル設定 JSON を使用
-4. Google Alert フィードを媒体ごとに読み込み
-5. 前日更新分にフィルタ、重複排除、件数制限
-6. 専門紙専用 HTML テンプレートで本文生成
-7. 専門紙専用宛先（To/Cc/Bcc）へ送信
-
----
-
-## 3. Google Alert をどう参照するか
-
-- 本機能では、媒体設定ごとに `alert_feeds`（Google Alert RSS URL）を保持
-- その RSS エントリの `published_parsed / updated_parsed` を JST に変換
-- 対象日（前日）に一致する記事のみ採用
-
----
-
-## 4. Notion は何のために使うか
-
-### 用途（保存するもの）
-- 配信 ON/OFF
-- 媒体有効/無効
-- 媒体名
-- Google Alert 識別子（任意）
-- Google Alert RSS URL 群
-- 表示順
-- 件名プレフィックス
-- 1媒体あたり最大掲載件数
-- 全体最大掲載件数
-
-### Notion に保存しないもの
-- 記事本文・記事データ
-- 配信結果
-- 実行ログ
+既存プロパティ（MediaName / Enabled / GoogleAlertFeeds など）はそのまま利用します。
 
 ---
 
-## 5. 必要な環境変数一覧
+## 3. 既定値の仕様
 
-### 既存配信用（main）
-- `MAIL_FROM`
-- `MAIL_TO`
-- `MAIL_PASSWORD`
+Notion の値が未設定でも動くよう、以下の既定値を持ちます。
 
-### 専門紙配信用（special）
-- `SPECIAL_NEWS_MAIL_TO`（任意。To/Cc/Bcc がすべて空なら送信せず警告ログで終了）
-- `SPECIAL_NEWS_MAIL_CC`（任意、カンマ区切り）
-- `SPECIAL_NEWS_MAIL_BCC`（任意、カンマ区切り）
-- `SPECIAL_NEWS_MAIL_SUBJECT_PREFIX`（既定: `【専門紙記事一覧】`）
-- `SPECIAL_NEWS_CONFIG_PATH`（既定: `config/special_news_media.json`）
-- `SPECIAL_NEWS_TEMPLATE_PATH`（既定: `templates/special_news_email.html`）
-- `SPECIAL_NEWS_MAX_ITEMS_TOTAL`（既定: `50`）
-- `SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA`（既定: `20`）
+- `DateSourceType`: `rss`
+- `DateParsePattern`: `""`
+- `DateCssSelector`: `""`
+- `DateTimezone`: `Asia/Tokyo`
+- `DateGranularity`: `datetime`
+- `TargetDateMode`: `rolling_24h`
+- `LookbackHours`: `24`
+- `FallbackDateSourceType`: `""`（未使用）
+- `FallbackDateParsePattern`: `""`
 
-### Notion 操作パネル用
-- `NOTION_TOKEN`
-- `NOTION_SPECIAL_NEWS_DB_ID`
-- `NOTION_SPECIAL_NEWS_ENABLED`（`true`/`1`/`yes`/`on` で有効、`false`/`0`/`no`/`off` で無効、未設定/空文字は既定 `false`）
+### 初期プリセット（媒体名一致時）
 
----
+- 日刊鉄鋼新聞
+  - DateSourceType=`article_html`
+  - DateParsePattern=`\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}`
+  - DateGranularity=`datetime`
+  - TargetDateMode=`rolling_24h`
+  - DateTimezone=`Asia/Tokyo`
+- 日刊産業新聞
+  - DateSourceType=`article_html`
+  - DateParsePattern=`\d{4}年\d{1,2}月\d{1,2}日`
+  - DateGranularity=`date`
+  - TargetDateMode=`calendar_day`
+  - DateTimezone=`Asia/Tokyo`
 
-
-### special-news 設定優先順位
-1. 環境変数
-2. Notion DB
-3. コード既定値
-
-- Notion 設定読み込みが失敗・空・不正な場合は `config/special_news_media.json` に安全フォールバックします。
-- `GoogleAlertFeeds` は Rich text の**改行区切り URL**として解釈され、空行除外・trim・重複除外・不正 URL スキップを行います。
-
-## 6. Notion DB の作成方法（初期スキーマ案）
-
-DB名例: `SpecialNewsDeliveryConfig`
-
-### 必須プロパティ
-- `Enabled` (Checkbox): 媒体の有効/無効
-- `MediaName` (Title): 媒体名（鉄鋼新聞など）
-- `GoogleAlertIds` (Multi-select): Google Alert 識別子
-- `GoogleAlertFeeds` (Rich text): RSS URL を改行区切りで記載
-- `DisplayOrder` (Number): 表示順
-- `MaxItemsPerMedia` (Number): 媒体ごとの最大掲載件数
-- `SubjectPrefix` (Rich text): 件名プレフィックス
-- `DeliveryEnabled` (Checkbox): 全体配信 ON/OFF
-- `MaxItemsTotal` (Number): 全媒体合計の最大件数
-
-### サンプルレコード
-- Enabled: ✅
-- MediaName: 鉄鋼新聞
-- GoogleAlertIds: steel-news-alert
-- GoogleAlertFeeds: `https://www.google.com/alerts/feeds/.../steel-news-alert`
-- DisplayOrder: 1
-- MaxItemsPerMedia: 20
-- SubjectPrefix: 【専門紙記事一覧】
-- DeliveryEnabled: ✅
-- MaxItemsTotal: 50
+> Notion 値があればプリセットより Notion を優先します。
 
 ---
 
-## 7. 配信スケジュール
+## 4. 日付抽出の優先順位
 
-GitHub Actions で毎日 JST 5:00 に実行（UTC 20:00）。
+1. 主抽出（`DateSourceType` + `DateParsePattern`）
+2. 主抽出が失敗し、`FallbackDateSourceType` がある場合はフォールバック抽出
+   - `FallbackDateParsePattern` があればそれを使用
+   - 未設定なら `DateParsePattern` を再利用
+3. それでも失敗した記事はスキップ
 
-- Workflow: `.github/workflows/special_news_delivery.yml`
-- Cron: `0 20 * * *`
+### SourceType ごとの挙動
+
+- `rss`: feed の `published_parsed / updated_parsed / published / updated` から日時取得
+- `article_html`: 記事 HTML 本文（または selector ヒット確認後）に正規表現を適用
+- `meta`: meta タグの content 値群に正規表現を適用
+- `json_ld`: `application/ld+json` ブロック群に正規表現を適用
 
 ---
 
-## 8. ローカル確認方法
+## 5. 判定ルール（Granularity / TargetDateMode）
+
+- `DateGranularity=datetime`
+  - `TargetDateMode=rolling_24h` なら `now - LookbackHours` 〜 `now` で判定
+- `DateGranularity=date`
+  - 日付（YYYY-MM-DD）単位で当日一致判定
+  - `TargetDateMode=calendar_day` を推奨
+
+---
+
+## 6. ログ出力（special-job）
+
+各記事判定時に以下を出力します。
+
+- media名
+- DateSourceType
+- DateGranularity
+- TargetDateMode
+- 採用した抽出元（adopted_source）
+- 抽出失敗理由（extraction_failed reason）
+
+---
+
+## 7. 媒体追加時に Notion で何を設定すればよいか
+
+新規媒体行を追加し、最低限以下を設定します。
+
+1. `Enabled` = ON
+2. `MediaName`
+3. `GoogleAlertFeeds`（改行区切り URL）
+4. `DisplayOrder`
+5. `MaxItemsPerMedia`
+6. 日付抽出ルール
+   - `DateSourceType`
+   - `DateParsePattern`（rss 以外では実質必須）
+   - `DateTimezone`
+   - `DateGranularity`
+   - `TargetDateMode`
+   - 必要なら `DateCssSelector`, `LookbackHours`, `Fallback*`
+
+運用開始時はまず `FallbackDateSourceType=rss` を入れておくと、HTML 抽出失敗時の取りこぼしを減らせます。
+
+---
+
+## 8. local JSON フォールバック（Notion 無効時）
+
+`config/special_news_media.json` でも同じ日付ルールキーを定義できます。
+
+- `date_source_type`
+- `date_parse_pattern`
+- `date_css_selector`
+- `date_timezone`
+- `date_granularity`
+- `target_date_mode`
+- `lookback_hours`
+- `fallback_date_source_type`
+- `fallback_date_parse_pattern`
+
+---
+
+## 9. 実行コマンド
 
 ```bash
-pip install -r requirements.txt
 python news_digest.py --job special
 ```
 
-確認ポイント:
-- 対象日ログ（前日/JST）
-- 媒体ごとの取得件数ログ
-- フィルタ後件数ログ
-- 宛先マスクログ
-- 送信成否ログ
-
----
-
-## 9. 本番運用方法
-
-1. Secrets 設定（SMTP/宛先/Notion）
-2. Notion DB を作成して `NOTION_SPECIAL_NEWS_DB_ID` を設定
-3. 必要なら `config/special_news_media.json` をフォールバックとして管理
-4. 毎朝 5:00 の定期実行で監視
-
----
-
-## 10. テスト方法
-
-```bash
-pytest -q
-python -m py_compile news_digest.py
-```
-
----
-
-## 11. よくあるエラー
-
-- `SPECIAL_NEWS_MAIL_TO is required`
-  - To 未設定。環境変数を設定してください。
-- Notion 設定取得失敗
-  - `NOTION_TOKEN` / DB 権限 / DB ID を確認
-- Google Alert 取得失敗
-  - RSS URL の誤り、期限切れ、アクセス制限を確認
-- メール送信失敗
-  - `MAIL_FROM` / `MAIL_PASSWORD` / SMTP 制限を確認
-
----
-
-## 12. 宛先変更方法
-
-- `SPECIAL_NEWS_MAIL_TO`
-- `SPECIAL_NEWS_MAIL_CC`
-- `SPECIAL_NEWS_MAIL_BCC`
-
-を変更するだけで既存配信へ影響なく反映されます。
-
----
-
-## 13. 媒体を追加する方法
-
-### Notion 運用時
-1. DB に新しい行を追加
-2. `MediaName`, `GoogleAlertFeeds`, `DisplayOrder`, `MaxItemsPerMedia` を設定
-3. `Enabled` を ON
-
-### JSON 運用時
-`config/special_news_media.json` の `media` に1オブジェクト追加。
-
-> 媒体ロジックは媒体非依存で共通処理されるため、設定追加のみで拡張可能です。
-
----
-
-## 14. HTMLメールの見た目を変更する方法
-
-- `templates/special_news_email.html` を編集
-- 媒体セクションや記事リストはプレースホルダ `{media_sections}` に注入
-
----
-
-## 15. 変更ファイル
-
-- 実装: `news_digest.py`
-- 新規テンプレート: `templates/special_news_email.html`
-- 新規媒体設定: `config/special_news_media.json`
-- スケジュール: `.github/workflows/special_news_delivery.yml`
-- テスト: `tests/test_special_news.py`
+- main: `python news_digest.py --job main`
+- 両方: `python news_digest.py --job all`
 

@@ -4,25 +4,43 @@
   "media": [
     {
       "enabled": true,
-      "media_name": "鉄鋼新聞",
+      "media_name": "日刊鉄鋼新聞",
       "alert_ids": ["steel-news-alert"],
       "alert_feeds": [
         "https://www.google.com/alerts/feeds/00000000000000000000/steel-news-alert"
       ],
       "display_order": 1,
       "max_items": 20,
-      "subject_prefix": "【専門紙記事一覧】"
+      "subject_prefix": "【専門紙記事一覧】",
+      "date_source_type": "article_html",
+      "date_parse_pattern": "\\d{4}/\\d{1,2}/\\d{1,2}\\s+\\d{1,2}:\\d{2}",
+      "date_css_selector": "",
+      "date_timezone": "Asia/Tokyo",
+      "date_granularity": "datetime",
+      "target_date_mode": "rolling_24h",
+      "lookback_hours": 24,
+      "fallback_date_source_type": "rss",
+      "fallback_date_parse_pattern": ""
     },
     {
       "enabled": true,
-      "media_name": "産業新聞",
+      "media_name": "日刊産業新聞",
       "alert_ids": ["industrial-news-alert"],
       "alert_feeds": [
         "https://www.google.com/alerts/feeds/00000000000000000000/industrial-news-alert"
       ],
       "display_order": 2,
       "max_items": 20,
-      "subject_prefix": "【専門紙記事一覧】"
+      "subject_prefix": "【専門紙記事一覧】",
+      "date_source_type": "article_html",
+      "date_parse_pattern": "\\d{4}年\\d{1,2}月\\d{1,2}日",
+      "date_css_selector": "",
+      "date_timezone": "Asia/Tokyo",
+      "date_granularity": "date",
+      "target_date_mode": "calendar_day",
+      "lookback_hours": 24,
+      "fallback_date_source_type": "rss",
+      "fallback_date_parse_pattern": ""
     }
   ]
 }
