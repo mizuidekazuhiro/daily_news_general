@@ -15,7 +15,7 @@ from pathlib import Path
 from email.mime.text import MIMEText
 from email.utils import formataddr
 from email.utils import parsedate_to_datetime
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from html import escape
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from openai import OpenAI
@@ -1140,9 +1140,8 @@ def extract_entries_for_special_window(
     tz = date_rule["timezone"]
     now_local = now_jst.astimezone(tz)
     window_start = now_local - timedelta(hours=date_rule["lookback_hours"])
-    target_day = now_local.date()
-    if date_rule["target_date_mode"] == "calendar_day":
-        target_day = (now_local - timedelta(days=1)).date()
+    run_date_jst = now_jst.astimezone(ZoneInfo("Asia/Tokyo")).date()
+    allowed_dates = {run_date_jst - timedelta(days=1), run_date_jst}
     for e in entries:
         title = clean(e.get("title", ""))
         parsed_dt_info = parse_special_news_datetime_with_rule(e, media_name, date_rule, html_cache)
@@ -1166,8 +1165,8 @@ def extract_entries_for_special_window(
         in_window = False
         if date_rule["target_date_mode"] == "calendar_day":
             evaluation_mode = "calendar_day"
-            article_date = datetime.strptime(parsed_date_text, "%Y-%m-%d").date() if parsed_date_text else article_dt_local.date()
-            in_window = article_date == target_day
+            article_date = date.fromisoformat(parsed_date_text) if parsed_date_text else article_dt_local.date()
+            in_window = article_date in allowed_dates
             if not in_window:
                 decision = "target_date_mismatch"
                 failure_reason = "target_date_mismatch"
@@ -1177,7 +1176,7 @@ def extract_entries_for_special_window(
                 decision = "out_of_window"
                 failure_reason = "out_of_window"
         logging.info(
-            "Special-news media=%s DateSourceType=%s DateGranularity=%s TargetDateMode=%s feed=%s title=%s adopted_source=%s article_dt=%s parsed_date=%s target_date=%s evaluation_mode=%s decision=%s failure_reason=%s",
+            "Special-news media=%s DateSourceType=%s DateGranularity=%s TargetDateMode=%s feed=%s title=%s adopted_source=%s article_dt=%s parsed_date=%s run_date_jst=%s allowed_dates=%s evaluation_mode=%s decision=%s failure_reason=%s",
             media_name,
             date_rule["date_source_type"],
             date_rule["date_granularity"],
@@ -1187,7 +1186,8 @@ def extract_entries_for_special_window(
             parsed_dt_info.get("adopted_source", parsed_dt_info.get("source_type", "unknown")),
             article_dt_local.isoformat(),
             parsed_date_text,
-            target_day.isoformat(),
+            run_date_jst.isoformat(),
+            str(sorted(d.isoformat() for d in allowed_dates)),
             evaluation_mode,
             decision,
             failure_reason,

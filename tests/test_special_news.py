@@ -457,12 +457,51 @@ def test_extract_entries_for_special_window_calendar_day_uses_parsed_date(monkey
     caplog.set_level("INFO")
     actual = extract_entries_for_special_window([entry], now_jst, "日刊産業新聞", "https://example.com/feed", rule)
     assert len(actual) == 1
-    assert "target_date=2026-03-16" in caplog.text
+    assert "run_date_jst=2026-03-17" in caplog.text
+    assert "allowed_dates=['2026-03-16', '2026-03-17']" in caplog.text
     assert "parsed_date=2026-03-16" in caplog.text
     assert "decision=accepted" in caplog.text
     assert "evaluation_mode=calendar_day" in caplog.text
     assert "out_of_window" not in caplog.text
 
+
+
+
+def test_extract_entries_for_special_window_calendar_day_run_date_is_accepted(monkeypatch, caplog):
+    now_jst = datetime(2026, 3, 17, 17, 53, tzinfo=JST)
+    entry = DummyEntry(title="産業", link="https://www.japanmetal.com/news-t20260317148097.html")
+    rule = normalize_special_date_rule(
+        "日刊産業新聞",
+        {
+            "date_source_type": "url",
+            "date_parse_pattern": r"news-t(\d{4})(\d{2})(\d{2})\d+\.html",
+            "date_granularity": "date",
+            "target_date_mode": "calendar_day",
+        },
+    )
+    monkeypatch.setattr(
+        news_digest,
+        "fetch_article_document",
+        lambda link, cache: {
+            "source_url": link,
+            "initial_url": link,
+            "final_url": link,
+            "canonical_url": "",
+            "redirect_wrapper_detected": False,
+            "redirect_url": "",
+            "refetched_article_url": "",
+            "refetch_success": False,
+            "html": "",
+        },
+    )
+
+    caplog.set_level("INFO")
+    actual = extract_entries_for_special_window([entry], now_jst, "日刊産業新聞", "https://example.com/feed", rule)
+    assert len(actual) == 1
+    assert "run_date_jst=2026-03-17" in caplog.text
+    assert "allowed_dates=['2026-03-16', '2026-03-17']" in caplog.text
+    assert "parsed_date=2026-03-17" in caplog.text
+    assert "decision=accepted" in caplog.text
 
 def test_extract_entries_for_special_window_calendar_day_mismatch_is_rejected(monkeypatch, caplog):
     now_jst = datetime(2026, 3, 17, 17, 53, tzinfo=JST)
@@ -495,7 +534,8 @@ def test_extract_entries_for_special_window_calendar_day_mismatch_is_rejected(mo
     caplog.set_level("INFO")
     actual = extract_entries_for_special_window([entry], now_jst, "日刊産業新聞", "https://example.com/feed", rule)
     assert actual == []
-    assert "target_date=2026-03-16" in caplog.text
+    assert "run_date_jst=2026-03-17" in caplog.text
+    assert "allowed_dates=['2026-03-16', '2026-03-17']" in caplog.text
     assert "parsed_date=2026-03-15" in caplog.text
     assert "decision=target_date_mismatch" in caplog.text
 

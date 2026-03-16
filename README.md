@@ -204,6 +204,13 @@ special job の DB は「媒体ごとの収集ルール」を管理します。
 - 日付抽出ルールを列で管理
 - コード変更なしで媒体別チューニング可能
 
+### special-news の日付判定仕様（重要）
+
+- `TargetDateMode=calendar_day` は **JST基準で「実行日当日 + 前日」の2日を採用対象**にします。
+- 例: JSTで `2026-03-17` に実行した場合、`2026-03-16` と `2026-03-17` の記事を採用します。
+- `TargetDateMode=rolling_24h` は従来どおり、時刻ベースの24時間窓（`window_start <= article_dt < run_time`）で判定します。
+- そのため、`calendar_day` と `rolling_24h` は判定方式が異なります。
+
 ### 媒体別推奨設定
 
 #### 日刊産業新聞（推奨）
@@ -266,6 +273,9 @@ special-news でよく見るログの意味です。
 - `fetched` : feed から取得できた記事数
 - `filtered` : 日付判定後に残った件数
 - `date-extract` 相当情報 : `DateSourceType` と `adopted_source`
+- `run_date_jst` : calendar_day 判定時のJST実行日
+- `allowed_dates` : calendar_day 判定で採用対象となる日付一覧（当日 + 前日）
+- `parsed_date` : 記事から抽出した日付
 - `decision` : `accepted` / `target_date_mismatch` / `out_of_window`
 - `extraction_failed` : 日付抽出失敗（記事は除外）
 
@@ -275,6 +285,7 @@ special-news でよく見るログの意味です。
 Special-news config source=notion media_count=2 delivery_enabled=True max_items_total=50
 Special-news media=日刊鉄鋼新聞 feed=... fetch=success fetched=12
 Special-news media=日刊鉄鋼新聞 ... adopted_source=article_html article_dt=... decision=accepted
+Special-news media=日刊産業新聞 ... parsed_date=2026-03-16 run_date_jst=2026-03-17 allowed_dates=['2026-03-16', '2026-03-17'] evaluation_mode=calendar_day decision=accepted
 Special-news email delivered successfully; total_items=8
 ```
 
