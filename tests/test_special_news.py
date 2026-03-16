@@ -1,14 +1,15 @@
 import sys
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 import news_digest
 from news_digest import (
+    JST,
     build_special_media_row,
     build_special_news_subject,
-    extract_entries_for_target_date,
+    extract_entries_for_special_window,
     parse_env_bool,
     parse_mail_recipients,
     parse_feed_urls,
@@ -26,6 +27,12 @@ def _entry(title, link, dt):
     return e
 
 
+def _entry_with_field(title, link, field, value):
+    e = DummyEntry(title=title, link=link)
+    setattr(e, field, value)
+    return e
+
+
 def test_parse_mail_recipients():
     assert parse_mail_recipients("a@example.com, b@example.com") == ["a@example.com", "b@example.com"]
     assert parse_mail_recipients("a@example.com\n b@example.com ; c@example.com") == [
@@ -35,20 +42,85 @@ def test_parse_mail_recipients():
     ]
 
 
-def test_extract_entries_for_target_date_filters_jst_date():
-    jst = timezone(timedelta(hours=9))
-    target = datetime(2026, 3, 12, 9, 0, tzinfo=jst)
-    same_day_utc = datetime(2026, 3, 12, 1, 0, tzinfo=timezone.utc)
-    next_day_utc = datetime(2026, 3, 13, 1, 0, tzinfo=timezone.utc)
+def test_extract_entries_for_special_window_includes_within_24h():
+    now_jst = datetime(2026, 3, 12, 12, 0, tzinfo=JST)
+    window_start = now_jst - timedelta(hours=24)
+    within = datetime(2026, 3, 11, 3, 30, tzinfo=timezone.utc)  # JST: 12:30
 
-    entries = [
-        _entry("A", "https://example.com/a", same_day_utc),
-        _entry("B", "https://example.com/b", next_day_utc),
-    ]
-
-    actual = extract_entries_for_target_date(entries, target, "媒体A", "https://example.com/feed")
+    actual = extract_entries_for_special_window(
+        [_entry("A", "https://example.com/a", within)],
+        window_start,
+        now_jst,
+        "媒体A",
+        "https://example.com/feed",
+    )
     assert len(actual) == 1
     assert actual[0]["title"] == "A"
+
+
+def test_extract_entries_for_special_window_excludes_older_than_24h():
+    now_jst = datetime(2026, 3, 12, 12, 0, tzinfo=JST)
+    window_start = now_jst - timedelta(hours=24)
+    older = datetime(2026, 3, 11, 2, 59, tzinfo=timezone.utc)  # JST: 11:59 (1 minute too old)
+
+    actual = extract_entries_for_special_window(
+        [_entry("A", "https://example.com/a", older)],
+        window_start,
+        now_jst,
+        "媒体A",
+        "https://example.com/feed",
+    )
+    assert actual == []
+
+
+def test_extract_entries_for_special_window_handles_utc_to_jst_date_boundary():
+    now_jst = datetime(2026, 3, 12, 2, 0, tzinfo=JST)
+    window_start = now_jst - timedelta(hours=24)
+    # UTC date is 3/11, JST is 3/12 00:30 (window内)
+    cross_day_utc = datetime(2026, 3, 11, 15, 30, tzinfo=timezone.utc)
+
+    actual = extract_entries_for_special_window(
+        [_entry("Boundary", "https://example.com/b", cross_day_utc)],
+        window_start,
+        now_jst,
+        "媒体A",
+        "https://example.com/feed",
+    )
+    assert len(actual) == 1
+    assert actual[0]["published"] == "2026-03-12 00:30"
+
+
+def test_extract_entries_for_special_window_excludes_missing_datetime(caplog):
+    now_jst = datetime(2026, 3, 12, 12, 0, tzinfo=JST)
+    window_start = now_jst - timedelta(hours=24)
+    missing = DummyEntry(title="No date", link="https://example.com/x")
+
+    actual = extract_entries_for_special_window(
+        [missing],
+        window_start,
+        now_jst,
+        "媒体A",
+        "https://example.com/feed",
+    )
+    assert actual == []
+    assert "missing or invalid datetime" in caplog.text
+
+
+def test_extract_entries_for_special_window_datetime_source_priority():
+    now_jst = datetime(2026, 3, 12, 12, 0, tzinfo=JST)
+    window_start = now_jst - timedelta(hours=24)
+    # published is old, updated is within window. published優先なら除外される。
+    entry = _entry_with_field("P", "https://example.com/p", "published", "Tue, 10 Mar 2026 00:00:00 +0000")
+    setattr(entry, "updated", "Wed, 11 Mar 2026 20:00:00 +0000")
+
+    actual = extract_entries_for_special_window(
+        [entry],
+        window_start,
+        now_jst,
+        "媒体A",
+        "https://example.com/feed",
+    )
+    assert actual == []
 
 
 def test_build_special_news_subject():
@@ -128,7 +200,7 @@ def test_run_special_news_delivery_skips_when_recipient_empty(monkeypatch):
     monkeypatch.setattr(
         news_digest,
         "collect_special_news_articles",
-        lambda _target: {
+        lambda _now_jst: {
             "delivery_enabled": True,
             "media_results": [{"media_name": "媒体A", "items": []}],
             "total_items": 0,
