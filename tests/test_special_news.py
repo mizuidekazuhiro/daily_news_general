@@ -239,11 +239,11 @@ def test_build_special_media_row_has_date_rule_defaults():
 
 def test_extract_entries_for_special_window_date_granularity_date():
     now_jst = datetime(2026, 3, 12, 12, 0, tzinfo=JST)
-    entry = _entry_with_field("A", "https://example.com/a", "published", "Thu, 12 Mar 2026 00:10:00 +0900")
+    entry = _entry_with_field("A", "https://example.com/a", "published", "Wed, 11 Mar 2026 23:10:00 +0900")
     rule = normalize_special_date_rule("媒体A", {"date_granularity": "date", "target_date_mode": "calendar_day"})
     actual = extract_entries_for_special_window([entry], now_jst, "媒体A", "https://example.com/feed", rule)
     assert len(actual) == 1
-    assert actual[0]["published"] == "2026-03-12"
+    assert actual[0]["published"] == "2026-03-11"
 
 
 def test_parse_special_news_datetime_with_rule_uses_selector_datetime_first():
@@ -427,7 +427,7 @@ def test_wrapper_html_pattern_not_applied_when_refetch_success(monkeypatch):
 
 
 def test_extract_entries_for_special_window_calendar_day_uses_parsed_date(monkeypatch, caplog):
-    now_jst = datetime(2026, 3, 16, 12, 0, tzinfo=JST)
+    now_jst = datetime(2026, 3, 17, 17, 53, tzinfo=JST)
     entry = DummyEntry(title="産業", link="https://www.japanmetal.com/news-t20260316148097.html")
     rule = normalize_special_date_rule(
         "日刊産業新聞",
@@ -457,9 +457,105 @@ def test_extract_entries_for_special_window_calendar_day_uses_parsed_date(monkey
     caplog.set_level("INFO")
     actual = extract_entries_for_special_window([entry], now_jst, "日刊産業新聞", "https://example.com/feed", rule)
     assert len(actual) == 1
+    assert "target_date=2026-03-16" in caplog.text
+    assert "parsed_date=2026-03-16" in caplog.text
     assert "decision=accepted" in caplog.text
     assert "evaluation_mode=calendar_day" in caplog.text
     assert "out_of_window" not in caplog.text
+
+
+def test_extract_entries_for_special_window_calendar_day_mismatch_is_rejected(monkeypatch, caplog):
+    now_jst = datetime(2026, 3, 17, 17, 53, tzinfo=JST)
+    entry = DummyEntry(title="産業", link="https://www.japanmetal.com/news-t20260315148097.html")
+    rule = normalize_special_date_rule(
+        "日刊産業新聞",
+        {
+            "date_source_type": "url",
+            "date_parse_pattern": r"news-t(\d{4})(\d{2})(\d{2})\d+\.html",
+            "date_granularity": "date",
+            "target_date_mode": "calendar_day",
+        },
+    )
+    monkeypatch.setattr(
+        news_digest,
+        "fetch_article_document",
+        lambda link, cache: {
+            "source_url": link,
+            "initial_url": link,
+            "final_url": link,
+            "canonical_url": "",
+            "redirect_wrapper_detected": False,
+            "redirect_url": "",
+            "refetched_article_url": "",
+            "refetch_success": False,
+            "html": "",
+        },
+    )
+
+    caplog.set_level("INFO")
+    actual = extract_entries_for_special_window([entry], now_jst, "日刊産業新聞", "https://example.com/feed", rule)
+    assert actual == []
+    assert "target_date=2026-03-16" in caplog.text
+    assert "parsed_date=2026-03-15" in caplog.text
+    assert "decision=target_date_mismatch" in caplog.text
+
+
+def test_parse_special_news_datetime_with_rule_json_ld_newsarticle_datepublished_fallback():
+    entry = DummyEntry(title="鉄鋼", link="https://example.com/steel-jsonld")
+    html_cache = {
+        "https://example.com/steel-jsonld": (
+            "<html><head>"
+            '<script type="application/ld+json">'
+            '{"@context":"https://schema.org","@type":"NewsArticle","datePublished":"2026-03-16T05:00:00+09:00"}'
+            "</script>"
+            "</head><body></body></html>"
+        )
+    }
+    rule = normalize_special_date_rule(
+        "日刊鉄鋼新聞",
+        {
+            "date_source_type": "article_html",
+            "date_css_selector": "time.article-header__published",
+            "date_parse_pattern": r"\\d{4}/\\d{1,2}/\\d{1,2}\\s+\\d{1,2}:\\d{2}",
+            "date_granularity": "datetime",
+            "target_date_mode": "rolling_24h",
+        },
+    )
+
+    actual = parse_special_news_datetime_with_rule(entry, "日刊鉄鋼新聞", rule, html_cache)
+    assert actual["ok"] is True
+    assert actual["datetime"].isoformat() == "2026-03-16T05:00:00+09:00"
+
+
+def test_parse_special_news_datetime_with_rule_json_ld_newsarticle_array_and_graph_fallback():
+    entry = DummyEntry(title="鉄鋼", link="https://example.com/steel-jsonld-graph")
+    html_cache = {
+        "https://example.com/steel-jsonld-graph": (
+            "<html><head>"
+            '<script type="application/ld+json">'
+            '[{"@type":"BreadcrumbList"},{"@graph":[{"@type":"Organization"},{"@type":"NewsArticle","datePublished":"2026-03-16T06:00:00+09:00"}]}]'
+            "</script>"
+            "</head><body></body></html>"
+        )
+    }
+    rule = normalize_special_date_rule("日刊鉄鋼新聞")
+
+    actual = parse_special_news_datetime_with_rule(entry, "日刊鉄鋼新聞", rule, html_cache)
+    assert actual["ok"] is True
+    assert actual["datetime"].isoformat() == "2026-03-16T06:00:00+09:00"
+
+
+def test_special_news_main_job_path_unchanged_for_non_special_logic():
+    e = _entry("A", "https://example.com/a", datetime(2026, 3, 11, 3, 30, tzinfo=timezone.utc))
+    now_jst = datetime(2026, 3, 12, 12, 0, tzinfo=JST)
+    actual = extract_entries_for_special_window(
+        [e],
+        now_jst,
+        "媒体A",
+        "https://example.com/feed",
+        normalize_special_date_rule("媒体A"),
+    )
+    assert len(actual) == 1
 
 
 def test_fetch_special_news_config_from_notion_reads_trimmed_date_css_selector(monkeypatch):

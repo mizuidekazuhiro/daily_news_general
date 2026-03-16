@@ -515,6 +515,41 @@ def _extract_from_json_ld(html: str, selector: str) -> List[str]:
     if selector:
         return [b for b in blocks if selector in b]
     return blocks
+def _iter_json_ld_objects(value: Any) -> List[Dict[str, Any]]:
+    objects: List[Dict[str, Any]] = []
+    if isinstance(value, dict):
+        objects.append(value)
+        graph = value.get("@graph")
+        if isinstance(graph, list):
+            for node in graph:
+                objects.extend(_iter_json_ld_objects(node))
+        elif isinstance(graph, dict):
+            objects.extend(_iter_json_ld_objects(graph))
+    elif isinstance(value, list):
+        for item in value:
+            objects.extend(_iter_json_ld_objects(item))
+    return objects
+
+
+def _extract_newsarticle_date_published(html: str) -> Optional[str]:
+    for block in _extract_from_json_ld(html, ""):
+        text = (block or "").strip()
+        if not text:
+            continue
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            continue
+        for obj in _iter_json_ld_objects(payload):
+            raw_type = obj.get("@type")
+            types = raw_type if isinstance(raw_type, list) else [raw_type]
+            normalized = {str(t).strip().lower() for t in types if t}
+            if "newsarticle" not in normalized:
+                continue
+            date_published = obj.get("datePublished")
+            if isinstance(date_published, str) and date_published.strip():
+                return date_published.strip()
+    return None
 class _SimpleHtmlNode:
     def __init__(self, tag: str, attrs: Dict[str, str], parent: Optional["_SimpleHtmlNode"] = None):
         self.tag = tag
@@ -717,6 +752,17 @@ def _extract_date_text_candidates(entry: Any, rule: Dict[str, Any], html_cache: 
                 "datetime_source": "selector",
                 **common,
             }
+        json_ld_date_published = _extract_newsarticle_date_published(html)
+        if json_ld_date_published:
+            return {
+                "ok": True,
+                "source": "article_html(json_ld_newsarticle)",
+                "text": json_ld_date_published,
+                "used_value_for_parse": json_ld_date_published,
+                "raw_datetime_text": json_ld_date_published,
+                "datetime_source": "json_ld_newsarticle_datePublished",
+                **common,
+            }
         meta_values = _extract_from_meta(html, "")
         if meta_values:
             meta_value = meta_values[0]
@@ -726,16 +772,6 @@ def _extract_date_text_candidates(entry: Any, rule: Dict[str, Any], html_cache: 
                 "text": meta_value,
                 "used_value_for_parse": meta_value,
                 "datetime_source": "meta",
-                **common,
-            }
-        json_values = _extract_from_json_ld(html, "")
-        if json_values:
-            return {
-                "ok": True,
-                "source": "article_html(json_ld)",
-                "text": "\n".join(json_values),
-                "used_value_for_parse": "\n".join(json_values),
-                "datetime_source": "json_ld",
                 **common,
             }
         if html:
@@ -775,7 +811,7 @@ def _log_special_date_extract(media_name: str, source_type: str, payload: Dict[s
         payload.get("selected_text", ""),
         payload.get("selected_datetime_attr", ""),
         payload.get("datetime_source", ""),
-        payload.get("used_value_for_parse", payload.get("text", "")),
+        payload.get("raw_datetime_text", payload.get("used_value_for_parse", payload.get("text", ""))),
         payload.get("parsed_datetime", ""),
         payload.get("parsed_date", ""),
         payload.get("target_date", ""),
@@ -799,9 +835,28 @@ def parse_special_news_datetime_with_rule(entry: Any, media_name: str, rule: Dic
             dt_local = dt_aware.astimezone(rule["timezone"])
             extracted["parsed_datetime"] = dt_local.isoformat()
             extracted["parsed_date"] = dt_local.date().isoformat()
+            extracted["raw_datetime_text"] = str(extracted.get("raw_datetime_text", extracted.get("used_value_for_parse", extracted.get("text", ""))))
             _log_special_date_extract(media_name, source_type, extracted, pattern, "direct_datetime_used", "")
             return {"ok": True, "source_type": source_type, "adopted_source": extracted.get("source", source_type), "datetime": dt_aware}
         used_value_for_parse = str(extracted.get("used_value_for_parse", extracted.get("text", "")))
+        if extracted.get("datetime_source") == "json_ld_newsarticle_datePublished":
+            try:
+                dt_aware = parse_flexible_datetime(used_value_for_parse, rule["timezone"], "datetime")
+            except ValueError as exc:
+                _log_special_date_extract(media_name, source_type, extracted, pattern, "parse_failed", "pattern_not_matched")
+                return {**extracted, "ok": False, "source_type": source_type, "reason": str(exc), "failure_reason": "pattern_not_matched", "allow_fallback": True}
+            dt_local = dt_aware.astimezone(rule["timezone"])
+            extracted["raw_datetime_text"] = used_value_for_parse
+            extracted["parsed_datetime"] = dt_local.isoformat()
+            extracted["parsed_date"] = dt_local.date().isoformat()
+            _log_special_date_extract(media_name, source_type, extracted, pattern, "direct_datetime_used", "")
+            return {
+                "ok": True,
+                "source_type": source_type,
+                "adopted_source": extracted.get("source", source_type),
+                "datetime": dt_aware,
+                "parsed_date": extracted.get("parsed_date", ""),
+            }
         if not pattern:
             _log_special_date_extract(media_name, source_type, extracted, pattern, "pattern_skipped", "pattern_not_matched")
             return {**extracted, "ok": False, "source_type": source_type, "reason": "date parse pattern is empty", "failure_reason": "pattern_not_matched", "allow_fallback": True}
@@ -851,6 +906,13 @@ def parse_special_news_datetime_with_rule(entry: Any, media_name: str, rule: Dic
     }
 def parse_flexible_datetime(raw: str, tz: ZoneInfo, granularity: str) -> datetime:
     text = raw.strip()
+    try:
+        dt_iso = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if dt_iso.tzinfo is None:
+            dt_iso = dt_iso.replace(tzinfo=tz)
+        return dt_iso.astimezone(tz)
+    except ValueError:
+        pass
     normalized = text.replace("年", "-").replace("月", "-").replace("日", "").replace("/", "-")
     normalized = re.sub(r"\s+", " ", normalized)
     fmts = [
@@ -1079,6 +1141,8 @@ def extract_entries_for_special_window(
     now_local = now_jst.astimezone(tz)
     window_start = now_local - timedelta(hours=date_rule["lookback_hours"])
     target_day = now_local.date()
+    if date_rule["target_date_mode"] == "calendar_day":
+        target_day = (now_local - timedelta(days=1)).date()
     for e in entries:
         title = clean(e.get("title", ""))
         parsed_dt_info = parse_special_news_datetime_with_rule(e, media_name, date_rule, html_cache)
