@@ -1,0 +1,29 @@
+name: Direct Site Updates
+
+on:
+  schedule:
+    - cron: '0 22 * * *' # JST 07:00
+  workflow_dispatch:
+
+jobs:
+  direct-site-updates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run direct site updates job
+        env:
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          DIRECT_SITE_MAIL_TO: ${{ secrets.DIRECT_SITE_MAIL_TO }}
+          DIRECT_SITE_MAIL_CC: ${{ secrets.DIRECT_SITE_MAIL_CC }}
+          DIRECT_SITE_MAIL_BCC: ${{ secrets.DIRECT_SITE_MAIL_BCC }}
+          DIRECT_SITE_MAIL_SUBJECT_PREFIX: ${{ vars.DIRECT_SITE_MAIL_SUBJECT_PREFIX }}
+          NOTION_DIRECT_SITES_ENABLED: ${{ secrets.NOTION_DIRECT_SITES_ENABLED }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DIRECT_SITES_DB_ID: ${{ secrets.NOTION_DIRECT_SITES_DB_ID }}
+        run: python direct_site_updates.py
