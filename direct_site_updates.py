@@ -144,38 +144,57 @@ def load_sites_from_notion() -> List[Dict[str, Any]]:
     if not (NOTION_DIRECT_SITES_ENABLED and NOTION_TOKEN and NOTION_DIRECT_SITES_DB_ID):
         raise RuntimeError("notion_disabled_or_missing_credentials")
     url = f"https://api.notion.com/v1/databases/{NOTION_DIRECT_SITES_DB_ID}/query"
-    request = urllib.request.Request(url, method="POST", headers=notion_headers(), data=b"{}")
-    with urllib.request.urlopen(request, timeout=12) as response:
-        payload = json.loads(response.read().decode("utf-8"))
     rows: List[Dict[str, Any]] = []
-    for entry in payload.get("results", []):
-        props = entry.get("properties", {})
-        row = {
-            "SiteName": extract_notion_prop(props.get("SiteName")),
-            "Enabled": extract_notion_prop(props.get("Enabled")),
-            "ListPageUrls": extract_notion_prop(props.get("ListPageUrls")),
-            "DisplayOrder": extract_notion_prop(props.get("DisplayOrder")),
-            "MaxItemsPerSite": extract_notion_prop(props.get("MaxItemsPerSite")),
-            "DeliveryEnabled": extract_notion_prop(props.get("DeliveryEnabled")),
-            "MaxItemsTotal": extract_notion_prop(props.get("MaxItemsTotal")),
-            "SubjectPrefix": extract_notion_prop(props.get("SubjectPrefix")),
-            "ArticleUrlPattern": extract_notion_prop(props.get("ArticleUrlPattern")),
-            "ListDatePattern": extract_notion_prop(props.get("ListDatePattern")),
-            "ArticleDatePattern": extract_notion_prop(props.get("ArticleDatePattern")),
-            "DateTimezone": extract_notion_prop(props.get("DateTimezone")),
-            "DateGranularity": extract_notion_prop(props.get("DateGranularity")),
-            "TargetDateMode": extract_notion_prop(props.get("TargetDateMode")),
-            "LookbackHours": extract_notion_prop(props.get("LookbackHours")),
-            "MaxPages": extract_notion_prop(props.get("MaxPages")),
-            "ListContainerSelector": extract_notion_prop(props.get("ListContainerSelector")),
-            "ArticleLinkSelector": extract_notion_prop(props.get("ArticleLinkSelector")),
-            "ListDateSelector": extract_notion_prop(props.get("ListDateSelector")),
-            "ArticleDateSelector": extract_notion_prop(props.get("ArticleDateSelector")),
-            "NextPageSelector": extract_notion_prop(props.get("NextPageSelector")),
-            "IncludeTitlePattern": extract_notion_prop(props.get("IncludeTitlePattern")),
-            "ExcludeTitlePattern": extract_notion_prop(props.get("ExcludeTitlePattern")),
-        }
-        rows.append(normalize_site_row(row))
+    cursor: Optional[str] = None
+    page = 0
+    while True:
+        body: Dict[str, Any] = {}
+        if cursor:
+            body["start_cursor"] = cursor
+        request = urllib.request.Request(
+            url,
+            method="POST",
+            headers=notion_headers(),
+            data=json.dumps(body).encode("utf-8"),
+        )
+        with urllib.request.urlopen(request, timeout=12) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        page += 1
+        page_results = payload.get("results", [])
+        logging.info("direct-site Notion fetch page=%s rows=%s", page, len(page_results))
+        for entry in page_results:
+            props = entry.get("properties", {})
+            row = {
+                "SiteName": extract_notion_prop(props.get("SiteName")),
+                "Enabled": extract_notion_prop(props.get("Enabled")),
+                "ListPageUrls": extract_notion_prop(props.get("ListPageUrls")),
+                "DisplayOrder": extract_notion_prop(props.get("DisplayOrder")),
+                "MaxItemsPerSite": extract_notion_prop(props.get("MaxItemsPerSite")),
+                "DeliveryEnabled": extract_notion_prop(props.get("DeliveryEnabled")),
+                "MaxItemsTotal": extract_notion_prop(props.get("MaxItemsTotal")),
+                "SubjectPrefix": extract_notion_prop(props.get("SubjectPrefix")),
+                "ArticleUrlPattern": extract_notion_prop(props.get("ArticleUrlPattern")),
+                "ListDatePattern": extract_notion_prop(props.get("ListDatePattern")),
+                "ArticleDatePattern": extract_notion_prop(props.get("ArticleDatePattern")),
+                "DateTimezone": extract_notion_prop(props.get("DateTimezone")),
+                "DateGranularity": extract_notion_prop(props.get("DateGranularity")),
+                "TargetDateMode": extract_notion_prop(props.get("TargetDateMode")),
+                "LookbackHours": extract_notion_prop(props.get("LookbackHours")),
+                "MaxPages": extract_notion_prop(props.get("MaxPages")),
+                "ListContainerSelector": extract_notion_prop(props.get("ListContainerSelector")),
+                "ArticleLinkSelector": extract_notion_prop(props.get("ArticleLinkSelector")),
+                "ListDateSelector": extract_notion_prop(props.get("ListDateSelector")),
+                "ArticleDateSelector": extract_notion_prop(props.get("ArticleDateSelector")),
+                "NextPageSelector": extract_notion_prop(props.get("NextPageSelector")),
+                "IncludeTitlePattern": extract_notion_prop(props.get("IncludeTitlePattern")),
+                "ExcludeTitlePattern": extract_notion_prop(props.get("ExcludeTitlePattern")),
+            }
+            rows.append(normalize_site_row(row))
+        if not payload.get("has_more"):
+            break
+        cursor = payload.get("next_cursor")
+        if not cursor:
+            break
     return rows
 
 
