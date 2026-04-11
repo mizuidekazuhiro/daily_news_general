@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>Direct Site Updates</title>
+    <style>
+      body { font-family: Arial, sans-serif; color: #1f2937; }
+      .meta { color: #6b7280; font-size: 12px; }
+      section { margin: 18px 0; border-top: 1px solid #e5e7eb; padding-top: 10px; }
+      h2 { margin: 0 0 8px; font-size: 16px; }
+      li { margin: 6px 0; line-height: 1.4; }
+    </style>
+  </head>
+  <body>
+    <h1>サイト更新一覧</h1>
+    <p>生成時刻: {{generated_at}}</p>
+    <p>総件数: {{total_count}}</p>
+    {{sections}}
+  </body>
+</html>

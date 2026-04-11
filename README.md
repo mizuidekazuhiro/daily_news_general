@@ -480,3 +480,96 @@ SPECIAL_NEWS_WINDOW_HOURS=24
 - special workflow は `special_news_delivery.yml`
 - 既存 workflow に `DEEPL_API_KEY` の記載がありますが、現行コードでは参照していません（設定しても未使用です）
 
+
+---
+
+## direct-site-updates job（ニュース一覧URL直読）
+
+`direct_site_updates.py` は RSS / Google Alert を使わず、指定したニュース一覧URLを直接巡回して更新記事を配信する新ジョブです。既存の `news_digest.py --job main|special|all` には影響しません。
+
+### 実行方法
+
+```bash
+python direct_site_updates.py
+```
+
+### Workflow
+
+- `.github/workflows/direct_site_updates.yml`
+- 毎日 JST 07:00（UTC 22:00）
+- `workflow_dispatch` で手動実行可能
+
+### 設定優先順位（Notion first）
+
+1. `NOTION_DIRECT_SITES_ENABLED=true` かつ Notion 読み取り成功: Notion を採用
+2. 上記以外: `config/direct_site_watchers.json` を採用
+
+### direct-site 用 env
+
+- `MAIL_FROM`
+- `MAIL_PASSWORD`
+- `DIRECT_SITE_MAIL_TO`
+- `DIRECT_SITE_MAIL_CC`
+- `DIRECT_SITE_MAIL_BCC`
+- `DIRECT_SITE_MAIL_SUBJECT_PREFIX`
+- `NOTION_DIRECT_SITES_ENABLED`
+- `NOTION_DIRECT_SITES_DB_ID`
+- `NOTION_TOKEN`
+
+### Notion DB 列定義（1 row = 1 監視対象ページ）
+
+必須列:
+- `SiteName` (Title)
+- `Enabled` (Checkbox)
+- `ListPageUrls` (Rich text, 改行区切りで複数URL)
+- `DisplayOrder` (Number)
+- `MaxItemsPerSite` (Number)
+- `DeliveryEnabled` (Checkbox)
+- `MaxItemsTotal` (Number)
+- `SubjectPrefix` (Rich text)
+- `ArticleUrlPattern` (Rich text)
+- `ListDatePattern` (Rich text)
+- `ArticleDatePattern` (Rich text)
+- `DateTimezone` (Rich text)
+- `DateGranularity` (Select: `datetime` / `date`)
+- `TargetDateMode` (Select: `rolling_24h` / `calendar_day`)
+- `LookbackHours` (Number)
+- `MaxPages` (Number)
+
+任意列:
+- `ListContainerSelector`
+- `ArticleLinkSelector`
+- `ListDateSelector`
+- `ArticleDateSelector`
+- `NextPageSelector`
+- `IncludeTitlePattern`
+- `ExcludeTitlePattern`
+- `Notes`
+
+### 初期サンプル5件
+
+`config/direct_site_watchers.json` に以下を同梱しています（将来は Notion row 追加のみで拡張）。
+
+1. `Japan Metal Daily - metal`
+2. `Japan Metal - news-t`
+3. `Kallanish - Asia`
+4. `Kallanish - Middle East`
+5. `Kallanish - North America`
+
+### メール件名の優先順位
+
+1. `DIRECT_SITE_MAIL_SUBJECT_PREFIX`
+2. Notion row の `SubjectPrefix`
+3. `【サイト更新一覧】`
+
+### Kallanish の扱い（初期版）
+
+Kallanish は購読前提の媒体であるため、初期版では一覧ページ中心の更新検知（タイトル / URL / 公開日 / 媒体名）を対象とし、本文要約・全文抽出は行いません。
+
+### トラブルシューティング
+
+- Notion API エラー時: `NOTION_DIRECT_SITES_ENABLED` / `NOTION_TOKEN` / `NOTION_DIRECT_SITES_DB_ID` / Integration 接続を確認
+- 日付抽出失敗時: `ListDatePattern` / `ArticleDatePattern` / `ListDateSelector` / `ArticleDateSelector` を見直し
+- 誤巡回時: `NextPageSelector` を明示し `MaxPages` を小さく設定
+- 配信されない時: `DIRECT_SITE_MAIL_TO` と SMTP (`MAIL_FROM`, `MAIL_PASSWORD`) を確認
+
