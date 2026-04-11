@@ -41,7 +41,8 @@ SMTP_PORT = 587
 SPECIAL_NEWS_MAIL_TO = os.getenv("SPECIAL_NEWS_MAIL_TO", "")
 SPECIAL_NEWS_MAIL_CC = os.getenv("SPECIAL_NEWS_MAIL_CC", "")
 SPECIAL_NEWS_MAIL_BCC = os.getenv("SPECIAL_NEWS_MAIL_BCC", "")
-SPECIAL_NEWS_MAIL_SUBJECT_PREFIX = os.getenv("SPECIAL_NEWS_MAIL_SUBJECT_PREFIX", "【専門紙記事一覧】")
+DEFAULT_SPECIAL_NEWS_MAIL_SUBJECT_PREFIX = "【専門紙記事一覧】"
+SPECIAL_NEWS_MAIL_SUBJECT_PREFIX = os.getenv("SPECIAL_NEWS_MAIL_SUBJECT_PREFIX", "")
 SPECIAL_NEWS_CONFIG_PATH = os.getenv("SPECIAL_NEWS_CONFIG_PATH", os.path.join("config", "special_news_media.json"))
 SPECIAL_NEWS_TEMPLATE_PATH = os.getenv("SPECIAL_NEWS_TEMPLATE_PATH", os.path.join("templates", "special_news_email.html"))
 SPECIAL_NEWS_MAX_ITEMS_TOTAL = int(os.getenv("SPECIAL_NEWS_MAX_ITEMS_TOTAL", "50"))
@@ -997,7 +998,7 @@ def build_special_media_row(
         "alert_feeds": feeds,
         "display_order": safe_int(display_order, 999),
         "max_items": safe_int(max_items, SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA),
-        "subject_prefix": (subject_prefix or SPECIAL_NEWS_MAIL_SUBJECT_PREFIX).strip() or SPECIAL_NEWS_MAIL_SUBJECT_PREFIX,
+        "subject_prefix": (subject_prefix or "").strip() or DEFAULT_SPECIAL_NEWS_MAIL_SUBJECT_PREFIX,
         "delivery_enabled": bool(delivery_enabled) if delivery_enabled is not None else True,
         "max_items_total": safe_int(max_items_total, SPECIAL_NEWS_MAX_ITEMS_TOTAL),
         "date_rule": date_rule,
@@ -1023,14 +1024,34 @@ def fetch_special_news_config_from_notion() -> Optional[List[Dict[str, Any]]]:
         logging.warning("Notion special-news enabled but credentials are missing; fallback to local config")
         return None
     url = f"https://api.notion.com/v1/databases/{NOTION_SPECIAL_NEWS_DB_ID}/query"
-    req = urllib.request.Request(url, data=json.dumps({}).encode("utf-8"), headers=notion_headers(), method="POST")
+    rows: List[Dict[str, Any]] = []
+    cursor: Optional[str] = None
+    page = 0
     try:
-        with urllib.request.urlopen(req, timeout=10) as res:
-            payload = json.loads(res.read().decode("utf-8"))
+        while True:
+            body: Dict[str, Any] = {}
+            if cursor:
+                body["start_cursor"] = cursor
+            req = urllib.request.Request(
+                url,
+                data=json.dumps(body).encode("utf-8"),
+                headers=notion_headers(),
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10) as res:
+                payload = json.loads(res.read().decode("utf-8"))
+            page += 1
+            page_rows = payload.get("results", [])
+            rows.extend(page_rows)
+            logging.info("Special-news Notion fetch page=%s rows=%s total=%s", page, len(page_rows), len(rows))
+            if not payload.get("has_more"):
+                break
+            cursor = payload.get("next_cursor")
+            if not cursor:
+                break
     except Exception as exc:
         logging.error("Failed to fetch Notion special-news config: %s; fallback to local config", exc)
         return None
-    rows = payload.get("results", [])
     if not rows:
         logging.warning("Notion special-news DB has no rows; fallback to local config")
         return None
@@ -1075,11 +1096,23 @@ def fetch_special_news_config_from_notion() -> Optional[List[Dict[str, Any]]]:
             continue
         media_rows.append(normalized)
     return media_rows
+
+
+def resolve_special_subject_prefix(env_value: Optional[str], notion_or_config_value: Optional[str]) -> str:
+    env_prefix = (env_value or "").strip()
+    if env_prefix:
+        return env_prefix
+    notion_prefix = (notion_or_config_value or "").strip()
+    if notion_prefix:
+        return notion_prefix
+    return DEFAULT_SPECIAL_NEWS_MAIL_SUBJECT_PREFIX
+
+
 def load_special_news_media_config() -> Dict[str, Any]:
     notion_rows = fetch_special_news_config_from_notion()
     if notion_rows:
         # 優先順位: 環境変数 > Notion > コード既定値
-        subject_prefix = SPECIAL_NEWS_MAIL_SUBJECT_PREFIX or notion_rows[0].get("subject_prefix", SPECIAL_NEWS_MAIL_SUBJECT_PREFIX)
+        subject_prefix = resolve_special_subject_prefix(SPECIAL_NEWS_MAIL_SUBJECT_PREFIX, notion_rows[0].get("subject_prefix"))
         delivery_enabled = notion_rows[0].get("delivery_enabled", True)
         max_items_total = notion_rows[0].get("max_items_total", SPECIAL_NEWS_MAX_ITEMS_TOTAL)
         return {
@@ -1125,7 +1158,7 @@ def load_special_news_media_config() -> Dict[str, Any]:
         "media": sorted(media_rows, key=lambda x: x["display_order"]),
         "delivery_enabled": bool(payload.get("delivery_enabled", True)),
         "max_items_total": safe_int(payload.get("max_items_total"), SPECIAL_NEWS_MAX_ITEMS_TOTAL),
-        "subject_prefix": payload.get("subject_prefix", SPECIAL_NEWS_MAIL_SUBJECT_PREFIX),
+        "subject_prefix": resolve_special_subject_prefix(SPECIAL_NEWS_MAIL_SUBJECT_PREFIX, payload.get("subject_prefix")),
     }
 def extract_entries_for_special_window(
     entries: List[Any],
@@ -1311,7 +1344,7 @@ def render_special_news_html(target_date: datetime, media_results: Optional[List
         media_sections="\n".join(section_html),
     )
 def build_special_news_subject(target_date: datetime, media_results: List[Dict[str, Any]], subject_prefix: Optional[str] = None) -> str:
-    prefix = subject_prefix or SPECIAL_NEWS_MAIL_SUBJECT_PREFIX
+    prefix = resolve_special_subject_prefix(SPECIAL_NEWS_MAIL_SUBJECT_PREFIX, subject_prefix)
     media_names = "・".join(m.get("media_name", "") for m in media_results if m.get("media_name"))
     suffix = f"（{media_names}）" if media_names else "（対象媒体なし）"
     return f"{prefix}{target_date.strftime('%Y-%m-%d')}更新分{suffix}"
@@ -1360,6 +1393,26 @@ def normalize_title(title):
     t = re.sub(r"(reuters|bloomberg|yahoo|msn|dメニュー|ロイター)", "", t)
     t = re.sub(r"[^\w\u4e00-\u9fff]+", " ", t)
     return re.sub(r"\s+", " ", t).strip()
+
+
+def normalize_url_for_dedupe(url: str) -> str:
+    if not url:
+        return ""
+    parsed = urllib.parse.urlsplit(normalize_link(url))
+    host = parsed.netloc.lower().split("@")[-1]
+    host = host.split(":")[0]
+    if host.startswith("www."):
+        host = host[4:]
+    path = re.sub(r"/+", "/", parsed.path or "/").rstrip("/") or "/"
+    return f"{host}{path}"
+
+
+def build_dedupe_key(title: str, link: str) -> str:
+    title_key = normalize_title(title)
+    url_key = normalize_url_for_dedupe(link)
+    if url_key:
+        return f"{url_key}|{title_key}"
+    return f"title_only|{title_key}"
 def is_japanese(text):
     return bool(re.search(r"[\u3040-\u30ff\u4e00-\u9fff]", text))
 def normalize_cache_key(title):
@@ -1607,56 +1660,38 @@ def translate_titles_to_ja(titles, client_factory=OpenAI):
 def generate_html():
     final_articles = []
     for media, feeds in MEDIA.items():
-        collected = []
-        buffer_zero = []
+        candidate_articles = []
         seen = set()
-        offset = 0
-        exhausted = False
-        while len(collected) < 15 and not exhausted:
-            found_recent = False
-            for url in feeds:
-                entries = safe_parse(url)
-                slice_entries = entries[offset:offset+15]
-                if not slice_entries:
+        for url in feeds:
+            entries = safe_parse(url)
+            # 1 feed は 1 回だけ取得し、上位15件前後を走査する
+            for e in entries[:15]:
+                title = clean(e.get("title", ""))
+                summary_raw = clean(e.get("summary", ""))
+                link = normalize_link(e.get("link", ""))
+                dt = get_published_datetime(e)
+                if not dt or not is_within_24h(dt):
                     continue
-                for e in slice_entries:
-                    title = clean(e.get("title", ""))
-                    summary_raw = clean(e.get("summary", ""))
-                    link = normalize_link(e.get("link",""))
-                    dt = get_published_datetime(e)
-                    if not dt:
-                        continue
-                    if not is_within_24h(dt):
-                        continue
-                    found_recent = True
-                    if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
-                        continue
-                    key = normalize_title(title)
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    score = importance_score(title + summary_raw)
-                    item = {
+                if media == "日経新聞" and is_nikkei_noise(title, summary_raw):
+                    continue
+                dedupe_key = build_dedupe_key(title, link)
+                if dedupe_key in seen:
+                    continue
+                seen.add(dedupe_key)
+                score = importance_score(title + summary_raw)
+                candidate_articles.append(
+                    {
                         "media": media,
                         "title": title,
                         "title_ja": "",
-                        "summary": "",
                         "score": score,
-                        "published": published(e),
-                        "link": link
+                        "published": dt.strftime("%Y-%m-%d %H:%M"),
+                        "link": link,
                     }
-                    if score >= 1:
-                        collected.append(item)
-                    else:
-                        buffer_zero.append(item)
-            if not found_recent:
-                exhausted = True
-            offset += 15
-        for a in sorted(buffer_zero, key=lambda x:x["published"], reverse=True):
-            if len(collected) >= 15:
-                break
-            collected.append(a)
-        final_articles.extend(collected)
+                )
+        high_score = sorted([a for a in candidate_articles if a["score"] >= 1], key=lambda x: x["published"], reverse=True)
+        low_score = sorted([a for a in candidate_articles if a["score"] == 0], key=lambda x: x["published"], reverse=True)
+        final_articles.extend((high_score + low_score)[:15])
     # ★翻訳ルール（英語のみ）
     target_media = {"Kallanish","BigMint","Fastmarkets","Argus","MySteel","Reuters","Bloomberg"}
     to_translate = []
@@ -1704,8 +1739,6 @@ def generate_html():
                 🇬🇧 EN: {a['title']}
             </div>
             """
-        if a["summary"]:
-            body_html += f"<div>{a['summary']}</div>"
         body_html += f"""
             <div style="font-size:12px;color:#555;">
                 {a['media']}｜重要度:{stars}｜{a['published']}
@@ -1721,6 +1754,14 @@ def send_mail(html):
         subject=f"主要ニュースまとめ｜{now_jst.strftime('%Y-%m-%d')}",
         to_list=parse_mail_recipients(MAIL_TO),
     )
+
+
+def run_main_news_delivery():
+    to_list = parse_mail_recipients(MAIL_TO)
+    if not to_list:
+        logging.warning("Main-news recipients are empty (MAIL_TO); skip delivery")
+        return
+    send_mail(generate_html())
 def run_special_news_delivery():
     now_jst = datetime.now(JST)
     result = collect_special_news_articles(now_jst)
@@ -1758,6 +1799,6 @@ if __name__ == "__main__":
     parser.add_argument("--job", choices=["main", "special", "all"], default="main")
     args = parser.parse_args()
     if args.job in {"main", "all"}:
-        send_mail(generate_html())
+        run_main_news_delivery()
     if args.job in {"special", "all"}:
         run_special_news_delivery()

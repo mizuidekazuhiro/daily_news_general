@@ -1,5 +1,10 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
+import json
+import sys
+from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from direct_site_updates import (
     dedupe_and_limit,
@@ -9,6 +14,7 @@ from direct_site_updates import (
     parse_date_text,
     render_email,
     SiteItem,
+    load_sites_from_notion,
 )
 
 
@@ -16,8 +22,8 @@ def test_extract_candidates_for_sample_patterns():
     cfg = normalize_site_row(
         {
             "SiteName": "sample",
-            "ArticleUrlPattern": r"https://www\\.japanmetaldaily\\.com/articles/-/\\d+",
-            "ListDatePattern": r"\\d{4}/\\d{1,2}/\\d{1,2}\\s+\\d{1,2}:\\d{2}",
+            "ArticleUrlPattern": r"https://www\.japanmetaldaily\.com/articles/-/\d+",
+            "ListDatePattern": r"\d{4}/\d{1,2}/\d{1,2}\s+\d{1,2}:\d{2}",
         }
     )
     html = """
@@ -35,8 +41,8 @@ def test_extract_candidates_for_japanmetal_and_kallanish():
     cfg = normalize_site_row(
         {
             "SiteName": "sample2",
-            "ArticleUrlPattern": r"https://www\\.japanmetal\\.com/news-t\\d+\\.html|https://www\\.kallanish\\.com/en/news/[^\"\\s]+",
-            "ListDatePattern": r"\\d{2}年\\d{2}月\\d{2}日|\\d{1,2}\\s+[A-Z][a-z]{2}\\s+\\d{4}",
+            "ArticleUrlPattern": r"https://www\.japanmetal\.com/news-t\d+\.html|https://www\.kallanish\.com/en/news/[^\"\s]+",
+            "ListDatePattern": r"\d{2}年\d{2}月\d{2}日|\d{1,2}\s+[A-Z][a-z]{2}\s+\d{4}",
         }
     )
     html = """
@@ -92,3 +98,43 @@ def test_dedupe_and_email_render(tmp_path):
     template.write_text("{{generated_at}} {{total_count}} {{sections}}", encoding="utf-8")
     html = render_email(template, sections, 1, datetime(2026, 4, 5, tzinfo=ZoneInfo("Asia/Tokyo")))
     assert "title1" in html
+
+
+class _DummyResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def read(self):
+        return json.dumps(self.payload).encode("utf-8")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def test_load_sites_from_notion_pagination(monkeypatch):
+    monkeypatch.setattr("direct_site_updates.NOTION_DIRECT_SITES_ENABLED", True)
+    monkeypatch.setattr("direct_site_updates.NOTION_TOKEN", "token")
+    monkeypatch.setattr("direct_site_updates.NOTION_DIRECT_SITES_DB_ID", "db")
+
+    p1 = {
+        "results": [
+            {"properties": {"SiteName": {"type": "title", "title": [{"plain_text": "A"}]}, "ListPageUrls": {"type": "rich_text", "rich_text": [{"plain_text": "https://example.com"}]}}}
+        ],
+        "has_more": True,
+        "next_cursor": "c1",
+    }
+    p2 = {
+        "results": [
+            {"properties": {"SiteName": {"type": "title", "title": [{"plain_text": "B"}]}, "ListPageUrls": {"type": "rich_text", "rich_text": [{"plain_text": "https://example.org"}]}}}
+        ],
+        "has_more": False,
+        "next_cursor": None,
+    }
+    responses = iter([_DummyResponse(p1), _DummyResponse(p2)])
+    monkeypatch.setattr("direct_site_updates.urllib.request.urlopen", lambda *args, **kwargs: next(responses))
+
+    rows = load_sites_from_notion()
+    assert [r["SiteName"] for r in rows] == ["A", "B"]
