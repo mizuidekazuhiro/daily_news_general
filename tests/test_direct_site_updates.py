@@ -88,6 +88,16 @@ def test_date_parse_and_window_modes():
     assert is_in_window(dt2, cfg_calendar, now)
 
 
+def test_date_parse_english_month_formats():
+    tz = ZoneInfo("Asia/Tokyo")
+    dt1 = parse_date_text("May 1, 2026", tz, "date")
+    dt2 = parse_date_text("1 May 2026", tz, "date")
+    assert dt1 is not None
+    assert dt2 is not None
+    assert dt1.date().isoformat() == "2026-05-01"
+    assert dt2.date().isoformat() == "2026-05-01"
+
+
 def test_dedupe_and_email_render(tmp_path):
     cfg = normalize_site_row({"SiteName": "A", "DisplayOrder": 1, "MaxItemsTotal": 10, "DeliveryEnabled": True})
     item1 = SiteItem("A", "title1", "https://example.com/a", datetime(2026, 4, 5, tzinfo=ZoneInfo("Asia/Tokyo")), "2026-04-05 00:00", "list_regex")
@@ -138,3 +148,19 @@ def test_load_sites_from_notion_pagination(monkeypatch):
 
     rows = load_sites_from_notion()
     assert [r["SiteName"] for r in rows] == ["A", "B"]
+
+
+def test_extract_candidates_article_pattern_matches_href_or_absolute():
+    cfg = normalize_site_row(
+        {
+            "SiteName": "pattern-dual",
+            "ArticleUrlPattern": r"^/news/",
+        }
+    )
+    html = """
+      <a href="/news/a1">Article 1</a>
+      <a href="https://example.com/other">Other</a>
+    """
+    rows = extract_candidates_from_list_page(html, "https://example.com/list", cfg)
+    assert len(rows) == 1
+    assert rows[0]["url"] == "https://example.com/news/a1"
