@@ -6,6 +6,7 @@ import smtplib
 import socket
 import urllib.parse
 import urllib.request
+import urllib.error
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from email.mime.text import MIMEText
@@ -35,6 +36,9 @@ DIRECT_SITE_MAIL_SUBJECT_PREFIX = os.getenv("DIRECT_SITE_MAIL_SUBJECT_PREFIX", "
 
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
 NOTION_DIRECT_SITES_DB_ID = os.getenv("NOTION_DIRECT_SITES_DB_ID", "")
+SEARCH_API_KEY = os.getenv("SEARCH_API_KEY", "")
+SEARCH_API_URL = os.getenv("SEARCH_API_URL", "https://google.serper.dev/search")
+
 NOTION_DIRECT_SITES_ENABLED = os.getenv("NOTION_DIRECT_SITES_ENABLED", "false").strip().lower() in {
     "1",
     "true",
@@ -162,6 +166,11 @@ def normalize_site_row(raw: Dict[str, Any]) -> Dict[str, Any]:
         "NextPageSelector": str(raw.get("NextPageSelector", "")).strip(),
         "IncludeTitlePattern": str(raw.get("IncludeTitlePattern", "")).strip(),
         "ExcludeTitlePattern": str(raw.get("ExcludeTitlePattern", "")).strip(),
+        "FetchMode": str(raw.get("FetchMode", "direct")).strip().lower() or "direct",
+        "SearchQuery": str(raw.get("SearchQuery", "")).strip(),
+        "SearchUrlPattern": str(raw.get("SearchUrlPattern", "")).strip(),
+        "FetchArticleBody": bool(raw.get("FetchArticleBody", True)),
+        "DateFallbackMode": str(raw.get("DateFallbackMode", "require_date")).strip().lower() or "require_date",
     }
     row["timezone"] = _safe_tz(row["DateTimezone"])
     return row
@@ -215,6 +224,11 @@ def load_sites_from_notion() -> List[Dict[str, Any]]:
                 "NextPageSelector": extract_notion_prop(props.get("NextPageSelector")),
                 "IncludeTitlePattern": extract_notion_prop(props.get("IncludeTitlePattern")),
                 "ExcludeTitlePattern": extract_notion_prop(props.get("ExcludeTitlePattern")),
+                "FetchMode": extract_notion_prop(props.get("FetchMode")),
+                "SearchQuery": extract_notion_prop(props.get("SearchQuery")),
+                "SearchUrlPattern": extract_notion_prop(props.get("SearchUrlPattern")),
+                "FetchArticleBody": extract_notion_prop(props.get("FetchArticleBody")),
+                "DateFallbackMode": extract_notion_prop(props.get("DateFallbackMode")),
             }
             rows.append(normalize_site_row(row))
         if not payload.get("has_more"):
@@ -493,96 +507,156 @@ def enrich_date_from_article(candidate: Dict[str, Any], cfg: Dict[str, Any]) -> 
     return candidate
 
 
+
+
+def search_results_from_query(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+    query = cfg.get("SearchQuery", "")
+    if not query:
+        logging.warning("site name=%s reason=missing_search_query", cfg["SiteName"])
+        return []
+    if not SEARCH_API_KEY:
+        logging.warning("site name=%s reason=missing_search_api_key", cfg["SiteName"])
+        return []
+
+    payload = json.dumps({"q": query}).encode("utf-8")
+    request = urllib.request.Request(
+        SEARCH_API_URL,
+        method="POST",
+        headers={"X-API-KEY": SEARCH_API_KEY, "Content-Type": "application/json"},
+        data=payload,
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=12) as response:
+            body = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        logging.warning("site name=%s search failed query=%s error=%s", cfg["SiteName"], query, exc)
+        return []
+
+    raw = body.get("organic", [])
+    pattern = cfg.get("SearchUrlPattern", "")
+    accepted: List[Dict[str, Any]] = []
+    for row in raw:
+        url = (row.get("link") or "").strip()
+        title = (row.get("title") or "").strip()
+        if not url or not title:
+            continue
+        if pattern and not re.search(pattern, url):
+            continue
+        accepted.append(
+            {
+                "title": title,
+                "url": url,
+                "snippet": (row.get("snippet") or "").strip(),
+                "date_text": (row.get("date") or "").strip(),
+                "date_source": "search_date" if row.get("date") else "failed",
+            }
+        )
+    logging.info(
+        "site name=%s fetch_mode=%s direct_fetch_attempted=%s direct_fetch_status=%s search_query=%s search_result_count=%s accepted_result_count=%s search_url_pattern=%s fetch_article_body=%s date_fallback_mode=%s final_item_count=%s",
+        cfg["SiteName"],
+        cfg.get("FetchMode", "direct"),
+        False,
+        "skipped",
+        query,
+        len(raw),
+        len(accepted),
+        cfg.get("SearchUrlPattern", ""),
+        cfg.get("FetchArticleBody", True),
+        cfg.get("DateFallbackMode", "require_date"),
+        len(accepted),
+    )
+    return accepted
+
+
 def collect_site_items(cfg: Dict[str, Any], now_dt: datetime) -> List[SiteItem]:
     if not cfg["Enabled"]:
         logging.info("site name=%s skipped reason=disabled", cfg["SiteName"])
         return []
+
     collected: List[SiteItem] = []
     site_seen_urls = set()
     pages_visited = set()
+    fetch_mode = cfg.get("FetchMode", "direct") or "direct"
+    search_used = False
+    direct_fetch_attempted = fetch_mode in {"direct", "direct_then_search"}
+    direct_fetch_status = "skipped"
+    candidate_pool: List[Dict[str, Any]] = []
 
-    logging.info("site name=%s configured_url_count=%s configured_urls=%s", cfg["SiteName"], len(cfg["ListPageUrls"]), cfg["ListPageUrls"])
-    for list_url in cfg["ListPageUrls"]:
-        current_url = list_url
-        for _ in range(cfg["MaxPages"]):
-            if current_url in pages_visited:
-                break
-            pages_visited.add(current_url)
-            try:
-                html, status, final_url = fetch_html(current_url)
-                logging.info("site name=%s fetched list url=%s status=%s", cfg["SiteName"], current_url, status)
-            except urllib.error.HTTPError as exc:
-                if exc.code == 403:
-                    logging.warning(
-                        "site name=%s list fetch blocked reason=site_blocked_or_requires_auth status=403 url=%s",
-                        cfg["SiteName"],
-                        current_url,
-                    )
-                else:
-                    logging.warning("site name=%s list fetch error url=%s error=%s", cfg["SiteName"], current_url, exc)
-                break
-            except Exception as exc:
-                logging.warning("site name=%s list fetch error url=%s error=%s", cfg["SiteName"], current_url, exc)
-                break
-
-            candidates = extract_candidates_from_list_page(html, final_url, cfg)
-            logging.info("site name=%s extracted links count=%s", cfg["SiteName"], len(candidates))
-            for cand in candidates:
-                normalized_url = normalize_url(cand["url"])
-                if normalized_url in site_seen_urls:
-                    logging.info("site name=%s skipped reason=site_url_duplicate url=%s", cfg["SiteName"], cand["url"])
-                    continue
-
-                ok, reason = passes_title_filter(cand["title"], cfg)
-                if not ok:
-                    logging.info("site name=%s skipped reason=%s title=%s", cfg["SiteName"], reason, cand["title"])
-                    continue
-
-                parsed_dt = parse_date_text(cand["date_text"], cfg["timezone"], cfg["DateGranularity"])
-                if not parsed_dt:
-                    cand = enrich_date_from_article(cand, cfg)
-                    parsed_dt = parse_date_text(cand["date_text"], cfg["timezone"], cfg["DateGranularity"])
-
-                logging.info(
-                    "site name=%s date extraction source=%s url=%s",
-                    cfg["SiteName"],
-                    cand["date_source"],
-                    cand["url"],
-                )
-
-                if not parsed_dt:
-                    logging.info("site name=%s skipped reason=date_parse_failed url=%s", cfg["SiteName"], cand["url"])
-                    continue
-                if not is_in_window(parsed_dt, cfg, now_dt):
-                    logging.info("site name=%s skipped reason=out_of_window url=%s", cfg["SiteName"], cand["url"])
-                    continue
-
-                site_seen_urls.add(normalized_url)
-                collected.append(
-                    SiteItem(
-                        site_name=cfg["SiteName"],
-                        title=cand["title"],
-                        url=cand["url"],
-                        published_at=parsed_dt,
-                        published_label=parsed_dt.astimezone(cfg["timezone"]).strftime("%Y-%m-%d %H:%M"),
-                        date_source=cand["date_source"],
-                    )
-                )
-                logging.info("site name=%s accepted url=%s", cfg["SiteName"], cand["url"])
-                if len(collected) >= cfg["MaxItemsPerSite"]:
+    if direct_fetch_attempted:
+        for list_url in cfg["ListPageUrls"]:
+            current_url = list_url
+            for _ in range(cfg["MaxPages"]):
+                if current_url in pages_visited:
+                    break
+                pages_visited.add(current_url)
+                try:
+                    html, status, final_url = fetch_html(current_url)
+                    direct_fetch_status = f"ok:{status}"
+                except urllib.error.HTTPError as exc:
+                    direct_fetch_status = f"http_error:{exc.code}"
+                    break
+                except Exception as exc:
+                    direct_fetch_status = f"error:{type(exc).__name__}"
                     break
 
-            if len(collected) >= cfg["MaxItemsPerSite"]:
-                break
+                candidates = extract_candidates_from_list_page(html, final_url, cfg)
+                candidate_pool.extend(candidates)
+                soup = BeautifulSoup(html, "html.parser")
+                next_url = find_next_page_url(soup, final_url, cfg["NextPageSelector"])
+                if not next_url or next_url in pages_visited:
+                    break
+                current_url = next_url
 
-            soup = BeautifulSoup(html, "html.parser")
-            next_url = find_next_page_url(soup, final_url, cfg["NextPageSelector"])
-            if not next_url or next_url in pages_visited:
-                break
-            current_url = next_url
+    need_search = fetch_mode == "search_only" or (
+        fetch_mode == "direct_then_search" and (not candidate_pool or direct_fetch_status.startswith("http_error:403") or direct_fetch_status.startswith("http_error:404") or direct_fetch_status.startswith("error:"))
+    )
+    if need_search:
+        search_used = True
+        candidate_pool = search_results_from_query(cfg)
 
-    logging.info("site name=%s final items per site=%s", cfg["SiteName"], len(collected))
+    for cand in candidate_pool:
+        normalized_url = normalize_url(cand["url"])
+        if normalized_url in site_seen_urls:
+            continue
+        ok, _ = passes_title_filter(cand["title"], cfg)
+        if not ok:
+            continue
+
+        parsed_dt = parse_date_text(cand.get("date_text", ""), cfg["timezone"], cfg["DateGranularity"])
+        if not parsed_dt and cfg.get("FetchArticleBody", True):
+            cand = enrich_date_from_article(cand, cfg)
+            parsed_dt = parse_date_text(cand.get("date_text", ""), cfg["timezone"], cfg["DateGranularity"])
+
+        if not parsed_dt and cfg.get("DateFallbackMode") == "use_fetched_at":
+            parsed_dt = now_dt.astimezone(cfg["timezone"])
+            cand["date_source"] = "fetched_at"
+
+        if not parsed_dt:
+            continue
+        if not is_in_window(parsed_dt, cfg, now_dt):
+            continue
+
+        site_seen_urls.add(normalized_url)
+        collected.append(SiteItem(cfg["SiteName"], cand["title"], cand["url"], parsed_dt, parsed_dt.astimezone(cfg["timezone"]).strftime("%Y-%m-%d %H:%M"), cand.get("date_source", "failed")))
+        if len(collected) >= cfg["MaxItemsPerSite"]:
+            break
+
+    logging.info(
+        "site name=%s fetch_mode=%s direct_fetch_attempted=%s direct_fetch_status=%s search_query=%s search_result_count=%s accepted_result_count=%s search_url_pattern=%s fetch_article_body=%s date_fallback_mode=%s final_item_count=%s",
+        cfg["SiteName"],
+        fetch_mode,
+        direct_fetch_attempted,
+        direct_fetch_status,
+        cfg.get("SearchQuery", ""),
+        len(candidate_pool) if search_used else 0,
+        len(candidate_pool) if search_used else 0,
+        cfg.get("SearchUrlPattern", ""),
+        cfg.get("FetchArticleBody", True),
+        cfg.get("DateFallbackMode", "require_date"),
+        len(collected),
+    )
     return collected[: cfg["MaxItemsPerSite"]]
+
 
 
 def dedupe_and_limit(

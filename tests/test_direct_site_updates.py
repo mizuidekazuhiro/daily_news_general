@@ -195,3 +195,71 @@ def test_parse_list_page_urls_dedupes_and_filters_invalid():
     raw = "  ;;;\nhttps://a.example.com/list#top\nhttps://a.example.com/list\nnot_a_url"
     urls = parse_list_page_urls(raw)
     assert urls == ["https://a.example.com/list"]
+
+def test_fetch_mode_default_is_direct():
+    cfg = normalize_site_row({"SiteName": "x"})
+    assert cfg["FetchMode"] == "direct"
+
+
+def test_search_only_uses_search(monkeypatch):
+    from direct_site_updates import collect_site_items
+    cfg = normalize_site_row({"SiteName": "s", "FetchMode": "search_only", "SearchQuery": "q", "DateFallbackMode": "use_fetched_at"})
+    monkeypatch.setattr("direct_site_updates.search_results_from_query", lambda c: [{"title": "t", "url": "https://e.com/a", "date_text": "", "date_source": "failed"}])
+    monkeypatch.setattr("direct_site_updates.fetch_html", lambda *_: (_ for _ in ()).throw(AssertionError("should not fetch direct")))
+    items = collect_site_items(cfg, datetime(2026,5,1,tzinfo=ZoneInfo("Asia/Tokyo")))
+    assert len(items) == 1
+
+
+def test_direct_then_search_on_403(monkeypatch):
+    from direct_site_updates import collect_site_items
+    cfg = normalize_site_row({"SiteName": "s", "FetchMode": "direct_then_search", "ListPageUrls": "https://x", "SearchQuery": "q", "DateFallbackMode": "use_fetched_at"})
+    monkeypatch.setattr("direct_site_updates.fetch_html", lambda *_: (_ for _ in ()).throw(__import__('urllib').error.HTTPError('u',403,'',None,None)))
+    monkeypatch.setattr("direct_site_updates.search_results_from_query", lambda c: [{"title": "t", "url": "https://e.com/a", "date_text": "", "date_source": "failed"}])
+    items = collect_site_items(cfg, datetime(2026,5,1,tzinfo=ZoneInfo("Asia/Tokyo")))
+    assert len(items) == 1
+
+
+def test_missing_search_query_returns_empty(monkeypatch):
+    from direct_site_updates import search_results_from_query
+    cfg = normalize_site_row({"SiteName": "s", "FetchMode": "search_only", "SearchQuery": ""})
+    monkeypatch.setattr("direct_site_updates.SEARCH_API_KEY", "k")
+    assert search_results_from_query(cfg) == []
+
+
+def test_search_url_pattern_filter(monkeypatch):
+    from direct_site_updates import search_results_from_query
+    class R:
+        def __enter__(self): return self
+        def __exit__(self,*a): return False
+        def read(self):
+            import json
+            return json.dumps({"organic":[{"title":"a","link":"https://x.com/ok/1"},{"title":"b","link":"https://x.com/ng"}]}).encode()
+    monkeypatch.setattr("direct_site_updates.SEARCH_API_KEY", "k")
+    monkeypatch.setattr("direct_site_updates.urllib.request.urlopen", lambda *a, **k: R())
+    cfg = normalize_site_row({"SiteName":"s","SearchQuery":"q","SearchUrlPattern":"/ok/"})
+    rows = search_results_from_query(cfg)
+    assert len(rows) == 1
+
+
+def test_fetch_article_body_false_skips_enrich(monkeypatch):
+    from direct_site_updates import collect_site_items
+    cfg = normalize_site_row({"SiteName":"s","FetchMode":"search_only","SearchQuery":"q","FetchArticleBody":False,"DateFallbackMode":"use_fetched_at"})
+    monkeypatch.setattr("direct_site_updates.search_results_from_query", lambda c: [{"title":"t","url":"https://e.com/a","date_text":"","date_source":"failed"}])
+    monkeypatch.setattr("direct_site_updates.enrich_date_from_article", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no enrich")))
+    items = collect_site_items(cfg, datetime(2026,5,1,tzinfo=ZoneInfo("Asia/Tokyo")))
+    assert len(items) == 1
+
+
+def test_use_fetched_at_keeps_no_date_item(monkeypatch):
+    from direct_site_updates import collect_site_items
+    cfg = normalize_site_row({"SiteName":"s","FetchMode":"search_only","SearchQuery":"q","DateFallbackMode":"use_fetched_at"})
+    monkeypatch.setattr("direct_site_updates.search_results_from_query", lambda c: [{"title":"t","url":"https://e.com/a","date_text":"","date_source":"failed"}])
+    items = collect_site_items(cfg, datetime(2026,5,1,tzinfo=ZoneInfo("Asia/Tokyo")))
+    assert items and items[0].date_source == "fetched_at"
+
+
+def test_missing_api_key_does_not_raise(monkeypatch):
+    from direct_site_updates import search_results_from_query
+    monkeypatch.setattr("direct_site_updates.SEARCH_API_KEY", "")
+    cfg = normalize_site_row({"SiteName":"s","SearchQuery":"q"})
+    assert search_results_from_query(cfg) == []
