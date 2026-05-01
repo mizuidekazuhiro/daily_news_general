@@ -110,17 +110,44 @@ def _split_lines(text: str) -> List[str]:
     return [line.strip() for line in text.splitlines() if line.strip()]
 
 
+def parse_list_page_urls(raw_text: str) -> List[str]:
+    if not raw_text:
+        return []
+    text = str(raw_text).strip()
+    if not text:
+        return []
+
+    prepared = re.sub(r"(?<!^)https?://", lambda m: f" {m.group(0)}", text)
+    markdown_urls = re.findall(r"\[[^\]]*\]\((https?://[^)\s]+)\)", prepared)
+    cleaned = re.sub(r"\[[^\]]*\]\((https?://[^)\s]+)\)", r" \1 ", prepared)
+
+    found_urls = markdown_urls + re.findall(r"https?://[^\s,;\]\[\)\(\"'<>]+", cleaned)
+    seen = set()
+    normalized_urls: List[str] = []
+    for url in found_urls:
+        normalized = normalize_url(url)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        normalized_urls.append(normalized)
+    return normalized_urls
+
+
+def normalize_article_url_pattern(pattern: str) -> str:
+    return re.sub(r"\s+", "", (pattern or "").strip())
+
+
 def normalize_site_row(raw: Dict[str, Any]) -> Dict[str, Any]:
     row = {
         "SiteName": str(raw.get("SiteName", "")).strip(),
         "Enabled": bool(raw.get("Enabled", True)),
-        "ListPageUrls": _split_lines(str(raw.get("ListPageUrls", ""))),
+        "ListPageUrls": parse_list_page_urls(str(raw.get("ListPageUrls", ""))),
         "DisplayOrder": _safe_int(raw.get("DisplayOrder"), 9999),
         "MaxItemsPerSite": max(1, _safe_int(raw.get("MaxItemsPerSite"), 20)),
         "DeliveryEnabled": bool(raw.get("DeliveryEnabled", True)),
         "MaxItemsTotal": max(1, _safe_int(raw.get("MaxItemsTotal"), 50)),
         "SubjectPrefix": str(raw.get("SubjectPrefix", "")).strip(),
-        "ArticleUrlPattern": str(raw.get("ArticleUrlPattern", "")).strip(),
+        "ArticleUrlPattern": normalize_article_url_pattern(str(raw.get("ArticleUrlPattern", ""))),
         "ListDatePattern": str(raw.get("ListDatePattern", "")).strip(),
         "ArticleDatePattern": str(raw.get("ArticleDatePattern", "")).strip(),
         "DateTimezone": str(raw.get("DateTimezone", "Asia/Tokyo")).strip() or "Asia/Tokyo",
@@ -369,6 +396,8 @@ def extract_candidates_from_list_page(
     cfg: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
     soup = BeautifulSoup(html, "html.parser")
+    raw_pattern = str(cfg.get("ArticleUrlPattern", ""))
+    normalized_pattern = normalize_article_url_pattern(raw_pattern)
     anchors = soup.select(cfg["ArticleLinkSelector"]) if cfg["ArticleLinkSelector"] else soup.select("a[href]")
     href_samples: List[str] = []
     absolute_samples: List[str] = []
@@ -385,8 +414,8 @@ def extract_candidates_from_list_page(
         absolute_url = urllib.parse.urljoin(page_url, href)
         if len(absolute_samples) < 10:
             absolute_samples.append(absolute_url)
-        if cfg["ArticleUrlPattern"] and not (
-            re.search(cfg["ArticleUrlPattern"], absolute_url) or re.search(cfg["ArticleUrlPattern"], href)
+        if normalized_pattern and not (
+            re.search(normalized_pattern, absolute_url) or re.search(normalized_pattern, href)
         ):
             continue
         normalized = normalize_url(absolute_url)
@@ -411,16 +440,17 @@ def extract_candidates_from_list_page(
                 date_source = "list_regex"
 
         out.append({"title": title, "url": absolute_url, "date_text": date_text, "date_source": date_source})
-    if not out:
-        logging.info(
-            "site name=%s extracted links count=0 pattern=%s selector=%s a_href_total=%s href_samples=%s absolute_samples=%s",
-            cfg["SiteName"],
-            cfg["ArticleUrlPattern"] or "(empty)",
-            cfg["ArticleLinkSelector"] or "(default a[href])",
-            total_with_href,
-            href_samples,
-            absolute_samples,
-        )
+    logging.info(
+        "site name=%s raw ArticleUrlPattern=%s normalized ArticleUrlPattern=%s extracted links count=%s selector=%s a_href_total=%s href_samples=%s absolute_samples=%s",
+        cfg["SiteName"],
+        raw_pattern or "(empty)",
+        normalized_pattern or "(empty)",
+        len(out),
+        cfg["ArticleLinkSelector"] or "(default a[href])",
+        total_with_href,
+        href_samples,
+        absolute_samples,
+    )
     return out
 
 
@@ -471,6 +501,7 @@ def collect_site_items(cfg: Dict[str, Any], now_dt: datetime) -> List[SiteItem]:
     site_seen_urls = set()
     pages_visited = set()
 
+    logging.info("site name=%s configured_url_count=%s configured_urls=%s", cfg["SiteName"], len(cfg["ListPageUrls"]), cfg["ListPageUrls"])
     for list_url in cfg["ListPageUrls"]:
         current_url = list_url
         for _ in range(cfg["MaxPages"]):

@@ -119,6 +119,18 @@ python direct_site_updates.py
 
 ---
 
+
+## direct-site の Notion 設定メモ（推奨）
+
+Notion の `ArticleUrlPattern` は、記号や改行が混ざると意図せず壊れることがあります。
+以下のような「そのまま貼れる形」を推奨します。
+
+- SteelOrbis: `/steel-news/.+-[0-9]+[.]htm`
+- Kallanish: `/en/news/steel/.+/article-details/.+`
+
+`ListPageUrls` は 1行1URL / 改行 / カンマ / セミコロン / Markdownリンク（`[title](url)`）に対応します。
+
+---
 ## 変更理由メモ
 
 今回の保守改善の理由と方針は `docs/maintenance_changes_ja.md` にまとめています。
