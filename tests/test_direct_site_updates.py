@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from direct_site_updates import (
+    collect_site_items,
     dedupe_and_limit,
     extract_candidates_from_list_page,
     is_in_window,
@@ -16,6 +17,8 @@ from direct_site_updates import (
     SiteItem,
     load_sites_from_notion,
     parse_list_page_urls,
+    search_candidates,
+    enrich_date_from_article,
 )
 
 
@@ -195,3 +198,57 @@ def test_parse_list_page_urls_dedupes_and_filters_invalid():
     raw = "  ;;;\nhttps://a.example.com/list#top\nhttps://a.example.com/list\nnot_a_url"
     urls = parse_list_page_urls(raw)
     assert urls == ["https://a.example.com/list"]
+
+
+def test_fetch_mode_default_is_direct():
+    cfg = normalize_site_row({"SiteName": "x"})
+    assert cfg["FetchMode"] == "direct"
+
+
+def test_fetch_mode_search_only_uses_search(monkeypatch):
+    cfg = normalize_site_row({"SiteName": "x", "FetchMode": "search_only", "SearchQuery": "site:example.com", "DateFallbackMode": "use_fetched_at"})
+    now = datetime(2026, 5, 1, 0, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    monkeypatch.setattr("direct_site_updates.search_candidates", lambda *_: [{"title": "t", "url": "https://example.com/a", "date_text": "", "date_source": "fetched_at"}])
+    items = collect_site_items(cfg, now)
+    assert len(items) == 1
+
+
+def test_direct_then_search_on_403(monkeypatch):
+    cfg = normalize_site_row({"SiteName": "x", "FetchMode": "direct_then_search", "ListPageUrls": "https://example.com/list", "SearchQuery": "site:example.com", "DateFallbackMode": "use_fetched_at"})
+    now = datetime(2026, 5, 1, 0, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    import urllib.error
+    monkeypatch.setattr("direct_site_updates.fetch_html", lambda *_: (_ for _ in ()).throw(urllib.error.HTTPError("u", 403, "forbidden", None, None)))
+    monkeypatch.setattr("direct_site_updates.search_candidates", lambda *_: [{"title": "t", "url": "https://example.com/a", "date_text": "", "date_source": "fetched_at"}])
+    items = collect_site_items(cfg, now)
+    assert len(items) == 1
+
+
+def test_search_query_empty_skips(monkeypatch):
+    cfg = normalize_site_row({"SiteName": "x", "FetchMode": "search_only", "SearchQuery": ""})
+    now = datetime(2026, 5, 1, 0, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    assert search_candidates(cfg, now) == []
+
+
+def test_search_url_pattern_filters(monkeypatch):
+    cfg = normalize_site_row({"SiteName": "x", "SearchQuery": "q", "SearchUrlPattern": "/insights/detail/", "MaxItemsPerSite": 10})
+    now = datetime(2026, 5, 1, 0, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    monkeypatch.setattr("direct_site_updates.SEARCH_API_KEY", "k")
+    payload = {"organic_results": [{"title": "ok", "link": "https://a.com/insights/detail/1"}, {"title": "ng", "link": "https://a.com/news/1"}]}
+    monkeypatch.setattr("direct_site_updates.urllib.request.urlopen", lambda *args, **kwargs: _DummyResponse(payload))
+    rows = search_candidates(cfg, now)
+    assert len(rows) == 1
+
+
+def test_fetch_article_body_false_skips_article_fetch(monkeypatch):
+    cfg = normalize_site_row({"SiteName": "x", "FetchArticleBody": False})
+    cand = {"title": "t", "url": "https://example.com/a", "date_text": "", "date_source": "failed"}
+    monkeypatch.setattr("direct_site_updates.fetch_html", lambda *_: (_ for _ in ()).throw(RuntimeError("should not call")))
+    out = enrich_date_from_article(cand, cfg)
+    assert out["date_text"] == ""
+
+
+def test_missing_search_api_key_no_crash(monkeypatch):
+    cfg = normalize_site_row({"SiteName": "x", "SearchQuery": "q"})
+    now = datetime(2026, 5, 1, 0, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    monkeypatch.setattr("direct_site_updates.SEARCH_API_KEY", "")
+    assert search_candidates(cfg, now) == []
