@@ -15,6 +15,7 @@ from direct_site_updates import (
     render_email,
     SiteItem,
     load_sites_from_notion,
+    parse_list_page_urls,
 )
 
 
@@ -164,3 +165,33 @@ def test_extract_candidates_article_pattern_matches_href_or_absolute():
     rows = extract_candidates_from_list_page(html, "https://example.com/list", cfg)
     assert len(rows) == 1
     assert rows[0]["url"] == "https://example.com/news/a1"
+
+
+def test_parse_list_page_urls_newline_separated():
+    raw = "https://a.example.com/list\nhttps://b.example.com/list"
+    urls = parse_list_page_urls(raw)
+    assert urls == ["https://a.example.com/list", "https://b.example.com/list"]
+
+
+def test_parse_list_page_urls_comma_separated():
+    raw = "https://a.example.com/list, https://b.example.com/list"
+    urls = parse_list_page_urls(raw)
+    assert urls == ["https://a.example.com/list", "https://b.example.com/list"]
+
+
+def test_parse_list_page_urls_markdown_links():
+    raw = "[steel](https://www.kallanish.com/en/news/steel/)"
+    urls = parse_list_page_urls(raw)
+    assert urls == ["https://www.kallanish.com/en/news/steel"]
+
+
+def test_parse_list_page_urls_joined_https_urls():
+    raw = "https://www.kallanish.com/https://www.kallanish.com/en/news/steel/"
+    urls = parse_list_page_urls(raw)
+    assert urls == ["https://www.kallanish.com/", "https://www.kallanish.com/en/news/steel"]
+
+
+def test_parse_list_page_urls_dedupes_and_filters_invalid():
+    raw = "  ;;;\nhttps://a.example.com/list#top\nhttps://a.example.com/list\nnot_a_url"
+    urls = parse_list_page_urls(raw)
+    assert urls == ["https://a.example.com/list"]
