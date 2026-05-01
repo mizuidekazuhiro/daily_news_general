@@ -218,8 +218,26 @@ def load_sites() -> Tuple[str, List[Dict[str, Any]]]:
     return "local_json", local_sites
 
 
+def build_request_headers(url: str) -> Dict[str, str]:
+    parsed = urllib.parse.urlsplit(url)
+    origin = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else ""
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9,ja;q=0.8",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
+    if origin:
+        headers["Referer"] = f"{origin}/"
+    return headers
+
+
 def fetch_html(url: str) -> Tuple[str, int, str]:
-    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (direct-site-updates-bot)"})
+    request = urllib.request.Request(url, headers=build_request_headers(url))
     with urllib.request.urlopen(request, timeout=12) as response:
         status = getattr(response, "status", 200)
         charset = response.headers.get_content_charset() or "utf-8"
@@ -265,16 +283,33 @@ def parse_date_text(raw_text: str, tz: ZoneInfo, granularity: str) -> Optional[d
         (r"(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2}):(\d{2})?", True),
         (r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})", False),
         (r"(\d{4})年(\d{1,2})月(\d{1,2})日", False),
-        (r"(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})", False),
+        (r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", False),
+        (r"([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})", False),
     ]
+
+    def _parse_month_name(month_text: str) -> Optional[int]:
+        for fmt in ("%B", "%b"):
+            try:
+                return datetime.strptime(month_text, fmt).month
+            except ValueError:
+                continue
+        return None
+
     for pattern, has_time in patterns:
         m = re.search(pattern, text)
         if not m:
             continue
         try:
-            if pattern.endswith("([A-Za-z]{3})\\s+(\\d{4})"):
-                month = datetime.strptime(m.group(2), "%b").month
+            if pattern == r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})":
+                month = _parse_month_name(m.group(2))
+                if month is None:
+                    continue
                 dt = datetime(int(m.group(3)), month, int(m.group(1)))
+            elif pattern == r"([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})":
+                month = _parse_month_name(m.group(1))
+                if month is None:
+                    continue
+                dt = datetime(int(m.group(3)), month, int(m.group(2)))
             elif has_time:
                 hour = int(m.group(4))
                 minute = int(m.group(5) or 0)
@@ -335,14 +370,24 @@ def extract_candidates_from_list_page(
 ) -> List[Dict[str, Any]]:
     soup = BeautifulSoup(html, "html.parser")
     anchors = soup.select(cfg["ArticleLinkSelector"]) if cfg["ArticleLinkSelector"] else soup.select("a[href]")
+    href_samples: List[str] = []
+    absolute_samples: List[str] = []
+    total_with_href = 0
     seen = set()
     out: List[Dict[str, Any]] = []
     for a in anchors:
         href = (a.get("href") or "").strip()
         if not href:
             continue
+        total_with_href += 1
+        if len(href_samples) < 10:
+            href_samples.append(href)
         absolute_url = urllib.parse.urljoin(page_url, href)
-        if cfg["ArticleUrlPattern"] and not re.search(cfg["ArticleUrlPattern"], absolute_url):
+        if len(absolute_samples) < 10:
+            absolute_samples.append(absolute_url)
+        if cfg["ArticleUrlPattern"] and not (
+            re.search(cfg["ArticleUrlPattern"], absolute_url) or re.search(cfg["ArticleUrlPattern"], href)
+        ):
             continue
         normalized = normalize_url(absolute_url)
         if normalized in seen:
@@ -366,6 +411,16 @@ def extract_candidates_from_list_page(
                 date_source = "list_regex"
 
         out.append({"title": title, "url": absolute_url, "date_text": date_text, "date_source": date_source})
+    if not out:
+        logging.info(
+            "site name=%s extracted links count=0 pattern=%s selector=%s a_href_total=%s href_samples=%s absolute_samples=%s",
+            cfg["SiteName"],
+            cfg["ArticleUrlPattern"] or "(empty)",
+            cfg["ArticleLinkSelector"] or "(default a[href])",
+            total_with_href,
+            href_samples,
+            absolute_samples,
+        )
     return out
 
 
@@ -378,6 +433,16 @@ def enrich_date_from_article(candidate: Dict[str, Any], cfg: Dict[str, Any]) -> 
             candidate["url"],
             status,
         )
+    except urllib.error.HTTPError as exc:
+        if exc.code == 403:
+            logging.warning(
+                "site name=%s article fetch blocked reason=site_blocked_or_requires_auth status=403 url=%s",
+                cfg["SiteName"],
+                candidate["url"],
+            )
+        else:
+            logging.warning("site name=%s article fetch error url=%s error=%s", cfg["SiteName"], candidate["url"], exc)
+        return candidate
     except Exception as exc:
         logging.warning("site name=%s article fetch error url=%s error=%s", cfg["SiteName"], candidate["url"], exc)
         return candidate
@@ -415,6 +480,16 @@ def collect_site_items(cfg: Dict[str, Any], now_dt: datetime) -> List[SiteItem]:
             try:
                 html, status, final_url = fetch_html(current_url)
                 logging.info("site name=%s fetched list url=%s status=%s", cfg["SiteName"], current_url, status)
+            except urllib.error.HTTPError as exc:
+                if exc.code == 403:
+                    logging.warning(
+                        "site name=%s list fetch blocked reason=site_blocked_or_requires_auth status=403 url=%s",
+                        cfg["SiteName"],
+                        current_url,
+                    )
+                else:
+                    logging.warning("site name=%s list fetch error url=%s error=%s", cfg["SiteName"], current_url, exc)
+                break
             except Exception as exc:
                 logging.warning("site name=%s list fetch error url=%s error=%s", cfg["SiteName"], current_url, exc)
                 break
