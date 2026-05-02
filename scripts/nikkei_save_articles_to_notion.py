@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "").strip()
-DATABASE_ID = os.getenv("NIKKEI_ARTICLES_DB_ID", "").strip()
+DATABASE_ID = (os.getenv("NIKKEI_ARTICLES_DB_ID", "") or os.getenv("NOTION_ARTICLE_DB_ID", "")).strip()
 
 INPUT_JSON = Path("logs/nikkei_articles_full.json")
 SLEEP_SECONDS = float(os.getenv("NOTION_SAVE_SLEEP_SECONDS", "0.5"))
@@ -305,7 +305,7 @@ def append_metadata(page_id, article):
 
 def main():
     if not DATABASE_ID:
-        raise RuntimeError("NIKKEI_ARTICLES_DB_ID が未設定です。")
+        raise RuntimeError("NIKKEI_ARTICLES_DB_ID または NOTION_ARTICLE_DB_ID が未設定です。")
     if not INPUT_JSON.exists():
         raise FileNotFoundError(f"{INPUT_JSON} がありません。")
 
