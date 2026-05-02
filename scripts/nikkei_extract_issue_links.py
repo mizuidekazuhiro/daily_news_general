@@ -19,6 +19,9 @@ EDITION = os.getenv("NIKKEI_EDITION", "morning").strip()  # morning / evening
 REQUIRE_TODAY = os.getenv("NIKKEI_REQUIRE_TODAY", "false").lower() == "true"
 TARGET_DATE = os.getenv("NIKKEI_TARGET_DATE", "auto").strip()
 EXCLUDE_TITLE_REGEX = os.getenv("NIKKEI_EXCLUDE_TITLE_REGEX", "").strip()
+USE_DIRECT_ISSUE_URL = os.getenv("NIKKEI_USE_DIRECT_ISSUE_URL", "true").lower() == "true"
+ALLOW_DIRECT_FALLBACK = os.getenv("NIKKEI_ALLOW_DIRECT_FALLBACK", "false").lower() == "true"
+PAPER_URL_TEMPLATE = os.getenv("NIKKEI_PAPER_URL_TEMPLATE", "https://www.nikkei.com/paper/{edition}/?b={date}&d=0").strip()
 
 JST = timezone(timedelta(hours=9))
 
@@ -29,6 +32,20 @@ def target_date_yyyymmdd():
     return datetime.now(JST).strftime("%Y%m%d")
 
 
+
+
+def build_direct_issue_url() -> str:
+    return PAPER_URL_TEMPLATE.format(edition=EDITION, date=target_date_yyyymmdd())
+
+
+def is_expected_edition_page(page_title: str, page_url: str) -> bool:
+    title = (page_title or "").lower()
+    url = (page_url or "").lower()
+    if EDITION == "morning":
+        return ("朝刊" in page_title) or ("/paper/morning/" in url)
+    if EDITION == "evening":
+        return ("夕刊" in page_title) or ("/paper/evening/" in url)
+    return False
 def wait_page(page):
     try:
         page.wait_for_load_state("domcontentloaded", timeout=15000)
@@ -252,13 +269,17 @@ def main():
         print("entry_url:", entry_url)
         print("entry_all_link_count:", len(entry_links))
 
-        # 1) /paper/ 自体に記事リンクが載っている場合は直接拾う
-        direct_articles = extract_articles_from_links(entry_links, entry_url)
+        direct_articles = []
+        issue_url = None
+        issue_candidates = []
 
-        issue_url, issue_candidates = find_issue_url(entry_links)
+        if USE_DIRECT_ISSUE_URL:
+            issue_url = build_direct_issue_url()
+            print("open issue:", issue_url)
+        else:
+            issue_url, issue_candidates = find_issue_url(entry_links)
 
         if issue_url:
-            print("found issue_url:", issue_url)
             page.goto(issue_url, wait_until="domcontentloaded", timeout=45000)
             wait_page(page)
 
@@ -278,12 +299,15 @@ def main():
             browser.close()
             return
 
-        # 2) issue_url は見つからないが、現在ページに記事リンクがある場合
-        if direct_articles:
-            print("WARNING: issue_urlは見つかりませんでしたが、現在ページから記事リンクを直接抽出します。")
-            save_outputs(direct_articles, entry_links, page, entry_url)
-            browser.close()
-            return
+        if ALLOW_DIRECT_FALLBACK:
+            direct_articles = extract_articles_from_links(entry_links, entry_url)
+            if direct_articles and is_expected_edition_page(entry_title, entry_url):
+                print("WARNING: issue_urlは見つかりませんでしたが、現在ページから記事リンクを直接抽出します。")
+                save_outputs(direct_articles, entry_links, page, entry_url)
+                browser.close()
+                return
+            if direct_articles:
+                print("WARNING: direct fallbackを検出しましたが、edition不一致のため使用しません。")
 
         print("ERROR: 朝刊/夕刊の紙面URLも記事リンクも見つかりませんでした。")
         print("target_date:", target_date_yyyymmdd())
