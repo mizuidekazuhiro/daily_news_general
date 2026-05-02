@@ -2,6 +2,11 @@ name: Nikkei Evening Paper
 
 on:
   workflow_dispatch:
+    inputs:
+      target_date:
+        description: "Target date YYYYMMDD or auto"
+        required: false
+        default: "auto"
   schedule:
     # JST 16:10 / 16:30 / 16:50
     - cron: "10,30,50 7 * * *"
@@ -22,7 +27,7 @@ jobs:
       NIKKEI_ALLOW_DIRECT_FALLBACK: "false"
       NIKKEI_PAPER_URL_TEMPLATE: "https://www.nikkei.com/paper/{edition}/?b={date}&d=0"
       NIKKEI_EDITION: evening
-      NIKKEI_TARGET_DATE: auto
+      NIKKEI_TARGET_DATE: ${{ github.event.inputs.target_date || 'auto' }}
       NIKKEI_REQUIRE_TODAY: "true"
       NIKKEI_ALLOW_EMPTY_ISSUE: "true"
 
