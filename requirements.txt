@@ -1,3 +1,7 @@
 feedparser
 openai
 beautifulsoup4
+playwright
+python-dotenv
+pyyaml
+requests

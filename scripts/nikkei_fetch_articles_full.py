@@ -17,6 +17,7 @@ FAILED_JSON = Path("logs/nikkei_articles_failed.json")
 
 MAX_ARTICLES = int(os.getenv("NIKKEI_MAX_ARTICLES_TO_FETCH", "0"))  # 0なら全件
 SLEEP_SECONDS = float(os.getenv("NIKKEI_FETCH_SLEEP_SECONDS", "1.5"))
+EXCLUDE_BODY_REGEX = os.getenv("NIKKEI_EXCLUDE_BODY_REGEX", "").strip()
 
 
 def wait_page(page):
@@ -31,13 +32,61 @@ def wait_page(page):
     page.wait_for_timeout(3000)
 
 
-def clean_article_text(text: str) -> str:
+def should_exclude_by_body(title: str, text: str) -> tuple[bool, str]:
+    title = title or ""
     text = text or ""
+
+    # 1. 日経の人事記事ページに出る典型表現
+    if "人事記事をもっと見る" in text:
+        return True, "hr_article_marker"
+
+    # 2. 人事記事の典型形式
+    # 例：
+    # 三井住友銀行
+    # （5月1日）
+    # ▽ 米州営業第三 ...
+    has_hr_bullet = re.search(r"(^|\n)\s*▽\s*", text, flags=re.MULTILINE) is not None
+    has_effective_date = re.search(r"（\d{1,2}月\d{1,2}日(?:付)?）", text) is not None
+
+    # 3. 会社名だけの記事タイトルっぽいもの
+    short_company_title = (
+        len(title) <= 40
+        and not any(ch in title for ch in "、。！？!?「」（）()：:・")
+    )
+
+    # 4. 本文中に辞令形式の「▽」が複数ある場合は人事記事らしい
+    hr_bullet_count = len(re.findall(r"(^|\n)\s*▽\s*", text, flags=re.MULTILINE))
+
+    if short_company_title and has_effective_date and has_hr_bullet:
+        return True, "hr_article_company_pattern"
+
+    if has_effective_date and hr_bullet_count >= 2:
+        return True, "hr_article_multiple_bullets"
+
+    # 5. 本文先頭が会社名 + 日付 + 辞令形式なら除外
+    head = text[:600]
+    if re.search(r"（\d{1,2}月\d{1,2}日(?:付)?）", head) and re.search(r"▽\s*", head):
+        if short_company_title or hr_bullet_count >= 1:
+            return True, "hr_article_head_pattern"
+
+    # 6. 環境変数による追加除外
+    if EXCLUDE_BODY_REGEX:
+        try:
+            if re.search(EXCLUDE_BODY_REGEX, text, flags=re.MULTILINE):
+                return True, "body_regex"
+        except re.error as e:
+            print(f"WARNING: invalid NIKKEI_EXCLUDE_BODY_REGEX: {e}")
+
+    return False, ""
+
+def clean_article_text(text: str, title: str = "") -> str:
+    text = text or ""
+    title = title or ""
+
     text = text.replace("\u3000", " ")
     text = re.sub(r"\r\n?", "\n", text)
     text = re.sub(r"[ \t]+", " ", text)
 
-    # 操作UI・会員表示などを除去
     remove_patterns = [
         r"Myニュースでまとめ読み",
         r"保存\s+共有\s+印刷\s+翻訳\s+その他",
@@ -50,12 +99,38 @@ def clean_article_text(text: str) -> str:
     for pat in remove_patterns:
         text = re.sub(pat, "", text)
 
-    # 余分な空白・改行を整理
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r"\n[ \t]+", "\n", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
+    text = text.strip()
 
-    return text.strip()
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+
+    # 末尾に混ざる「春秋を」「記事タイトルを」などのリンク断片を除去
+    while lines:
+        last = lines[-1].strip()
+        title_clean = title.strip()
+
+        if title_clean and last in {
+            f"{title_clean}を",
+            f"{title_clean}へ",
+            f"{title_clean}はこちら",
+        }:
+            lines.pop()
+            continue
+
+        if (
+            len(last) <= 40
+            and ("。" not in last)
+            and ("、" not in last)
+            and (last.endswith("を") or last.endswith("へ") or last.endswith("はこちら"))
+        ):
+            lines.pop()
+            continue
+
+        break
+
+    return "\n\n".join(lines).strip()
 
 
 def extract_article_with_retry(page, retries: int = 5):
@@ -115,7 +190,7 @@ def extract_article_with_retry(page, retries: int = 5):
                 """
             )
 
-            data["text"] = clean_article_text(data.get("text", ""))
+            data["text"] = clean_article_text(data.get("text", ""), data.get("title", ""))
             return data
 
         except PlaywrightError as e:
@@ -162,6 +237,7 @@ def main():
     done_urls = load_existing_urls()
     results = []
     failures = []
+    excluded_after_fetch = []
 
     if OUTPUT_JSONL.exists():
         for line in OUTPUT_JSONL.read_text(encoding="utf-8").splitlines():
@@ -199,9 +275,29 @@ def main():
                 extracted = extract_article_with_retry(page)
 
                 text = extracted.get("text", "")
+                source_title = item.get("title", "")
+
+                should_exclude, exclude_reason = should_exclude_by_body(source_title, text)
+                if should_exclude:
+                    excluded_record = {
+                        "status": "excluded",
+                        "exclude_reason": exclude_reason,
+                        "source_title": source_title,
+                        "url": url,
+                        "issue_url": item.get("issue_url", ""),
+                        "issue_date": item.get("issue_date", ""),
+                        "edition": item.get("edition", ""),
+                        "page_title": extracted.get("title", ""),
+                        "selector": extracted.get("selector", ""),
+                        "text_length": len(text),
+                    }
+                    excluded_after_fetch.append(excluded_record)
+                    print("  excluded:", exclude_reason, source_title[:80])
+                    continue
+
                 record = {
                     "status": "success",
-                    "source_title": item.get("title", ""),
+                    "source_title": source_title,
                     "url": url,
                     "issue_url": item.get("issue_url", ""),
                     "issue_date": item.get("issue_date", ""),
@@ -243,12 +339,14 @@ def main():
 
     OUTPUT_JSON.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
     FAILED_JSON.write_text(json.dumps(failures, ensure_ascii=False, indent=2), encoding="utf-8")
+    Path("logs/nikkei_articles_excluded_after_fetch.json").write_text(json.dumps(excluded_after_fetch, ensure_ascii=False, indent=2), encoding="utf-8")
 
     print("saved_jsonl:", OUTPUT_JSONL)
     print("saved_json:", OUTPUT_JSON)
     print("failed_json:", FAILED_JSON)
     print("success_count:", len(results))
     print("failed_count:", len(failures))
+    print("excluded_after_fetch_count:", len(excluded_after_fetch))
 
 
 if __name__ == "__main__":

@@ -27,14 +27,19 @@ def wait_page(page):
     page.wait_for_timeout(3000)
 
 
-def clean_article_text(text: str) -> str:
+def clean_article_text(text: str, title: str = "") -> str:
     text = text or ""
+    title = title or ""
+
     text = text.replace("\u3000", " ")
-    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = re.sub(r"\r\n?", "\n", text)
     text = re.sub(r"[ \t]+", " ", text)
 
     remove_patterns = [
+        r"Myニュースでまとめ読み",
         r"保存\s+共有\s+印刷\s+翻訳\s+その他",
+        r"保存\s+共有\s+印刷\s+その他",
+        r"保存\s+共有\s+印刷",
         r"［有料会員限定］",
         r"\d+文字",
     ]
@@ -42,7 +47,37 @@ def clean_article_text(text: str) -> str:
     for pat in remove_patterns:
         text = re.sub(pat, "", text)
 
-    return text.strip()
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\n[ \t]+", "\n", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    text = text.strip()
+
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+
+    while lines:
+        last = lines[-1].strip()
+        title_clean = title.strip()
+
+        if title_clean and last in {
+            f"{title_clean}を",
+            f"{title_clean}へ",
+            f"{title_clean}はこちら",
+        }:
+            lines.pop()
+            continue
+
+        if (
+            len(last) <= 40
+            and "。" not in last
+            and "、" not in last
+            and (last.endswith("を") or last.endswith("へ") or last.endswith("はこちら"))
+        ):
+            lines.pop()
+            continue
+
+        break
+
+    return "\n\n".join(lines).strip()
 
 
 def extract_article_with_retry(page, retries: int = 5):
@@ -102,7 +137,7 @@ def extract_article_with_retry(page, retries: int = 5):
                 """
             )
 
-            data["text"] = clean_article_text(data.get("text", ""))
+            data["text"] = clean_article_text(data.get("text", ""), data.get("title", ""))
             return data
 
         except PlaywrightError as e:
