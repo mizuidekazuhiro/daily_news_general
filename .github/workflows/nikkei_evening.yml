@@ -4,75 +4,88 @@ on:
   workflow_dispatch:
     inputs:
       target_date:
-        description: "Target date YYYYMMDD or auto"
-        required: false
+        description: "Target date in JST. Use auto or YYYYMMDD."
+        required: true
         default: "auto"
+        type: string
+      max_articles:
+        description: "Max articles to fetch. Use 0 for all."
+        required: true
+        default: "0"
+        type: string
+      skip_existing:
+        description: "Skip articles already saved in Notion"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true","false"]
+      pre_title_filter:
+        description: "Enable pre title filtering"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true","false"]
+      block_heavy_resources:
+        description: "Block image/media/font/stylesheet in Playwright"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true","false"]
+      enable_scoring:
+        description: "Run Rules DB scoring after fetch"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true","false"]
   schedule:
-    # JST 16:10 / 16:30 / 16:50
     - cron: "10,30,50 7 * * *"
 
 jobs:
   nikkei-evening:
     runs-on: ubuntu-latest
     timeout-minutes: 90
-
     env:
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       NOTION_ARTICLE_DB_ID: ${{ secrets.NOTION_ARTICLE_DB_ID }}
       NIKKEI_ARTICLES_DB_ID: ${{ secrets.NOTION_ARTICLE_DB_ID }}
       NIKKEI_SESSION_STATE_JSON: ${{ secrets.NIKKEI_SESSION_STATE_JSON }}
-      NIKKEI_ENABLE_SCORING: "true"
-      NIKKEI_ENABLE_NOTION_SCORE_UPDATE: "false"
-      NIKKEI_RULES_SOURCE: "notion"
-      NIKKEI_RULES_FILTER_RULE_TYPES: "country,sector,importance"
-      NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT: "5"
       NOTION_RULES_DB_ID: ${{ secrets.NOTION_RULES_DB_ID }}
-
+      NIKKEI_EDITION: evening
+      NIKKEI_TARGET_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.target_date || 'auto' }}
+      NIKKEI_MAX_ARTICLES_TO_FETCH: ${{ github.event_name == 'workflow_dispatch' && inputs.max_articles || '0' }}
+      NIKKEI_SKIP_EXISTING_NOTION_URLS: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_existing || 'true' }}
+      NIKKEI_ENABLE_PRE_TITLE_FILTER: ${{ github.event_name == 'workflow_dispatch' && inputs.pre_title_filter || 'true' }}
+      NIKKEI_BLOCK_HEAVY_RESOURCES: ${{ github.event_name == 'workflow_dispatch' && inputs.block_heavy_resources || 'true' }}
+      NIKKEI_ENABLE_SCORING: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_scoring || 'true' }}
+      NIKKEI_ENABLE_NOTION_SCORE_UPDATE: "false"
       NIKKEI_MORNING_URL: https://www.nikkei.com/paper/
       NIKKEI_USE_DIRECT_ISSUE_URL: "true"
       NIKKEI_ALLOW_DIRECT_FALLBACK: "false"
       NIKKEI_PAPER_URL_TEMPLATE: "https://www.nikkei.com/paper/{edition}/?b={date}&d=0"
-      NIKKEI_EDITION: evening
-      NIKKEI_TARGET_DATE: ${{ github.event.inputs.target_date || 'auto' }}
       NIKKEI_REQUIRE_TODAY: "true"
       NIKKEI_ALLOW_EMPTY_ISSUE: "true"
-
-      NIKKEI_MAX_ARTICLES_TO_FETCH: "0"
-      NIKKEI_FETCH_SLEEP_SECONDS: "1.5"
-
-      NIKKEI_EXCLUDE_TITLE_REGEX: "^(春秋|大機小機|交遊抄|私の履歴書|あすへの話題)$|人事|おくやみ|訃報|叙勲|スポーツ|文化|生活|読書|詩歌|囲碁|将棋"
-      NIKKEI_EXCLUDE_BODY_REGEX: "人事記事をもっと見る"
-
+      NIKKEI_PRE_EXCLUDE_SHORT_TITLES: "true"
+      NIKKEI_PRE_EXCLUDE_HR_LIKE_TITLES: "true"
+      NIKKEI_ARTICLE_GOTO_TIMEOUT_MS: "25000"
+      NIKKEI_ARTICLE_WAIT_AFTER_LOAD_MS: "800"
+      NIKKEI_ARTICLE_EXTRACT_RETRIES: "3"
+      NIKKEI_MIN_ARTICLE_TEXT_LENGTH: "120"
+      NIKKEI_RULES_SOURCE: "notion"
+      NIKKEI_RULES_FILTER_RULE_TYPES: "country,sector,importance"
+      NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT: "5"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install dependencies
-        run: |
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           python -m playwright install --with-deps chromium
-
-      - name: Restore Nikkei session
-        run: |
+      - run: |
           mkdir -p .storage
-          python - <<'PY'
+          python - <<'P'
           import os
           from pathlib import Path
-
-          raw = os.environ.get("NIKKEI_SESSION_STATE_JSON", "").strip()
-          if not raw:
-              raise RuntimeError("NIKKEI_SESSION_STATE_JSON is missing")
-
-          Path(".storage/nikkei_storage_state.json").write_text(raw, encoding="utf-8")
-          print("restored .storage/nikkei_storage_state.json")
-          PY
-
-      - name: Run Nikkei evening pipeline
-        run: |
-          python scripts/run_nikkei_paper_pipeline.py
+          Path('.storage/nikkei_storage_state.json').write_text(os.environ['NIKKEI_SESSION_STATE_JSON'],encoding='utf-8')
+          P
+      - run: python scripts/run_nikkei_paper_pipeline.py

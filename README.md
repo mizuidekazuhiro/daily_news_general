@@ -206,3 +206,33 @@ PY
 ### 注意
 - 既存Rules DBはgeneral news側でも使われる可能性があるため、日経処理では読み取りのみ。
 - `.env`, `logs/`, `.storage/`, Cookie, Token, Session JSON はコミット禁止。
+
+## Nikkei pipeline speed/scoring notes
+- `NIKKEI_TARGET_DATE=auto` means the pipeline uses current JST date by default.
+- Direct issue URL is opened first (`/paper/{edition}/?b=YYYYMMDD&d=0`), and `/paper/` is only fallback.
+- First run can be long because full text is fetched and stored; later runs are faster with existing URL skip.
+- Key speed envs: `NIKKEI_SKIP_EXISTING_NOTION_URLS`, `NIKKEI_ENABLE_PRE_TITLE_FILTER`, `NIKKEI_BLOCK_HEAVY_RESOURCES`, `NIKKEI_MIN_ARTICLE_TEXT_LENGTH`.
+- Manual workflow inputs are kept (target_date, max_articles, skip_existing, pre_title_filter, block_heavy_resources, enable_scoring).
+- Existing Rules DB is read-only. `Weight` contributes to `importance_score`; `Priority` is only tiebreak/display order (not added to score).
+- Rule types `country/sector/importance` are all loaded via `NIKKEI_RULES_FILTER_RULE_TYPES`.
+- Scoring output: `logs/nikkei_articles_scored.json`.
+
+### 20件テスト
+```bash
+NIKKEI_TARGET_DATE=20260501 \
+NIKKEI_REQUIRE_TODAY=false \
+NIKKEI_MAX_ARTICLES_TO_FETCH=20 \
+NIKKEI_SKIP_EXISTING_NOTION_URLS=false \
+NIKKEI_ENABLE_SCORING=true \
+python scripts/run_nikkei_paper_pipeline.py
+```
+
+### 既存URLスキップ確認
+```bash
+NIKKEI_TARGET_DATE=20260501 \
+NIKKEI_REQUIRE_TODAY=false \
+NIKKEI_MAX_ARTICLES_TO_FETCH=0 \
+NIKKEI_SKIP_EXISTING_NOTION_URLS=true \
+NIKKEI_ENABLE_SCORING=true \
+python scripts/run_nikkei_paper_pipeline.py
+```

@@ -1,353 +1,83 @@
-import json
-import os
-import re
-import time
+import json, os, re, time
 from pathlib import Path
-
+from urllib.parse import urlparse, parse_qs
+import requests
 from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
-
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError
 load_dotenv()
+STORAGE_PATH=Path('.storage/nikkei_storage_state.json'); INPUT_PATH=Path('logs/nikkei_issue_article_links.json'); OUTPUT_JSON=Path('logs/nikkei_articles_full.json'); FAILED_JSON=Path('logs/nikkei_articles_failed.json')
+MAX_ARTICLES=int(os.getenv('NIKKEI_MAX_ARTICLES_TO_FETCH','0')); SLEEP_SECONDS=float(os.getenv('NIKKEI_FETCH_SLEEP_SECONDS','1.0')); MIN_LEN=int(os.getenv('NIKKEI_MIN_ARTICLE_TEXT_LENGTH','120')); RETRIES=int(os.getenv('NIKKEI_ARTICLE_EXTRACT_RETRIES','3')); GOTO_TIMEOUT=int(os.getenv('NIKKEI_ARTICLE_GOTO_TIMEOUT_MS','25000')); WAIT_AFTER=int(os.getenv('NIKKEI_ARTICLE_WAIT_AFTER_LOAD_MS','800')); BLOCK_HEAVY=os.getenv('NIKKEI_BLOCK_HEAVY_RESOURCES','true').lower()=='true'
+SKIP_EXISTING=os.getenv('NIKKEI_SKIP_EXISTING_NOTION_URLS','true').lower()=='true'; PAGE_SIZE=int(os.getenv('NIKKEI_EXISTING_URL_LOOKUP_PAGE_SIZE','100')); NOTION_TOKEN=os.getenv('NOTION_TOKEN','').strip(); DB=(os.getenv('NIKKEI_ARTICLES_DB_ID','') or os.getenv('NOTION_ARTICLE_DB_ID','')).strip()
 
-STORAGE_PATH = Path(".storage/nikkei_storage_state.json")
-INPUT_PATH = Path("logs/nikkei_issue_article_links.json")
-OUTPUT_JSONL = Path("logs/nikkei_articles_full.jsonl")
-OUTPUT_JSON = Path("logs/nikkei_articles_full.json")
-FAILED_JSON = Path("logs/nikkei_articles_failed.json")
-
-MAX_ARTICLES = int(os.getenv("NIKKEI_MAX_ARTICLES_TO_FETCH", "0"))  # 0なら全件
-SLEEP_SECONDS = float(os.getenv("NIKKEI_FETCH_SLEEP_SECONDS", "1.5"))
-EXCLUDE_BODY_REGEX = os.getenv("NIKKEI_EXCLUDE_BODY_REGEX", "").strip()
-
-
-def wait_page(page):
-    try:
-        page.wait_for_load_state("domcontentloaded", timeout=15000)
-    except PlaywrightTimeoutError:
-        pass
-    try:
-        page.wait_for_load_state("load", timeout=15000)
-    except PlaywrightTimeoutError:
-        pass
-    page.wait_for_timeout(3000)
-
-
-def should_exclude_by_body(title: str, text: str) -> tuple[bool, str]:
-    title = title or ""
-    text = text or ""
-
-    # 1. 日経の人事記事ページに出る典型表現
-    if "人事記事をもっと見る" in text:
-        return True, "hr_article_marker"
-
-    # 2. 人事記事の典型形式
-    # 例：
-    # 三井住友銀行
-    # （5月1日）
-    # ▽ 米州営業第三 ...
-    has_hr_bullet = re.search(r"(^|\n)\s*▽\s*", text, flags=re.MULTILINE) is not None
-    has_effective_date = re.search(r"（\d{1,2}月\d{1,2}日(?:付)?）", text) is not None
-
-    # 3. 会社名だけの記事タイトルっぽいもの
-    short_company_title = (
-        len(title) <= 40
-        and not any(ch in title for ch in "、。！？!?「」（）()：:・")
-    )
-
-    # 4. 本文中に辞令形式の「▽」が複数ある場合は人事記事らしい
-    hr_bullet_count = len(re.findall(r"(^|\n)\s*▽\s*", text, flags=re.MULTILINE))
-
-    if short_company_title and has_effective_date and has_hr_bullet:
-        return True, "hr_article_company_pattern"
-
-    if has_effective_date and hr_bullet_count >= 2:
-        return True, "hr_article_multiple_bullets"
-
-    # 5. 本文先頭が会社名 + 日付 + 辞令形式なら除外
-    head = text[:600]
-    if re.search(r"（\d{1,2}月\d{1,2}日(?:付)?）", head) and re.search(r"▽\s*", head):
-        if short_company_title or hr_bullet_count >= 1:
-            return True, "hr_article_head_pattern"
-
-    # 6. 環境変数による追加除外
-    if EXCLUDE_BODY_REGEX:
-        try:
-            if re.search(EXCLUDE_BODY_REGEX, text, flags=re.MULTILINE):
-                return True, "body_regex"
-        except re.error as e:
-            print(f"WARNING: invalid NIKKEI_EXCLUDE_BODY_REGEX: {e}")
-
-    return False, ""
-
-def clean_article_text(text: str, title: str = "") -> str:
-    text = text or ""
-    title = title or ""
-
-    text = text.replace("\u3000", " ")
-    text = re.sub(r"\r\n?", "\n", text)
-    text = re.sub(r"[ \t]+", " ", text)
-
-    remove_patterns = [
-        r"Myニュースでまとめ読み",
-        r"保存\s+共有\s+印刷\s+翻訳\s+その他",
-        r"保存\s+共有\s+印刷\s+その他",
-        r"保存\s+共有\s+印刷",
-        r"［有料会員限定］",
-        r"\d+文字",
-    ]
-
-    for pat in remove_patterns:
-        text = re.sub(pat, "", text)
-
-    text = re.sub(r"[ \t]{2,}", " ", text)
-    text = re.sub(r"\n[ \t]+", "\n", text)
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    text = text.strip()
-
-    lines = [line.strip() for line in text.split("\n") if line.strip()]
-
-    # 末尾に混ざる「春秋を」「記事タイトルを」などのリンク断片を除去
-    while lines:
-        last = lines[-1].strip()
-        title_clean = title.strip()
-
-        if title_clean and last in {
-            f"{title_clean}を",
-            f"{title_clean}へ",
-            f"{title_clean}はこちら",
-        }:
-            lines.pop()
-            continue
-
-        if (
-            len(last) <= 40
-            and ("。" not in last)
-            and ("、" not in last)
-            and (last.endswith("を") or last.endswith("へ") or last.endswith("はこちら"))
-        ):
-            lines.pop()
-            continue
-
-        break
-
-    return "\n\n".join(lines).strip()
-
-
-def extract_article_with_retry(page, retries: int = 5):
-    last_error = None
-
-    for attempt in range(1, retries + 1):
-        try:
-            wait_page(page)
-
-            data = page.evaluate(
-                """
-                () => {
-                  const title =
-                    document.querySelector('.cmn-article_title')?.innerText?.trim()
-                    || document.querySelector('h1')?.innerText?.trim()
-                    || document.title
-                    || '';
-
-                  const selectors = [
-                    'div.cmn-section.cmn-indent',
-                    '.cmn-section.cmn-indent',
-                    '.cmn-section',
-                    'article',
-                    'main'
-                  ];
-
-                  let best = '';
-                  let bestSelector = '';
-
-                  for (const sel of selectors) {
-                    const els = Array.from(document.querySelectorAll(sel));
-                    for (const el of els) {
-                      const txt = (el.innerText || el.textContent || '').trim();
-                      if (txt && txt.length > best.length) {
-                        best = txt;
-                        bestSelector = sel;
-                      }
-                    }
-                    if (best && bestSelector === 'div.cmn-section.cmn-indent') {
-                      break;
-                    }
-                  }
-
-                  const images = Array.from(document.querySelectorAll('img')).map(img => ({
-                    alt: img.alt || '',
-                    src: img.currentSrc || img.src || ''
-                  })).filter(x => x.src);
-
-                  return {
-                    title,
-                    text: best,
-                    selector: bestSelector,
-                    image_count: images.length,
-                    images: images.slice(0, 20)
-                  };
-                }
-                """
-            )
-
-            data["text"] = clean_article_text(data.get("text", ""), data.get("title", ""))
-            return data
-
-        except PlaywrightError as e:
-            last_error = e
-            msg = str(e)
-            if "Execution context was destroyed" in msg or "navigation" in msg:
-                print(f"  retry extract {attempt}/{retries}: navigation中のため再試行")
-                page.wait_for_timeout(2500)
-                continue
-            raise
-
-    raise RuntimeError(f"extract_article failed after retries: {last_error}")
-
-
-def load_existing_urls():
-    if not OUTPUT_JSONL.exists():
-        return set()
-
-    urls = set()
-    for line in OUTPUT_JSONL.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            item = json.loads(line)
-            if item.get("url"):
-                urls.add(item["url"])
-        except Exception:
-            continue
-    return urls
-
+def extract_nikkei_ng_id(url:str)->str: return (parse_qs(urlparse(url).query).get('ng') or [''])[0]
+def normalize_nikkei_article_key(url:str)->str: return extract_nikkei_ng_id(url) or url.strip()
+def notion_headers(): return {'Authorization':f'Bearer {NOTION_TOKEN}','Notion-Version':'2022-06-28','Content-Type':'application/json'}
+def notion_req(url,payload):
+    while True:
+        r=requests.post(url,headers=notion_headers(),json=payload,timeout=60)
+        if r.status_code==429: time.sleep(int(r.headers.get('Retry-After','2'))); continue
+        r.raise_for_status(); return r.json()
+def fetch_existing():
+    if not (SKIP_EXISTING and NOTION_TOKEN and DB): return set(),False
+    meta=requests.get(f'https://api.notion.com/v1/databases/{DB}',headers=notion_headers(),timeout=60).json(); props=meta.get('properties',{})
+    if 'URL' not in props: print('WARNING: URL property missing; disable skip existing'); return set(),False
+    cur=None; keys=set()
+    while True:
+        payload={'page_size':PAGE_SIZE};
+        if cur: payload['start_cursor']=cur
+        d=notion_req(f'https://api.notion.com/v1/databases/{DB}/query',payload)
+        for it in d.get('results',[]):
+            p=it.get('properties',{}).get('URL',{});u=''
+            if p.get('type')=='url': u=p.get('url') or ''
+            elif p.get('type')=='rich_text': u=''.join(x.get('plain_text','') for x in p.get('rich_text',[]))
+            if u: keys.add(normalize_nikkei_article_key(u)); keys.add(u)
+        if not d.get('has_more'): break
+        cur=d.get('next_cursor')
+    return keys,True
+def should_exclude_by_body(title,text):
+    if '人事記事をもっと見る' in text:return True,'hr_article_marker'
+    if re.search(r'.*\s[^\s]{2,6}氏$',title or '') and any(x in text for x in ['人事','就任','社長','会長','役員']) and len(text)<600 and not any(k in text for k in ['M&A','投資','決算','設備投資','資本提携','能力増強','合弁','買収','TOB','インタビュー']): return True,'hr_short_executive_article'
+    return False,''
+def extract(page):
+    page.wait_for_timeout(WAIT_AFTER)
+    return page.evaluate("""() => {const t=document.querySelector('h1')?.innerText||document.title||''; const b=document.querySelector('article,main,.cmn-section')?.innerText||''; return {title:t,text:b};} """)
 
 def main():
-    if not STORAGE_PATH.exists():
-        raise FileNotFoundError(f"{STORAGE_PATH} がありません。")
-
-    if not INPUT_PATH.exists():
-        raise FileNotFoundError(f"{INPUT_PATH} がありません。先に nikkei_extract_issue_links.py を実行してください。")
-
-    articles = json.loads(INPUT_PATH.read_text(encoding="utf-8"))
-
-    if MAX_ARTICLES > 0:
-        articles = articles[:MAX_ARTICLES]
-
-    done_urls = load_existing_urls()
-    results = []
-    failures = []
-    excluded_after_fetch = []
-
-    if OUTPUT_JSONL.exists():
-        for line in OUTPUT_JSONL.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                try:
-                    results.append(json.loads(line))
-                except Exception:
-                    pass
-
-    print("target_count:", len(articles))
-    print("already_done:", len(done_urls))
-    print("output_jsonl:", OUTPUT_JSONL)
-
+    arts=json.loads(INPUT_PATH.read_text(encoding='utf-8')) if INPUT_PATH.exists() else []
+    if MAX_ARTICLES>0: arts=arts[:MAX_ARTICLES]
+    keys,enabled=fetch_existing(); skipped=[]
+    before=len(arts)
+    if enabled:
+        keep=[]
+        for a in arts:
+            if a['url'] in keys or normalize_nikkei_article_key(a['url']) in keys: skipped.append(a)
+            else: keep.append(a)
+        arts=keep
+    print('existing_notion_url_count:',len(keys)); print('target_count_before_existing_skip:',before); print('skip_existing_count:',len(skipped)); print('target_count_after_existing_skip:',len(arts)); print('target_count:',len(arts))
+    Path('logs/nikkei_articles_skipped_existing.json').write_text(json.dumps(skipped,ensure_ascii=False,indent=2),encoding='utf-8')
+    if not arts: OUTPUT_JSON.write_text('[]',encoding='utf-8'); FAILED_JSON.write_text('[]',encoding='utf-8'); return
+    res=[]; fail=[]
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        context = browser.new_context(
-            storage_state=str(STORAGE_PATH),
-            locale="ja-JP",
-            timezone_id="Asia/Tokyo",
-        )
-        page = context.new_page()
-        page.set_default_timeout(20000)
-
-        for i, item in enumerate(articles, 1):
-            url = item["url"]
-
-            if url in done_urls:
-                print(f"[{i}/{len(articles)}] skip already done: {item.get('title', '')[:60]}")
-                continue
-
-            print(f"[{i}/{len(articles)}] open: {item.get('title', '')[:80]}")
-
-            try:
-                page.goto(url, wait_until="domcontentloaded", timeout=45000)
-                extracted = extract_article_with_retry(page)
-
-                text = extracted.get("text", "")
-                source_title = item.get("title", "")
-
-                should_exclude, exclude_reason = should_exclude_by_body(source_title, text)
-                if should_exclude:
-                    excluded_record = {
-                        "status": "excluded",
-                        "exclude_reason": exclude_reason,
-                        "source_title": source_title,
-                        "url": url,
-                        "issue_url": item.get("issue_url", ""),
-                        "issue_date": item.get("issue_date", ""),
-                        "edition": item.get("edition", ""),
-                        "page_title": extracted.get("title", ""),
-                        "selector": extracted.get("selector", ""),
-                        "text_length": len(text),
-                    }
-                    excluded_after_fetch.append(excluded_record)
-                    print("  excluded:", exclude_reason, source_title[:80])
-                    continue
-
-                record = {
-                    "status": "success",
-                    "source_title": source_title,
-                    "url": url,
-                    "issue_url": item.get("issue_url", ""),
-                    "issue_date": item.get("issue_date", ""),
-                    "edition": item.get("edition", ""),
-                    "page_title": extracted.get("title", ""),
-                    "selector": extracted.get("selector", ""),
-                    "text_length": len(text),
-                    "text": text,
-                    "image_count": extracted.get("image_count", 0),
-                    "images": extracted.get("images", []),
-                }
-
-                with OUTPUT_JSONL.open("a", encoding="utf-8") as f:
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
-
-                results.append(record)
-                done_urls.add(url)
-
-                print(
-                    "  ok",
-                    "selector=", record["selector"],
-                    "text_length=", record["text_length"],
-                    "image_count=", record["image_count"],
-                )
-
-            except Exception as e:
-                failure = {
-                    "status": "failed",
-                    "source_title": item.get("title", ""),
-                    "url": url,
-                    "error": str(e),
-                }
-                failures.append(failure)
-                print("  failed:", str(e)[:300])
-
+        b=p.chromium.launch(headless=True); c=b.new_context(storage_state=str(STORAGE_PATH),locale='ja-JP',timezone_id='Asia/Tokyo')
+        if BLOCK_HEAVY: c.route('**/*', lambda route,req: route.abort() if req.resource_type in {'image','media','font','stylesheet'} else route.continue_())
+        page=c.new_page()
+        for i,a in enumerate(arts,1):
+            ok=False
+            for t in range(RETRIES):
+                try:
+                    page.goto(a['url'],wait_until='domcontentloaded',timeout=GOTO_TIMEOUT)
+                    d=extract(page); text=(d.get('text') or '').strip()
+                    if len(text)<MIN_LEN: raise RuntimeError('too_short')
+                    ex,r=should_exclude_by_body(a.get('title',''),text)
+                    if ex: fail.append({'status':'excluded','exclude_reason':r,'url':a['url'],'source_title':a.get('title','')}); ok=True; break
+                    res.append({'status':'success','source_title':a.get('title',''),'url':a['url'],'issue_url':a.get('issue_url',''),'issue_date':a.get('issue_date',''),'edition':a.get('edition',''),'page_title':d.get('title',''),'text_length':len(text),'text':text})
+                    ok=True; break
+                except Exception as e:
+                    if str(e)=='too_short' and t<RETRIES-1: continue
+                    if t==RETRIES-1: fail.append({'status':'too_short' if 'too_short' in str(e) else 'failed','url':a['url'],'source_title':a.get('title',''),'error':str(e)})
             time.sleep(SLEEP_SECONDS)
-
-        browser.close()
-
-    OUTPUT_JSON.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
-    FAILED_JSON.write_text(json.dumps(failures, ensure_ascii=False, indent=2), encoding="utf-8")
-    Path("logs/nikkei_articles_excluded_after_fetch.json").write_text(json.dumps(excluded_after_fetch, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    print("saved_jsonl:", OUTPUT_JSONL)
-    print("saved_json:", OUTPUT_JSON)
-    print("failed_json:", FAILED_JSON)
-    print("success_count:", len(results))
-    print("failed_count:", len(failures))
-    print("excluded_after_fetch_count:", len(excluded_after_fetch))
-
-
-if __name__ == "__main__":
-    main()
+        b.close()
+    OUTPUT_JSON.write_text(json.dumps(res,ensure_ascii=False,indent=2),encoding='utf-8'); FAILED_JSON.write_text(json.dumps(fail,ensure_ascii=False,indent=2),encoding='utf-8')
+    Path('logs/nikkei_articles_excluded_after_fetch.json').write_text(json.dumps([x for x in fail if x.get('status')=='excluded'],ensure_ascii=False,indent=2),encoding='utf-8')
+    print('success_count:',len(res)); print('failed_count:',len([x for x in fail if x.get("status")!="excluded"])); print('excluded_after_fetch_count:',len([x for x in fail if x.get("status")=="excluded"]))
+if __name__=='__main__': main()
