@@ -19,6 +19,9 @@ jobs:
       NIKKEI_MORNING_URL: https://www.nikkei.com/paper/
       NIKKEI_EDITION: evening
       NIKKEI_TARGET_DATE: auto
+      NIKKEI_USE_DIRECT_ISSUE_URL: "true"
+      NIKKEI_ALLOW_DIRECT_FALLBACK: "false"
+      NIKKEI_PAPER_URL_TEMPLATE: "https://www.nikkei.com/paper/{edition}/?b={date}&d=0"
       NIKKEI_REQUIRE_TODAY: "true"
       NIKKEI_ALLOW_EMPTY_ISSUE: "true"
 
