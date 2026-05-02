@@ -134,3 +134,11 @@ Notion の `ArticleUrlPattern` は、記号や改行が混ざると意図せず�
 ## 変更理由メモ
 
 今回の保守改善の理由と方針は `docs/maintenance_changes_ja.md` にまとめています。
+
+## Nikkeiソース統合（MVP）
+- `config/sources.yml` に日経ソース設定を追加。
+- デフォルトで本文全文保存 (`NIKKEI_SAVE_FULL_TEXT`) と画像保存 (`NIKKEI_SAVE_IMAGES`) はOFF。
+- Playwrightログインは `NIKKEI_SESSION_STATE_JSON` 優先、失効時は `NIKKEI_EMAIL` / `NIKKEI_PASSWORD` を利用する方針。
+- GitHub Actions: `.github/workflows/general_news.yml` を `workflow_dispatch` と JST朝定期実行で追加。
+- Notion保存先は `NOTION_DAILY_NEWS_DB_ID`, `NOTION_ARTICLE_DB_ID` を利用。
+- 著作権・契約上不明な場合は本文全文や画像本体を保存せず、URL/見出し/抜粋/要約のみ保存する運用。

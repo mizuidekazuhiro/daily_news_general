@@ -1,0 +1,16 @@
+sources:
+  nikkei:
+    enabled: true
+    source_name: "Nikkei"
+    base_url: "https://www.nikkei.com"
+    mode: "playwright"
+    login_required: true
+    fetch_morning_edition: true
+    fetch_all_article_links: true
+    fetch_article_body: true
+    save_full_text: false
+    save_images: false
+    max_articles_per_run: 120
+    max_important_articles: 10
+    max_body_chars_for_gpt: 6000
+    timezone: "Asia/Tokyo"
