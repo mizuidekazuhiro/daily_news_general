@@ -1,0 +1,38 @@
+name: general-news
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 21 * * *"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install chromium
+      - name: Run digest
+        env:
+          NIKKEI_ENABLED: ${{ secrets.NIKKEI_ENABLED }}
+          NIKKEI_EMAIL: ${{ secrets.NIKKEI_EMAIL }}
+          NIKKEI_PASSWORD: ${{ secrets.NIKKEI_PASSWORD }}
+          NIKKEI_SESSION_STATE_JSON: ${{ secrets.NIKKEI_SESSION_STATE_JSON }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DAILY_NEWS_DB_ID: ${{ secrets.NOTION_DAILY_NEWS_DB_ID }}
+          NOTION_ARTICLE_DB_ID: ${{ secrets.NOTION_ARTICLE_DB_ID }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+        run: python news_digest.py
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: run-logs
+          path: |
+            *.log
+            data/
