@@ -21,9 +21,75 @@ def wait_page(p):
     for s in ('domcontentloaded','load'):
         try:p.wait_for_load_state(s,timeout=15000)
         except PlaywrightTimeoutError:pass
-    p.wait_for_timeout(2500)
+    try:p.wait_for_load_state('networkidle',timeout=1500)
+    except PlaywrightTimeoutError:pass
+    p.wait_for_timeout(400)
+
+def wait_for_url_stability(p, settle_ms=400):
+    first_url=p.url
+    p.wait_for_timeout(settle_ms)
+    second_url=p.url
+    if first_url!=second_url:
+        print('url_changed_after_goto:', first_url, '->', second_url)
+        try:p.wait_for_load_state('domcontentloaded',timeout=10000)
+        except PlaywrightTimeoutError:pass
+        p.wait_for_timeout(250)
+
+def is_navigation_context_error(exc: Exception) -> bool:
+    msg=str(exc).lower()
+    return any(k in msg for k in (
+        'execution context was destroyed',
+        'most likely because of a navigation',
+        'navigat',
+        'context destroyed',
+    ))
+
+def safe_collect_anchor_links(page, max_attempts=5, sleep_seconds=1.0):
+    links=[]
+    for attempt in range(1,max_attempts+1):
+        print(f'collect_links_attempt: {attempt}/{max_attempts} current_url={page.url}')
+        try:page.wait_for_load_state('domcontentloaded',timeout=10000)
+        except PlaywrightTimeoutError:pass
+        try:page.wait_for_load_state('load',timeout=8000)
+        except PlaywrightTimeoutError:pass
+        try:page.wait_for_load_state('networkidle',timeout=1500)
+        except PlaywrightTimeoutError:pass
+
+        try:
+            links=page.evaluate("""() => Array.from(document.querySelectorAll('a')).map(a=>({text:(a.innerText||a.textContent||'').trim(),href:a.href||''})).filter(x=>x.text&&x.href)""")
+            print('collect_links_count:', len(links))
+            if links:
+                return links
+            if attempt<max_attempts:
+                page.wait_for_timeout(int(sleep_seconds*1000))
+        except PlaywrightError as e:
+            if is_navigation_context_error(e) and attempt<max_attempts:
+                print('collect_links_retry_reason: navigation_context_destroyed')
+                page.wait_for_timeout(int(sleep_seconds*1000))
+                continue
+            raise
+    return links
+
+def save_collect_links_diagnostics(page):
+    html_path=OUTPUT_DIR/'nikkei_issue_links_failed.html'
+    png_path=OUTPUT_DIR/'nikkei_issue_links_failed.png'
+    url_path=OUTPUT_DIR/'nikkei_issue_links_failed_url.txt'
+    txt_path=OUTPUT_DIR/'nikkei_issue_links_failed_text.txt'
+    url_path.write_text(page.url or '',encoding='utf-8')
+    try: html_path.write_text(page.content(),encoding='utf-8')
+    except Exception as e: html_path.write_text(f'failed_to_dump_html: {e}',encoding='utf-8')
+    try: page.screenshot(path=str(png_path),full_page=True)
+    except Exception as e: txt_path.write_text(f'failed_to_capture_screenshot: {e}\n',encoding='utf-8')
+    try:
+        body_text=page.evaluate("""() => (document.body && document.body.innerText) ? document.body.innerText : ''""")
+        txt_path.write_text(body_text,encoding='utf-8')
+    except Exception as e:
+        with txt_path.open('a',encoding='utf-8') as f: f.write(f'failed_to_dump_text: {e}\n')
+    print('collect_links_failed_artifacts:', str(url_path), str(html_path), str(png_path), str(txt_path))
+
 def collect_links(p,b):
-    wait_page(p);links=p.evaluate("""() => Array.from(document.querySelectorAll('a')).map(a=>({text:(a.innerText||a.textContent||'').trim(),href:a.href||''})).filter(x=>x.text&&x.href)""")
+    wait_page(p)
+    links=safe_collect_anchor_links(p,max_attempts=5,sleep_seconds=1.0)
     out=[];seen=set()
     for x in links:
         h=urljoin(b,x['href']);t=' '.join(x['text'].split())
@@ -56,15 +122,18 @@ def main():
         print(f'use_direct_issue_url: {str(USE_DIRECT_ISSUE_URL).lower()}'); print('direct_issue_url:',issue_url)
         if USE_DIRECT_ISSUE_URL:
             try:
-                print('open_issue_directly: true'); page.goto(issue_url,wait_until='domcontentloaded',timeout=45000); links=collect_links(page,issue_url)
+                print('open_issue_directly: true'); print('open_issue_url:',issue_url); page.goto(issue_url,wait_until='domcontentloaded',timeout=45000); print('page.goto_after_url:',page.url); wait_for_url_stability(page); links=collect_links(page,issue_url)
             except Exception:
                 if not ALLOW_DIRECT_FALLBACK: raise
                 print('open_issue_directly: false')
         if not links:
-            fallback_entry_used=True; print('open entry:',ENTRY_URL); page.goto(ENTRY_URL,wait_until='domcontentloaded',timeout=45000); entry_links=collect_links(page,ENTRY_URL)
+            if USE_DIRECT_ISSUE_URL and not ALLOW_DIRECT_FALLBACK:
+                save_collect_links_diagnostics(page)
+                raise RuntimeError('No links collected from direct issue URL and direct fallback is disabled.')
+            fallback_entry_used=True; print('open entry:',ENTRY_URL); page.goto(ENTRY_URL,wait_until='domcontentloaded',timeout=45000); print('page.goto_after_url:',page.url); wait_for_url_stability(page); entry_links=collect_links(page,ENTRY_URL)
             cand=[x['url'] for x in entry_links if f'/paper/{EDITION}/' in x['url'] and get_b(x['url'])]
-            if cand: issue_url=cand[0]; page.goto(issue_url,wait_until='domcontentloaded',timeout=45000); links=collect_links(page,issue_url)
-        print(f'fallback_entry_used: {str(fallback_entry_used).lower()}')
+            if cand: issue_url=cand[0]; print('open_issue_url:',issue_url); page.goto(issue_url,wait_until='domcontentloaded',timeout=45000); print('page.goto_after_url:',page.url); wait_for_url_stability(page); links=collect_links(page,issue_url)
+        print(f'fallback_entry_used: {str(fallback_entry_used).lower()}'); print('final_issue_links_count:',len(links))
         raw=0; arts=[]; seen=set()
         for i in links:
             if not is_article(i['url']): continue
