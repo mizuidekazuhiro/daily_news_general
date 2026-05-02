@@ -57,7 +57,13 @@ def main() -> int:
         return 1
 
     run([sys.executable, "scripts/nikkei_fetch_articles_full.py"])
-    run([sys.executable, "scripts/nikkei_save_articles_to_notion.py"])
+    run([sys.executable, "scripts/nikkei_save_articles_to_notion.py"] )
+
+    if os.getenv("NIKKEI_ENABLE_SCORING", "true").lower() == "true":
+        run([sys.executable, "scripts/nikkei_score_articles.py"])
+
+    if os.getenv("NIKKEI_ENABLE_NOTION_SCORE_UPDATE", "false").lower() == "true":
+        run([sys.executable, "scripts/nikkei_update_notion_scores.py"])
 
     print("nikkei pipeline done")
     return 0
