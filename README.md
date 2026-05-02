@@ -142,3 +142,67 @@ Notion の `ArticleUrlPattern` は、記号や改行が混ざると意図せず�
 - GitHub Actions: `.github/workflows/general_news.yml` を `workflow_dispatch` と JST朝定期実行で追加。
 - Notion保存先は `NOTION_DAILY_NEWS_DB_ID`, `NOTION_ARTICLE_DB_ID` を利用。
 - 著作権・契約上不明な場合は本文全文や画像本体を保存せず、URL/見出し/抜粋/要約のみ保存する運用。
+
+---
+
+## Nikkei記事スコアリング（Rules DB読み取り専用）
+
+日経朝刊・夕刊向けスコアリングは、既存Notion Rules DBを**読み取り専用**で利用します。  
+**Rules DB自体の更新（追加・編集・スキーマ変更）は行いません。**
+
+### Rules DB
+- DB ID: `2eddec27c9aa80818f6aceda3258fef0`
+- 列: `TagName`, `Enabled`, `RuleType`, `Keywords`, `NegativeKeywords`, `MatchField`, `Weight`, `Priority`, `Notes`
+- `RuleType` は `country / sector / importance` を全て読み込みます。
+
+### Weight と Priority の違い
+- `Weight`: `importance_score` の本体（合計値）
+- `Priority`: **importance_scoreには加算しない**
+- `Priority` は同点時の並び順・表示優先度の補助指標として使用
+
+### スコア計算ルール
+- `Enabled=true` のみ対象
+- `Keywords` 一致: `+Weight`
+- `NegativeKeywords` 一致: `-abs(Weight)`
+- 同一ルールで複数キーワード一致しても原則1回加点/減点
+- ソート順: `importance_score desc`, `priority desc`, `text_length desc`
+
+### 実行方法
+```bash
+python scripts/nikkei_score_articles.py
+```
+
+入力: `logs/nikkei_articles_full.json`  
+出力: `logs/nikkei_articles_scored.json`
+
+### デバッグ確認
+```bash
+python - <<'PY'
+import json
+from pathlib import Path
+p = Path("logs/nikkei_articles_scored.json")
+data = json.loads(p.read_text(encoding="utf-8"))
+print("count:", len(data))
+print("--- top 20 ---")
+for i, x in enumerate(data[:20], 1):
+    print(i, x.get("importance_score"), x.get("priority"), x.get("source_title"))
+    print(" tags:", x.get("tags"))
+    print(" reason:", x.get("reason_to_read"))
+PY
+```
+
+### パイプライン環境変数
+- `NIKKEI_ENABLE_SCORING=true`
+- `NIKKEI_ENABLE_NOTION_SCORE_UPDATE=false`（デフォルト）
+- `NIKKEI_RULES_SOURCE=notion`
+- `NIKKEI_RULES_FILTER_RULE_TYPES=country,sector,importance`
+- `NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT=5`
+- `NOTION_RULES_DB_ID=2eddec27c9aa80818f6aceda3258fef0`
+
+### GitHub Secrets
+- 既存: `NOTION_TOKEN`, `NOTION_ARTICLE_DB_ID`, `NIKKEI_SESSION_STATE_JSON`
+- 追加: `NOTION_RULES_DB_ID`（`2eddec27c9aa80818f6aceda3258fef0`）
+
+### 注意
+- 既存Rules DBはgeneral news側でも使われる可能性があるため、日経処理では読み取りのみ。
+- `.env`, `logs/`, `.storage/`, Cookie, Token, Session JSON はコミット禁止。

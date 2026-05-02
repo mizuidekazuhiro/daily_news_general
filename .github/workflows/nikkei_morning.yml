@@ -21,6 +21,12 @@ jobs:
       NOTION_ARTICLE_DB_ID: ${{ secrets.NOTION_ARTICLE_DB_ID }}
       NIKKEI_ARTICLES_DB_ID: ${{ secrets.NOTION_ARTICLE_DB_ID }}
       NIKKEI_SESSION_STATE_JSON: ${{ secrets.NIKKEI_SESSION_STATE_JSON }}
+      NIKKEI_ENABLE_SCORING: "true"
+      NIKKEI_ENABLE_NOTION_SCORE_UPDATE: "false"
+      NIKKEI_RULES_SOURCE: "notion"
+      NIKKEI_RULES_FILTER_RULE_TYPES: "country,sector,importance"
+      NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT: "5"
+      NOTION_RULES_DB_ID: ${{ secrets.NOTION_RULES_DB_ID }}
 
       NIKKEI_MORNING_URL: https://www.nikkei.com/paper/
       NIKKEI_USE_DIRECT_ISSUE_URL: "true"
