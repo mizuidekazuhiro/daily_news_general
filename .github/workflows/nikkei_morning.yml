@@ -14,9 +14,13 @@ jobs:
     env:
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       NOTION_ARTICLE_DB_ID: ${{ secrets.NOTION_ARTICLE_DB_ID }}
+      NIKKEI_ARTICLES_DB_ID: ${{ secrets.NOTION_ARTICLE_DB_ID }}
       NIKKEI_SESSION_STATE_JSON: ${{ secrets.NIKKEI_SESSION_STATE_JSON }}
 
       NIKKEI_MORNING_URL: https://www.nikkei.com/paper/
+      NIKKEI_USE_DIRECT_ISSUE_URL: "true"
+      NIKKEI_ALLOW_DIRECT_FALLBACK: "false"
+      NIKKEI_PAPER_URL_TEMPLATE: "https://www.nikkei.com/paper/{edition}/?b={date}&d=0"
       NIKKEI_EDITION: morning
       NIKKEI_TARGET_DATE: auto
       NIKKEI_REQUIRE_TODAY: "true"
