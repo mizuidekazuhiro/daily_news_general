@@ -1,0 +1,5 @@
+
+.storage/
+.env
+nikkei_storage_state.b64
+logs/
