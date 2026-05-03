@@ -39,7 +39,7 @@ def test_final_synthesis_and_hash():
 
 
 def test_html_and_notion_helpers(tmp_path: Path):
-    tpl = Path("templates/general_final_report_email.html")
+    tpl = Path("templates/nikkei_final_report_email.html")
     rep = {"report_title":"r","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","priority_watch_items":["x","y","z"],"article_sections":[{"ref_id":"A1","title":"t","url":"https://x","importance_score":1,"one_line_summary":"o","why_it_matters":"w","business_action_hint":"b"}]}
     html = render_final_report_html(tpl, rep, "2026-01-01")
     assert "Meiryo UI" in html and '<a href="https://x">A1</a>' in html
