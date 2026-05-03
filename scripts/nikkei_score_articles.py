@@ -204,6 +204,7 @@ def main() -> int:
     fetched_articles = json.loads(INPUT_JSON.read_text(encoding="utf-8")) if INPUT_JSON.exists() else []
     inventory = json.loads(INVENTORY_JSON.read_text(encoding="utf-8")) if INVENTORY_JSON.exists() else []
     existing_articles = []
+    backfilled_articles = []
     for item in inventory:
         if item.get('status') == 'existing_in_notion':
             src = item.get('notion_existing', {})
@@ -218,6 +219,10 @@ def main() -> int:
                 'page_id': src.get('page_id', ''),
                 'source': 'notion_existing',
             })
+        elif item.get('status') == 'backfilled_existing':
+            m = next((x for x in fetched_articles if x.get('url') == item.get('url')), None)
+            if m:
+                backfilled_articles.append(m)
     articles = fetched_articles + existing_articles
     scored = [score_article(a, rules, min_report_score) for a in articles]
     scored.sort(key=lambda x: (x.get("exclude_candidate", False), -float(x.get("importance_score", 0)), -int(x.get("priority", 0)), -int(x.get("text_length", 0))))
@@ -245,6 +250,8 @@ def main() -> int:
         "scored_article_count": len(scored),
         "scoring_input_new_count": len(fetched_articles),
         "scoring_input_existing_count": len(existing_articles),
+        "scoring_input_backfilled_body_count": len(backfilled_articles),
+        "scoring_input_saved_body_count": sum(1 for a in existing_articles if str(a.get('text') or '').strip()),
         "scoring_input_title_only_count": sum(1 for a in articles if not str(a.get('text') or '').strip() and str(a.get('source_title') or a.get('page_title') or '').strip()),
         "scoring_input_total_count": len(articles),
     }

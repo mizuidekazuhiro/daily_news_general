@@ -31,6 +31,7 @@ BLOCK_HEAVY = os.getenv('NIKKEI_BLOCK_HEAVY_RESOURCES', 'true').lower() == 'true
 RETRY_WITHOUT_BLOCK = os.getenv('NIKKEI_RETRY_WITHOUT_RESOURCE_BLOCK_ON_FAILURE', 'true').lower() == 'true'
 
 SKIP_EXISTING = os.getenv('NIKKEI_SKIP_EXISTING_NOTION_URLS', 'true').lower() == 'true'
+BACKFILL_EXISTING_EMPTY_BODY = os.getenv('NIKKEI_BACKFILL_EXISTING_EMPTY_BODY', 'true').lower() == 'true'
 PAGE_SIZE = int(os.getenv('NIKKEI_EXISTING_URL_LOOKUP_PAGE_SIZE', '100'))
 NOTION_TOKEN = os.getenv('NOTION_TOKEN', '').strip()
 DB = (os.getenv('NIKKEI_ARTICLES_DB_ID', '') or os.getenv('NOTION_ARTICLE_DB_ID', '')).strip()
@@ -78,12 +79,12 @@ def _extract_text_property(prop: dict) -> str:
 
 def fetch_existing():
     if not (SKIP_EXISTING and NOTION_TOKEN and DB):
-        return set(), {}, False
+        return set(), {}, False, {}
     meta = requests.get(f'https://api.notion.com/v1/databases/{DB}', headers=notion_headers(), timeout=60).json()
     props = meta.get('properties', {})
     if 'URL' not in props:
         print('WARNING: URL property missing; disable skip existing')
-        return set(), {}, False
+        return set(), {}, False, {}
     cur = None
     keys = set()
     existing_map = {}
@@ -116,7 +117,32 @@ def fetch_existing():
         if not d.get('has_more'):
             break
         cur = d.get('next_cursor')
-    return keys, existing_map, True
+    return keys, existing_map, True, props
+
+
+def has_body_text(existing: dict) -> bool:
+    return bool(str(existing.get('text', '')).strip())
+
+
+def classify_articles(articles, keys, existing_map, skip_existing, backfill_enabled):
+    skipped = []
+    targets = []
+    existing_with_body = []
+    existing_missing_body = []
+    for a in articles:
+        u = a['url']
+        is_existing = u in keys or normalize_nikkei_article_key(u) in keys
+        if not (skip_existing and is_existing):
+            targets.append(a)
+            continue
+        ex = existing_map.get(u, {})
+        if backfill_enabled and not has_body_text(ex):
+            existing_missing_body.append(a)
+            targets.append(a)
+        else:
+            existing_with_body.append(a)
+            skipped.append(a)
+    return targets, skipped, existing_with_body, existing_missing_body
 
 
 def detect_walls(text: str):
@@ -199,6 +225,23 @@ def save_failure_artifacts(page, idx: int):
     return html_path, png_path, txt_path
 
 
+def split_text_blocks(text: str, limit: int = 1800):
+    lines = [ln.strip() for ln in (text or '').splitlines() if ln.strip()]
+    if not lines:
+        return []
+    chunks = []
+    cur = ''
+    for ln in lines:
+        if len(cur) + len(ln) + 1 > limit and cur:
+            chunks.append(cur)
+            cur = ln
+        else:
+            cur = f"{cur}\n{ln}".strip()
+    if cur:
+        chunks.append(cur)
+    return chunks
+
+
 def main():
     raw_arts = json.loads(INPUT_PATH.read_text(encoding='utf-8')) if INPUT_PATH.exists() else []
     arts = list(raw_arts)
@@ -206,21 +249,15 @@ def main():
     if MAX_ARTICLES > 0:
         arts = arts[:MAX_ARTICLES]
     article_count_after_pre_filter = len(arts)
-    keys, existing_map, enabled = fetch_existing()
-    skipped = []
-    if enabled:
-        keep = []
-        for a in arts:
-            if a['url'] in keys or normalize_nikkei_article_key(a['url']) in keys:
-                skipped.append(a)
-            else:
-                keep.append(a)
-        arts = keep
+    keys, existing_map, enabled, props = fetch_existing()
+    arts, skipped, existing_with_body, existing_missing_body = classify_articles(
+        arts, keys, existing_map, SKIP_EXISTING, BACKFILL_EXISTING_EMPTY_BODY
+    )
     existing_url_skip_count = len(skipped)
     target_count = len(arts)
     Path('logs/nikkei_articles_skipped_existing.json').write_text(json.dumps(skipped, ensure_ascii=False, indent=2), encoding='utf-8')
     inventory = []
-    for a in skipped:
+    for a in skipped + existing_missing_body:
         ex = existing_map.get(a['url'], {})
         inventory.append({'url': a['url'], 'title': a.get('title', ''), 'status': 'existing_in_notion', 'page_id': ex.get('page_id', ''), 'has_existing_body': bool(ex.get('text')), 'source': 'notion_existing', 'notion_existing': ex})
 
@@ -259,12 +296,19 @@ def main():
                     if RETRY_WITHOUT_BLOCK and (not use_block) and t == attempts - 1:
                         print('retry_without_resource_block_success: true')
                         retry_without_resource_block_success = True
-                    res.append({
+                    record = {
                         'status': status, 'source_title': a.get('title', ''), 'url': a['url'], 'issue_url': a.get('issue_url', ''),
                         'issue_date': a.get('issue_date', ''), 'edition': a.get('edition', ''), 'page_title': page_title,
                         'text_length': len(text), 'text': text, 'selector_used': best.get('selector', ''), 'selector_candidates': selector_logs,
-                    })
-                    inventory.append({'url': a['url'], 'title': a.get('title', ''), 'status': 'fetched_new', 'page_id': '', 'has_existing_body': False, 'source': 'fetch_new'})
+                    }
+                    ex = existing_map.get(a['url'], {})
+                    if ex.get('page_id'):
+                        record['source'] = 'backfill_existing'
+                        record['page_id'] = ex.get('page_id')
+                        inventory.append({'url': a['url'], 'title': a.get('title', ''), 'status': 'backfilled_existing', 'page_id': ex.get('page_id', ''), 'has_existing_body': True, 'source': 'backfill_existing'})
+                    else:
+                        inventory.append({'url': a['url'], 'title': a.get('title', ''), 'status': 'fetched_new', 'page_id': '', 'has_existing_body': False, 'source': 'fetch_new'})
+                    res.append(record)
                     ok = True
                     break
                 except Exception as e:
@@ -283,6 +327,7 @@ def main():
                             selector_logs = []
                         html_path, png_path, txt_path = save_failure_artifacts(page, i)
                         is_timeout = isinstance(e, PlaywrightTimeoutError)
+                        ex = existing_map.get(a['url'], {})
                         fail.append({
                             'status': 'failed', 'title': a.get('title', ''), 'url': a['url'], 'source_title': a.get('title', ''), 'attempt_count': attempts,
                             'final_page_url': page.url if page else '', 'final_url': page.url if page else '', 'error_type': type(e).__name__, 'error_message': str(e),
@@ -296,7 +341,8 @@ def main():
                             'retried_without_resource_block': RETRY_WITHOUT_BLOCK,
                             'final_attempt_without_resource_block': RETRY_WITHOUT_BLOCK and (not use_block) and t == attempts - 1,
                             'wait_strategy_used': {'wait_until': 'domcontentloaded', 'wait_after_ms': WAIT_AFTER, 'goto_timeout_ms': GOTO_TIMEOUT},
-                            'screenshot_path': png_path, 'html_path': html_path, 'text_path': txt_path,
+                            'screenshot_path': png_path, 'html_path': html_path, 'text_path': txt_path, 'artifact_html_path': html_path, 'artifact_screenshot_path': png_path,
+                            'page_id': ex.get('page_id', ''), 'existing_page': bool(ex.get('page_id')),
                             'reason': 'empty_body' if len(text) == 0 else ('too_short' if 0 < len(text) < MIN_LEN else type(e).__name__),
                             'status_code': None,
                         })
@@ -321,6 +367,8 @@ def main():
     access_denied_count = sum(1 for x in only_failed if x.get('is_access_denied_detected'))
     timeout_count = sum(1 for x in only_failed if x.get('is_timeout'))
     empty_body_count = sum(1 for x in only_failed if x.get('is_empty_body'))
+    backfill_success_count = sum(1 for x in res if x.get('source') == 'backfill_existing')
+    backfill_failed_count = sum(1 for x in only_failed if x.get('existing_page'))
     summary = {
         'raw_article_count': raw_article_count,
         'pre_excluded_count': max(raw_article_count - article_count_after_pre_filter, 0),
@@ -343,6 +391,13 @@ def main():
         'inventory_existing_in_notion_count': sum(1 for x in inventory if x.get('status') == 'existing_in_notion'),
         'inventory_fetched_new_count': sum(1 for x in inventory if x.get('status') == 'fetched_new'),
         'inventory_failed_count': sum(1 for x in inventory if str(x.get('status', '')).startswith('failed_')),
+        'existing_with_body_count': len(existing_with_body),
+        'existing_missing_body_count': len(existing_missing_body),
+        'backfill_existing_empty_body_enabled': BACKFILL_EXISTING_EMPTY_BODY,
+        'backfill_target_count': len(existing_missing_body),
+        'backfill_success_count': backfill_success_count,
+        'backfill_failed_count': backfill_failed_count,
+        'backfill_updated_existing_page_count': backfill_success_count,
     }
     SUMMARY_JSON.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
     print('raw_article_count:', summary['raw_article_count'])
