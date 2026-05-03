@@ -193,7 +193,6 @@ def main() -> int:
 
     token = os.getenv("NOTION_TOKEN", "").strip()
     rules_db_id = os.getenv("NOTION_RULES_DB_ID", "").strip()
-    _allow_fallback = env_bool("NIKKEI_ALLOW_DEFAULT_RULES_DB_FALLBACK", "false")
     if not rules_db_id:
         raise RuntimeError("NOTION_RULES_DB_ID is required when NIKKEI_ENABLE_SCORING=true")
     if not INPUT_JSON.exists():

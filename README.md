@@ -151,7 +151,7 @@ Notion の `ArticleUrlPattern` は、記号や改行が混ざると意図せず�
 **Rules DB自体の更新（追加・編集・スキーマ変更）は行いません。**
 
 ### Rules DB
-- DB ID: `2eddec27c9aa80818f6aceda3258fef0`
+- DB ID: `.env` / GitHub Secrets の `NOTION_RULES_DB_ID` を使用（コードへの固定値埋め込み禁止）
 - 列: `TagName`, `Enabled`, `RuleType`, `Keywords`, `NegativeKeywords`, `MatchField`, `Weight`, `Priority`, `Notes`
 - `RuleType` は `country / sector / importance` を全て読み込みます。
 
@@ -197,11 +197,11 @@ PY
 - `NIKKEI_RULES_SOURCE=notion`
 - `NIKKEI_RULES_FILTER_RULE_TYPES=country,sector,importance`
 - `NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT=5`
-- `NOTION_RULES_DB_ID=2eddec27c9aa80818f6aceda3258fef0`
+- `NOTION_RULES_DB_ID=<your_notion_rules_db_id>`（必須）
 
 ### GitHub Secrets
 - 既存: `NOTION_TOKEN`, `NOTION_ARTICLE_DB_ID`, `NIKKEI_SESSION_STATE_JSON`
-- 追加: `NOTION_RULES_DB_ID`（`2eddec27c9aa80818f6aceda3258fef0`）
+- 追加: `NOTION_RULES_DB_ID`（必須。値はSecretsで管理し、READMEやコードへ実値を記載しない）
 
 ### 注意
 - 既存Rules DBはgeneral news側でも使われる可能性があるため、日経処理では読み取りのみ。
