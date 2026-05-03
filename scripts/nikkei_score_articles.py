@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 INPUT_JSON = Path("logs/nikkei_articles_full.json")
+INVENTORY_JSON = Path("logs/nikkei_issue_run_inventory.json")
 OUTPUT_JSON = Path("logs/nikkei_articles_scored.json")
 SUMMARY_JSON = Path("logs/nikkei_score_summary.json")
 NOTION_VERSION = "2022-06-28"
@@ -195,14 +196,29 @@ def main() -> int:
     rules_db_id = os.getenv("NOTION_RULES_DB_ID", "").strip()
     if not rules_db_id:
         raise RuntimeError("NOTION_RULES_DB_ID is required when NIKKEI_ENABLE_SCORING=true")
-    if not INPUT_JSON.exists():
-        raise FileNotFoundError(f"{INPUT_JSON} がありません。先に本文取得を実行してください。")
 
     rule_types = {x.strip().lower() for x in os.getenv("NIKKEI_RULES_FILTER_RULE_TYPES", "country,sector,importance").split(",") if x.strip()}
     min_report_score = float(os.getenv("NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT", "5"))
 
     rules = load_rules(token, rules_db_id, rule_types)
-    articles = json.loads(INPUT_JSON.read_text(encoding="utf-8"))
+    fetched_articles = json.loads(INPUT_JSON.read_text(encoding="utf-8")) if INPUT_JSON.exists() else []
+    inventory = json.loads(INVENTORY_JSON.read_text(encoding="utf-8")) if INVENTORY_JSON.exists() else []
+    existing_articles = []
+    for item in inventory:
+        if item.get('status') == 'existing_in_notion':
+            src = item.get('notion_existing', {})
+            existing_articles.append({
+                'source_title': src.get('title') or item.get('title', ''),
+                'page_title': src.get('title') or item.get('title', ''),
+                'url': src.get('url') or item.get('url', ''),
+                'issue_date': src.get('issue_date', ''),
+                'edition': src.get('edition', ''),
+                'text': src.get('text', ''),
+                'text_length': len(src.get('text', '')),
+                'page_id': src.get('page_id', ''),
+                'source': 'notion_existing',
+            })
+    articles = fetched_articles + existing_articles
     scored = [score_article(a, rules, min_report_score) for a in articles]
     scored.sort(key=lambda x: (x.get("exclude_candidate", False), -float(x.get("importance_score", 0)), -int(x.get("priority", 0)), -int(x.get("text_length", 0))))
 
@@ -227,6 +243,10 @@ def main() -> int:
         "min_importance_score": min(scores) if scores else 0.0,
         "avg_importance_score": mean(scores) if scores else 0.0,
         "scored_article_count": len(scored),
+        "scoring_input_new_count": len(fetched_articles),
+        "scoring_input_existing_count": len(existing_articles),
+        "scoring_input_title_only_count": sum(1 for a in articles if not str(a.get('text') or '').strip() and str(a.get('source_title') or a.get('page_title') or '').strip()),
+        "scoring_input_total_count": len(articles),
     }
     SUMMARY_JSON.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 

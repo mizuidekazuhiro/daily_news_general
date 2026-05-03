@@ -1,4 +1,6 @@
-from scripts.nikkei_score_articles import score_article, split_keywords
+import json
+
+from scripts.nikkei_score_articles import OUTPUT_JSON, SUMMARY_JSON, score_article, split_keywords
 
 
 def test_split_keywords():
@@ -37,3 +39,25 @@ def test_score_article_basic():
     assert out["priority"] == 5
     assert set(out["tags"]) == {"鉄鋼", "政策"}
     assert out["reason_to_read"] != ""
+
+
+def test_title_only_existing_is_scored(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "logs").mkdir()
+    (tmp_path / "logs/nikkei_articles_full.json").write_text("[]", encoding="utf-8")
+    (tmp_path / "logs/nikkei_issue_run_inventory.json").write_text(json.dumps([
+        {"status": "existing_in_notion", "url": "https://example.com/a", "title": "既存記事", "notion_existing": {"page_id": "p1", "url": "https://example.com/a", "title": "既存記事", "text": ""}}
+    ], ensure_ascii=False), encoding="utf-8")
+    monkeypatch.setenv("NIKKEI_ENABLE_SCORING", "true")
+    monkeypatch.setenv("NOTION_RULES_DB_ID", "dummy")
+    monkeypatch.setenv("NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT", "5")
+
+    import scripts.nikkei_score_articles as mod
+    monkeypatch.setattr(mod, "load_rules", lambda *args, **kwargs: [])
+
+    assert mod.main() == 0
+    summary = json.loads(SUMMARY_JSON.read_text(encoding="utf-8"))
+    scored = json.loads(OUTPUT_JSON.read_text(encoding="utf-8"))
+    assert summary["scoring_input_title_only_count"] == 1
+    assert summary["scored_article_count"] == 1
+    assert scored[0]["page_id"] == "p1"

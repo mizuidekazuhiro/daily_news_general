@@ -24,16 +24,16 @@ def read_count(file_name: str) -> int:
     return len(json.loads(p.read_text(encoding="utf-8")))
 
 
-def read_score_summary() -> tuple[int, float, int]:
+def read_score_summary() -> tuple[int, float, int, dict]:
     summary_path = LOGS / "nikkei_score_summary.json"
     if not summary_path.exists():
-        return 0, 0.0, 0
+        return 0, 0.0, 0, {}
     s = json.loads(summary_path.read_text(encoding="utf-8"))
     scored = int(s.get("scored_article_count", 0))
     top = float(s.get("max_importance_score", 0.0))
     threshold = float(os.getenv("NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT", "5"))
     warning = 1 if scored > 0 and top < threshold else 0
-    return scored, top, warning
+    return scored, top, warning, s
 
 
 def read_fetch_summary() -> dict:
@@ -131,7 +131,7 @@ def main() -> int:
         if notion_update_enabled:
             step_update = run([sys.executable, "scripts/nikkei_update_notion_scores.py"])
 
-    scored_article_count, top_importance_score, warning_count = read_score_summary()
+    scored_article_count, top_importance_score, warning_count, score_summary = read_score_summary()
 
     print(f"article_count: {article_count}")
     print(f"existing_url_skip_count: {existing_url_skip_count}")
@@ -144,6 +144,14 @@ def main() -> int:
     print(f"timeout_count: {timeout_count}")
     print(f"failed_json_path: {failed_json_path}")
     print(f"failed_artifacts_dir: {failed_artifacts_dir}")
+    print(f"issue_inventory_count: {int(fetch_summary.get('issue_inventory_count', 0))}")
+    print(f"inventory_existing_in_notion_count: {int(fetch_summary.get('inventory_existing_in_notion_count', 0))}")
+    print(f"inventory_fetched_new_count: {int(fetch_summary.get('inventory_fetched_new_count', 0))}")
+    print(f"inventory_failed_count: {int(fetch_summary.get('inventory_failed_count', 0))}")
+    print(f"scoring_input_new_count: {int(score_summary.get('scoring_input_new_count', 0))}")
+    print(f"scoring_input_existing_count: {int(score_summary.get('scoring_input_existing_count', 0))}")
+    print(f"scoring_input_title_only_count: {int(score_summary.get('scoring_input_title_only_count', 0))}")
+    print(f"scoring_input_total_count: {int(score_summary.get('scoring_input_total_count', 0))}")
     print(f"final_decision: {final_decision}")
     print(f"final_decision_reason: {final_reason}")
     print(f"scored_article_count: {scored_article_count}")

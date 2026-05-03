@@ -123,6 +123,8 @@ def main() -> int:
 
     target_count = len(items)
     found_pages = updated = skipped = failed = 0
+    existing_page_id_count = 0
+    url_lookup_count = 0
     missing_props: set[str] = set()
 
     for a in items:
@@ -130,7 +132,14 @@ def main() -> int:
         if not url:
             skipped += 1
             continue
-        page = url_index.get(url)
+        page = None
+        page_id = str(a.get('page_id') or '').strip()
+        if page_id:
+            existing_page_id_count += 1
+            page = {'id': page_id}
+        else:
+            url_lookup_count += 1
+            page = url_index.get(url)
         if not page:
             skipped += 1
             continue
@@ -150,6 +159,8 @@ def main() -> int:
     print(f"score_update_updated: {updated}")
     print(f"score_update_skipped_no_page: {skipped}")
     print(f"score_update_failed: {failed}")
+    print(f"score_update_existing_page_id_count: {existing_page_id_count}")
+    print(f"score_update_url_lookup_count: {url_lookup_count}")
     print(f"missing_score_properties: {json.dumps(sorted(missing_props), ensure_ascii=False)}")
     return 0
 

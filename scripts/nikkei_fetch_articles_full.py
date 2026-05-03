@@ -19,6 +19,7 @@ OUTPUT_JSON = Path('logs/nikkei_articles_full.json')
 FAILED_JSON = Path('logs/nikkei_articles_failed.json')
 FAILED_DIR = Path('logs/nikkei_failed_articles')
 SUMMARY_JSON = Path('logs/nikkei_fetch_summary.json')
+INVENTORY_JSON = Path('logs/nikkei_issue_run_inventory.json')
 
 MAX_ARTICLES = int(os.getenv('NIKKEI_MAX_ARTICLES_TO_FETCH', '0'))
 SLEEP_SECONDS = float(os.getenv('NIKKEI_FETCH_SLEEP_SECONDS', '1.0'))
@@ -57,23 +58,43 @@ def notion_req(url, payload):
         return r.json()
 
 
+def _extract_text_property(prop: dict) -> str:
+    ptype = prop.get('type')
+    if ptype == 'title':
+        return ''.join(x.get('plain_text', '') for x in prop.get('title', []))
+    if ptype == 'rich_text':
+        return ''.join(x.get('plain_text', '') for x in prop.get('rich_text', []))
+    if ptype == 'url':
+        return prop.get('url') or ''
+    if ptype == 'select':
+        return (prop.get('select') or {}).get('name', '')
+    if ptype == 'date':
+        return (prop.get('date') or {}).get('start', '')
+    if ptype == 'number':
+        n = prop.get('number')
+        return '' if n is None else str(n)
+    return ''
+
+
 def fetch_existing():
     if not (SKIP_EXISTING and NOTION_TOKEN and DB):
-        return set(), False
+        return set(), {}, False
     meta = requests.get(f'https://api.notion.com/v1/databases/{DB}', headers=notion_headers(), timeout=60).json()
     props = meta.get('properties', {})
     if 'URL' not in props:
         print('WARNING: URL property missing; disable skip existing')
-        return set(), False
+        return set(), {}, False
     cur = None
     keys = set()
+    existing_map = {}
     while True:
         payload = {'page_size': PAGE_SIZE}
         if cur:
             payload['start_cursor'] = cur
         d = notion_req(f'https://api.notion.com/v1/databases/{DB}/query', payload)
         for it in d.get('results', []):
-            p = it.get('properties', {}).get('URL', {})
+            item_props = it.get('properties', {})
+            p = item_props.get('URL', {})
             u = ''
             if p.get('type') == 'url':
                 u = p.get('url') or ''
@@ -82,10 +103,20 @@ def fetch_existing():
             if u:
                 keys.add(normalize_nikkei_article_key(u))
                 keys.add(u)
+                existing_map[u] = {
+                    'page_id': it.get('id', ''),
+                    'url': u,
+                    'title': _extract_text_property(item_props.get('Name', {})) or _extract_text_property(item_props.get('Title', {})),
+                    'issue_date': _extract_text_property(item_props.get('Issue Date', {})) or _extract_text_property(item_props.get('Published Date', {})),
+                    'edition': _extract_text_property(item_props.get('Edition', {})),
+                    'text': _extract_text_property(item_props.get('Body', {})) or _extract_text_property(item_props.get('Summary', {})) or _extract_text_property(item_props.get('Content', {})),
+                    'importance_score': _extract_text_property(item_props.get('Importance Score', {})),
+                    'source': 'notion_existing',
+                }
         if not d.get('has_more'):
             break
         cur = d.get('next_cursor')
-    return keys, True
+    return keys, existing_map, True
 
 
 def detect_walls(text: str):
@@ -175,7 +206,7 @@ def main():
     if MAX_ARTICLES > 0:
         arts = arts[:MAX_ARTICLES]
     article_count_after_pre_filter = len(arts)
-    keys, enabled = fetch_existing()
+    keys, existing_map, enabled = fetch_existing()
     skipped = []
     if enabled:
         keep = []
@@ -188,6 +219,10 @@ def main():
     existing_url_skip_count = len(skipped)
     target_count = len(arts)
     Path('logs/nikkei_articles_skipped_existing.json').write_text(json.dumps(skipped, ensure_ascii=False, indent=2), encoding='utf-8')
+    inventory = []
+    for a in skipped:
+        ex = existing_map.get(a['url'], {})
+        inventory.append({'url': a['url'], 'title': a.get('title', ''), 'status': 'existing_in_notion', 'page_id': ex.get('page_id', ''), 'has_existing_body': bool(ex.get('text')), 'source': 'notion_existing', 'notion_existing': ex})
 
     res, fail = [], []
     retry_without_resource_block_success = False
@@ -229,6 +264,7 @@ def main():
                         'issue_date': a.get('issue_date', ''), 'edition': a.get('edition', ''), 'page_title': page_title,
                         'text_length': len(text), 'text': text, 'selector_used': best.get('selector', ''), 'selector_candidates': selector_logs,
                     })
+                    inventory.append({'url': a['url'], 'title': a.get('title', ''), 'status': 'fetched_new', 'page_id': '', 'has_existing_body': False, 'source': 'fetch_new'})
                     ok = True
                     break
                 except Exception as e:
@@ -264,6 +300,8 @@ def main():
                             'reason': 'empty_body' if len(text) == 0 else ('too_short' if 0 < len(text) < MIN_LEN else type(e).__name__),
                             'status_code': None,
                         })
+                        reason = 'failed_timeout' if is_timeout else ('failed_access_denied' if access_denied else ('failed_empty_body' if len(text) == 0 else 'failed_other'))
+                        inventory.append({'url': a['url'], 'title': a.get('title', ''), 'status': reason, 'page_id': '', 'has_existing_body': False, 'source': 'fetch_failed', 'final_url': page.url if page else '', 'artifact_path': {'html': html_path, 'screenshot': png_path, 'text': txt_path}})
                 finally:
                     c.close()
             time.sleep(SLEEP_SECONDS)
@@ -273,6 +311,7 @@ def main():
 
     OUTPUT_JSON.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding='utf-8')
     FAILED_JSON.write_text(json.dumps(fail, ensure_ascii=False, indent=2), encoding='utf-8')
+    INVENTORY_JSON.write_text(json.dumps(inventory, ensure_ascii=False, indent=2), encoding='utf-8')
     only_failed = [x for x in fail if x.get('status') == 'failed']
     reason_counts = Counter((x.get('reason') or x.get('error_type') or 'unknown') for x in only_failed)
     fetch_success_count = len(res)
@@ -300,6 +339,10 @@ def main():
         'failure_reason_counts': dict(reason_counts),
         'failed_json_path': str(FAILED_JSON),
         'failed_artifacts_dir': str(FAILED_DIR),
+        'issue_inventory_count': len(inventory),
+        'inventory_existing_in_notion_count': sum(1 for x in inventory if x.get('status') == 'existing_in_notion'),
+        'inventory_fetched_new_count': sum(1 for x in inventory if x.get('status') == 'fetched_new'),
+        'inventory_failed_count': sum(1 for x in inventory if str(x.get('status', '')).startswith('failed_')),
     }
     SUMMARY_JSON.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
     print('raw_article_count:', summary['raw_article_count'])
