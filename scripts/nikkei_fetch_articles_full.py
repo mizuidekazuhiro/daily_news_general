@@ -2,6 +2,7 @@ import json
 import os
 import re
 import time
+from collections import Counter
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -87,45 +88,54 @@ def fetch_existing():
 
 
 def detect_walls(text: str):
-    login_markers = ['ログイン', '会員登録', '無料会員', '続きは会員限定', 'この記事は会員限定']
-    paid_markers = ['有料会員限定', 'この記事は有料会員限定', '購読', '日経電子版を購読']
-    return any(x in text for x in login_markers), any(x in text for x in paid_markers)
+    login_markers = ['ログイン', '会員登録', 'ログインしてください', '日経ID']
+    paid_markers = ['有料会員', '続きは会員限定', 'この記事は会員限定', '購読']
+    access_markers = ['Access Denied', 'Forbidden', '403', 'Bot', '不正なアクセス']
+    return (
+        any(x in text for x in login_markers),
+        any(x in text for x in paid_markers),
+        any(x in text for x in access_markers),
+    )
+
+
+def looks_like_noise(text: str) -> bool:
+    if not text.strip():
+        return True
+    noise_markers = ['メニュー', 'サイトマップ', '利用規約', 'プライバシー', 'ページが見つかりません', 'エラー']
+    if len(text) < MIN_LEN and sum(m in text for m in noise_markers) >= 2:
+        return True
+    if re.search(r'(ログイン|会員登録).{0,120}(ログイン|会員登録)', text):
+        return True
+    return False
 
 
 def select_text_with_candidates(page):
-    script = """() => {
+    script = r'''() => {
       const title = document.querySelector('h1')?.innerText?.trim() || document.title || '';
       const cands = [
+        ['div.cmn-section.cmn-indent','div.cmn-section.cmn-indent'],
         ['article','article'],
         ['main','main'],
-        ['data-track-article-body','[data-track-article-body]'],
-        ['cmn-section','.cmn-section'],
-        ['articleBody','.articleBody'],
-        ['article-body','.article-body'],
-        ['body-class','.body'],
+        ['.cmn-section','.cmn-section'],
+        ['[data-track-article-body]','[data-track-article-body]'],
+        ['.articleBody','.articleBody'],
+        ['.article-body','.article-body']
       ];
       const out = [];
       for (const [name, sel] of cands) {
         const txt = Array.from(document.querySelectorAll(sel)).map(x => x.innerText || '').join('\n').trim();
-        out.push({selector: name, text: txt, text_length: txt.length});
+        out.push({selector: name, text: txt, text_length: txt.length, preview: txt.slice(0, 240)});
       }
-      const h1 = document.querySelector('h1');
-      let h1Parent = '';
-      if (h1) {
-        const p = h1.closest('article,main,section,div');
-        h1Parent = (p?.innerText || '').trim();
-      }
-      out.push({selector: 'h1_parent', text: h1Parent, text_length: h1Parent.length});
       let bodyText = (document.body?.innerText || '').trim();
       bodyText = bodyText.replace(/メニュー[\s\S]{0,400}?ログイン/g, '');
-      out.push({selector: 'document_body_fallback', text: bodyText, text_length: bodyText.length});
-      return {title, candidates: out};
-    }"""
+      out.push({selector: 'document.body.innerText fallback', text: bodyText, text_length: bodyText.length, preview: bodyText.slice(0, 240)});
+      return {title, candidates: out, pageText: bodyText};
+    }'''
     data = page.evaluate(script)
     candidates = data.get('candidates', [])
-    filtered = [c for c in candidates if c.get('text_length', 0) > 0]
-    best = max(filtered, key=lambda x: x.get('text_length', 0)) if filtered else {'selector': 'none', 'text': '', 'text_length': 0}
-    return data.get('title', ''), candidates, best
+    valid = [c for c in candidates if c.get('text_length', 0) > 0 and not looks_like_noise(c.get('text', ''))]
+    best = max(valid, key=lambda x: x.get('text_length', 0)) if valid else {'selector': 'none', 'text': '', 'text_length': 0}
+    return data.get('title', ''), candidates, best, data.get('pageText', '')
 
 
 def should_exclude_by_body(title, text):
@@ -174,6 +184,7 @@ def main():
     Path('logs/nikkei_articles_skipped_existing.json').write_text(json.dumps(skipped, ensure_ascii=False, indent=2), encoding='utf-8')
 
     res, fail = [], []
+    retry_without_resource_block_success = False
     with sync_playwright() as p:
         b = p.chromium.launch(headless=True)
         for i, a in enumerate(arts, 1):
@@ -185,23 +196,28 @@ def main():
                 if use_block:
                     c.route('**/*', lambda route, req: route.abort() if req.resource_type in {'image', 'media', 'font', 'stylesheet'} else route.continue_())
                 page = c.new_page()
+                selector_logs = []
                 try:
                     page.goto(a['url'], wait_until='domcontentloaded', timeout=GOTO_TIMEOUT)
                     page.wait_for_timeout(WAIT_AFTER)
-                    page_title, selector_logs, best = select_text_with_candidates(page)
+                    page_title, selector_logs, best, page_text = select_text_with_candidates(page)
                     text = (best.get('text') or '').strip()
-                    login_wall, paid_wall = detect_walls(text)
+                    login_wall, paid_wall, access_denied = detect_walls(text + '\n' + page_text)
+                    empty_body = len(text) == 0
+                    too_short = len(text) < MIN_LEN
                     ex, r = should_exclude_by_body(a.get('title', ''), text)
                     if ex:
                         fail.append({'status': 'excluded', 'exclude_reason': r, 'url': a['url'], 'source_title': a.get('title', '')})
                         ok = True
                         break
-                    if len(text) < MIN_LEN and not login_wall and not paid_wall and len(text) >= 40:
-                        status = 'success_short'
-                    elif len(text) < MIN_LEN:
+                    if looks_like_noise(text) and too_short:
+                        raise RuntimeError('noise_or_empty_body')
+                    if too_short and not (len(text) >= 40 and not login_wall and not paid_wall and not access_denied):
                         raise RuntimeError('too_short')
-                    else:
-                        status = 'success'
+                    status = 'success_short' if too_short else 'success'
+                    if RETRY_WITHOUT_BLOCK and (not use_block) and t == attempts - 1:
+                        print('retry_without_resource_block_success: true')
+                        retry_without_resource_block_success = True
                     res.append({
                         'status': status, 'source_title': a.get('title', ''), 'url': a['url'], 'issue_url': a.get('issue_url', ''),
                         'issue_date': a.get('issue_date', ''), 'edition': a.get('edition', ''), 'page_title': page_title,
@@ -214,23 +230,29 @@ def main():
                         page_title = ''
                         selector_used = ''
                         text = ''
-                        login_wall, paid_wall = False, False
+                        page_text = ''
+                        login_wall, paid_wall, access_denied = False, False, False
                         try:
-                            page_title, selector_logs, best = select_text_with_candidates(page)
+                            page_title, selector_logs, best, page_text = select_text_with_candidates(page)
                             selector_used = best.get('selector', '')
                             text = (best.get('text') or '').strip()
-                            login_wall, paid_wall = detect_walls(text)
+                            login_wall, paid_wall, access_denied = detect_walls(text + '\n' + page_text)
                         except Exception:
                             selector_logs = []
                         html_path, png_path, txt_path = save_failure_artifacts(page, i)
+                        is_timeout = isinstance(e, PlaywrightTimeoutError)
                         fail.append({
                             'status': 'failed', 'url': a['url'], 'source_title': a.get('title', ''), 'attempt_count': attempts,
                             'final_page_url': page.url if page else '', 'error_type': type(e).__name__, 'error_message': str(e),
                             'text_length': len(text), 'page_title': page_title, 'body_text_preview': text[:500],
-                            'is_login_wall_detected': login_wall, 'is_paid_article_wall_detected': paid_wall,
                             'selector_used': selector_used, 'selector_candidates': selector_logs,
+                            'is_login_wall_detected': login_wall, 'is_paid_article_wall_detected': paid_wall,
+                            'is_access_denied_detected': access_denied, 'is_timeout': is_timeout,
+                            'is_empty_body': len(text) == 0, 'is_too_short': 0 < len(text) < MIN_LEN,
+                            'block_heavy_resources': BLOCK_HEAVY,
+                            'retried_without_resource_block': RETRY_WITHOUT_BLOCK,
+                            'final_attempt_without_resource_block': RETRY_WITHOUT_BLOCK and (not use_block) and t == attempts - 1,
                             'screenshot_path': png_path, 'html_path': html_path, 'text_path': txt_path,
-                            'block_heavy_resources': use_block,
                         })
                 finally:
                     c.close()
@@ -241,9 +263,17 @@ def main():
 
     OUTPUT_JSON.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding='utf-8')
     FAILED_JSON.write_text(json.dumps(fail, ensure_ascii=False, indent=2), encoding='utf-8')
+    reason_counts = Counter(x.get('error_type', 'unknown') for x in fail if x.get('status') == 'failed')
     print('target_count:', len(arts))
     print('success_count:', len(res))
     print('failed_count:', len([x for x in fail if x.get('status') != 'excluded']))
+    print('failure_reason_counts:', dict(reason_counts))
+    print('login_wall_count:', sum(1 for x in fail if x.get('is_login_wall_detected')))
+    print('paid_wall_count:', sum(1 for x in fail if x.get('is_paid_article_wall_detected')))
+    print('access_denied_count:', sum(1 for x in fail if x.get('is_access_denied_detected')))
+    print('timeout_count:', sum(1 for x in fail if x.get('is_timeout')))
+    print('too_short_count:', sum(1 for x in fail if x.get('is_too_short')))
+    print('empty_body_count:', sum(1 for x in fail if x.get('is_empty_body')))
 
 
 if __name__ == '__main__':

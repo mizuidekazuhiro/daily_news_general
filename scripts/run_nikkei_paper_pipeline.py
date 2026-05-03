@@ -47,6 +47,21 @@ def main() -> int:
         return 1
 
     step_fetch = run([sys.executable, "scripts/nikkei_fetch_articles_full.py"])
+
+    fetch_success_count = read_count("nikkei_articles_full.json")
+    fetch_failed_count = read_count("nikkei_articles_failed.json")
+    failed_json_path = str(LOGS / "nikkei_articles_failed.json")
+    failed_artifacts_dir = str(LOGS / "nikkei_failed_articles")
+    allow_empty_fetch = os.getenv("NIKKEI_ALLOW_EMPTY_FETCH", "false").lower() == "true"
+    if article_count > 0 and fetch_success_count == 0 and not allow_empty_fetch:
+        print(f"article_count: {article_count}")
+        print(f"fetch_success_count: {fetch_success_count}")
+        print(f"fetch_failed_count: {fetch_failed_count}")
+        print(f"failed_json_path: {failed_json_path}")
+        print(f"failed_artifacts_dir: {failed_artifacts_dir}")
+        print("ERROR: fetch_success_count=0 while article_count>0. Stop before save/scoring.")
+        return 1
+
     step_save = run([sys.executable, "scripts/nikkei_save_articles_to_notion.py"])
 
     step_score = 0.0
@@ -59,8 +74,6 @@ def main() -> int:
         if notion_update_enabled:
             step_update = run([sys.executable, "scripts/nikkei_update_notion_scores.py"])
 
-    fetch_success_count = read_count("nikkei_articles_full.json")
-    fetch_failed_count = read_count("nikkei_articles_failed.json")
     scored_article_count, top_importance_score, warning_count = read_score_summary()
 
     print(f"article_count: {article_count}")

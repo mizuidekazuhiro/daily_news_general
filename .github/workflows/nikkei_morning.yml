@@ -70,6 +70,8 @@ jobs:
       NIKKEI_ARTICLE_WAIT_AFTER_LOAD_MS: "800"
       NIKKEI_ARTICLE_EXTRACT_RETRIES: "3"
       NIKKEI_MIN_ARTICLE_TEXT_LENGTH: "120"
+      NIKKEI_RETRY_WITHOUT_RESOURCE_BLOCK_ON_FAILURE: "true"
+      NIKKEI_ALLOW_EMPTY_FETCH: "false"
       NIKKEI_RULES_SOURCE: "notion"
       NIKKEI_RULES_FILTER_RULE_TYPES: "country,sector,importance"
       NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT: "5"
@@ -90,3 +92,14 @@ jobs:
           Path('.storage/nikkei_storage_state.json').write_text(os.environ['NIKKEI_SESSION_STATE_JSON'],encoding='utf-8')
           P
       - run: python scripts/run_nikkei_paper_pipeline.py
+
+      - name: Upload Nikkei debug logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nikkei-debug-logs
+          path: |
+            logs/**/*.json
+            logs/**/*.txt
+            logs/**/*.html
+            logs/**/*.png
