@@ -57,7 +57,7 @@ jobs:
       NIKKEI_ENABLE_PRE_TITLE_FILTER: ${{ github.event_name == 'workflow_dispatch' && inputs.pre_title_filter || 'true' }}
       NIKKEI_BLOCK_HEAVY_RESOURCES: ${{ github.event_name == 'workflow_dispatch' && inputs.block_heavy_resources || 'true' }}
       NIKKEI_ENABLE_SCORING: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_scoring || 'true' }}
-      NIKKEI_ENABLE_NOTION_SCORE_UPDATE: "false"
+      NIKKEI_ENABLE_NOTION_SCORE_UPDATE: "true"
       NIKKEI_MORNING_URL: https://www.nikkei.com/paper/
       NIKKEI_USE_DIRECT_ISSUE_URL: "true"
       NIKKEI_ALLOW_DIRECT_FALLBACK: "false"
@@ -73,6 +73,7 @@ jobs:
       NIKKEI_RULES_SOURCE: "notion"
       NIKKEI_RULES_FILTER_RULE_TYPES: "country,sector,importance"
       NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT: "5"
+      NIKKEI_ALLOW_DEFAULT_RULES_DB_FALLBACK: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

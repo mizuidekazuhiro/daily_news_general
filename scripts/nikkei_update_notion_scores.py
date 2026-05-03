@@ -2,6 +2,7 @@ import json
 import os
 import time
 from pathlib import Path
+from typing import Any
 
 import requests
 from dotenv import load_dotenv
@@ -9,93 +10,147 @@ from dotenv import load_dotenv
 load_dotenv()
 
 INPUT_JSON = Path("logs/nikkei_articles_scored.json")
-NOTION_TOKEN = os.getenv("NOTION_TOKEN", "").strip()
-DATABASE_ID = (os.getenv("NIKKEI_ARTICLES_DB_ID", "") or os.getenv("NOTION_ARTICLE_DB_ID", "")).strip()
-ENABLED = os.getenv("NIKKEI_ENABLE_NOTION_SCORE_UPDATE", "false").lower() == "true"
 NOTION_VERSION = "2022-06-28"
 
 
-def headers():
+def env_bool(name: str, default: str) -> bool:
+    return os.getenv(name, default).strip().lower() == "true"
+
+
+def notion_headers(token: str) -> dict[str, str]:
     return {
-        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Authorization": f"Bearer {token}",
         "Notion-Version": NOTION_VERSION,
         "Content-Type": "application/json",
     }
 
 
-def req(method, url, **kwargs):
-    for i in range(6):
-        r = requests.request(method, url, headers=headers(), timeout=60, **kwargs)
-        if r.status_code == 429:
-            time.sleep(int(r.headers.get("Retry-After", "2")))
+def notion_req(token: str, method: str, url: str, **kwargs):
+    last = None
+    for _ in range(6):
+        resp = requests.request(method, url, headers=notion_headers(token), timeout=60, **kwargs)
+        last = resp
+        if resp.status_code == 429:
+            sleep_s = int(resp.headers.get("Retry-After", "2"))
+            time.sleep(max(1, sleep_s))
             continue
-        r.raise_for_status()
-        return r
-    r.raise_for_status()
+        resp.raise_for_status()
+        return resp
+    if last is not None:
+        last.raise_for_status()
 
 
-def query_by_url(url):
-    payload = {"filter": {"property": "URL", "url": {"equals": url}}, "page_size": 1}
-    r = req("POST", f"https://api.notion.com/v1/databases/{DATABASE_ID}/query", json=payload)
-    res = r.json().get("results", [])
-    return res[0] if res else None
+def rt(text: str) -> list[dict[str, Any]]:
+    return [{"text": {"content": text[:2000]}}] if text else []
 
 
-def db_props():
-    r = req("GET", f"https://api.notion.com/v1/databases/{DATABASE_ID}")
-    return r.json().get("properties", {})
+def build_props_payload(article: dict[str, Any], db_props: dict[str, Any], missing: set[str]) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+
+    def ptype(name: str) -> str:
+        return (db_props.get(name) or {}).get("type", "")
+
+    targets = ["Importance Score", "Priority", "Tags", "Reason to Read", "Matched Rules", "Exclude Candidate", "Exclude Reason"]
+    for t in targets:
+        if t not in db_props:
+            missing.add(t)
+
+    if ptype("Importance Score") == "number":
+        payload["Importance Score"] = {"number": float(article.get("importance_score") or 0)}
+    if ptype("Priority") == "number":
+        payload["Priority"] = {"number": int(article.get("priority") or 0)}
+
+    tags = [str(x) for x in article.get("tags", []) if str(x).strip()]
+    if ptype("Tags") == "multi_select":
+        payload["Tags"] = {"multi_select": [{"name": t[:100]} for t in tags]}
+    elif ptype("Tags") == "rich_text":
+        payload["Tags"] = {"rich_text": rt("、".join(tags))}
+
+    matched = [str(x) for x in article.get("matched_rules", []) if str(x).strip()]
+    if ptype("Matched Rules") == "multi_select":
+        payload["Matched Rules"] = {"multi_select": [{"name": t[:100]} for t in matched]}
+    elif ptype("Matched Rules") == "rich_text":
+        payload["Matched Rules"] = {"rich_text": rt("、".join(matched))}
+
+    if ptype("Reason to Read") == "rich_text":
+        payload["Reason to Read"] = {"rich_text": rt(str(article.get("reason_to_read") or ""))}
+    if ptype("Exclude Candidate") == "checkbox":
+        payload["Exclude Candidate"] = {"checkbox": bool(article.get("exclude_candidate", False))}
+    if ptype("Exclude Reason") == "rich_text":
+        payload["Exclude Reason"] = {"rich_text": rt(str(article.get("exclude_reason") or ""))}
+
+    return payload
 
 
-def to_multi(values):
-    return [{"name": str(v)[:100]} for v in values if str(v).strip()]
+def page_url_value(page_props: dict[str, Any], prop_name: str) -> str:
+    p = page_props.get(prop_name, {})
+    ptype = p.get("type")
+    if ptype == "url":
+        return p.get("url") or ""
+    if ptype == "rich_text":
+        return "".join(x.get("plain_text", "") for x in p.get("rich_text", []))
+    return ""
 
 
 def main() -> int:
-    if not ENABLED:
+    if not env_bool("NIKKEI_ENABLE_NOTION_SCORE_UPDATE", "false"):
         print("skip notion score update: NIKKEI_ENABLE_NOTION_SCORE_UPDATE=false")
         return 0
-    if not NOTION_TOKEN or not DATABASE_ID:
-        raise RuntimeError("NOTION_TOKEN / DB ID missing")
+
+    token = os.getenv("NOTION_TOKEN", "").strip()
+    db_id = (os.getenv("NIKKEI_ARTICLES_DB_ID", "") or os.getenv("NOTION_ARTICLE_DB_ID", "")).strip()
+    if not token or not db_id:
+        raise RuntimeError("NOTION_TOKEN / NIKKEI_ARTICLES_DB_ID(or NOTION_ARTICLE_DB_ID) missing")
     if not INPUT_JSON.exists():
-        raise FileNotFoundError(INPUT_JSON)
+        raise FileNotFoundError(f"{INPUT_JSON} がありません")
 
-    props = db_props()
+    db_resp = notion_req(token, "GET", f"https://api.notion.com/v1/databases/{db_id}")
+    db_props = db_resp.json().get("properties", {})
+    url_prop_candidates = [name for name, v in db_props.items() if v.get("type") in {"url", "rich_text"} and "url" in name.lower()]
+    if not url_prop_candidates:
+        raise RuntimeError("URL 検索可能なプロパティが見つかりません")
+
     items = json.loads(INPUT_JSON.read_text(encoding="utf-8"))
+    query_resp = notion_req(token, "POST", f"https://api.notion.com/v1/databases/{db_id}/query", json={"page_size": 100})
+    pages = query_resp.json().get("results", [])
+    url_index: dict[str, dict[str, Any]] = {}
+    for p in pages:
+        props = p.get("properties", {})
+        for pname in url_prop_candidates:
+            val = page_url_value(props, pname).strip()
+            if val:
+                url_index[val] = p
 
-    updated = 0
+    target_count = len(items)
+    found_pages = updated = skipped = failed = 0
+    missing_props: set[str] = set()
+
     for a in items:
-        url = a.get("url")
+        url = str(a.get("url") or "").strip()
         if not url:
+            skipped += 1
             continue
-        page = query_by_url(url)
+        page = url_index.get(url)
         if not page:
+            skipped += 1
             continue
-
-        payload = {}
-        def ptype(name): return props.get(name, {}).get("type")
-
-        if "Importance Score" in props and ptype("Importance Score") == "number":
-            payload["Importance Score"] = {"number": float(a.get("importance_score") or 0)}
-        if "Priority" in props and ptype("Priority") == "number":
-            payload["Priority"] = {"number": int(a.get("priority") or 0)}
-        if "Tags" in props:
-            if ptype("Tags") == "multi_select":
-                payload["Tags"] = {"multi_select": to_multi(a.get("tags", []))}
-            elif ptype("Tags") == "rich_text":
-                payload["Tags"] = {"rich_text": [{"text": {"content": ", ".join(a.get("tags", []))[:2000]}}]}
-        if "Reason to Read" in props and ptype("Reason to Read") == "rich_text":
-            payload["Reason to Read"] = {"rich_text": [{"text": {"content": str(a.get("reason_to_read") or "")[:2000]}}]}
-        if "Notes" in props and ptype("Notes") == "rich_text":
-            txt = f"exclude_candidate={a.get('exclude_candidate')} reason={a.get('exclude_reason','')}"
-            payload["Notes"] = {"rich_text": [{"text": {"content": txt[:2000]}}]}
-
+        found_pages += 1
+        payload = build_props_payload(a, db_props, missing_props)
         if not payload:
             continue
-        req("PATCH", f"https://api.notion.com/v1/pages/{page['id']}", json={"properties": payload})
-        updated += 1
-        time.sleep(0.25)
+        try:
+            notion_req(token, "PATCH", f"https://api.notion.com/v1/pages/{page['id']}", json={"properties": payload})
+            updated += 1
+            time.sleep(0.2)
+        except Exception:
+            failed += 1
 
-    print(f"updated notion pages: {updated}")
+    print(f"score_update_target_count: {target_count}")
+    print(f"score_update_found_pages: {found_pages}")
+    print(f"score_update_updated: {updated}")
+    print(f"score_update_skipped_no_page: {skipped}")
+    print(f"score_update_failed: {failed}")
+    print(f"missing_score_properties: {json.dumps(sorted(missing_props), ensure_ascii=False)}")
     return 0
 
 
