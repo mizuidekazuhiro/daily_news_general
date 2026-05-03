@@ -186,6 +186,39 @@ def score_article(article: dict[str, Any], rules: list[dict[str, Any]], min_repo
     return out
 
 
+def select_report_articles(
+    articles: list[dict[str, Any]],
+    selection_mode: str,
+    min_report_score: float,
+    top_rank: int,
+    include_ties: bool,
+) -> tuple[list[dict[str, Any]], float | None, str]:
+    mode = (selection_mode or "top_importance_rank").strip().lower()
+    candidates = [a for a in articles if a.get("importance_score") is not None]
+    if mode == "threshold":
+        selected = [a for a in candidates if float(a.get("importance_score", 0)) >= min_report_score]
+        return selected, min_report_score, "threshold"
+
+    ordered = sorted(
+        candidates,
+        key=lambda a: (
+            float(a.get("importance_score", 0)),
+            int(a.get("priority", 0)),
+            str(a.get("issue_date") or ""),
+            str(a.get("source_title") or a.get("page_title") or ""),
+        ),
+        reverse=True,
+    )
+    if top_rank <= 0 or len(ordered) <= top_rank:
+        return ordered, None, "top_importance_rank_with_ties" if include_ties else "top_importance_rank"
+
+    cutoff_score = float(ordered[top_rank - 1].get("importance_score", 0))
+    if include_ties:
+        selected = [a for a in ordered if float(a.get("importance_score", 0)) >= cutoff_score]
+        return selected, cutoff_score, "top_importance_rank_with_ties"
+    return ordered[:top_rank], cutoff_score, "top_importance_rank"
+
+
 def main() -> int:
     enable_scoring = env_bool("NIKKEI_ENABLE_SCORING", "true")
     if not enable_scoring:
@@ -199,6 +232,9 @@ def main() -> int:
 
     rule_types = {x.strip().lower() for x in os.getenv("NIKKEI_RULES_FILTER_RULE_TYPES", "country,sector,importance").split(",") if x.strip()}
     min_report_score = float(os.getenv("NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT", "5"))
+    report_selection_mode = os.getenv("NIKKEI_REPORT_SELECTION_MODE", "top_importance_rank")
+    report_top_rank = int(os.getenv("NIKKEI_REPORT_TOP_IMPORTANCE_RANK", "5"))
+    report_include_ties = env_bool("NIKKEI_REPORT_INCLUDE_TIES", "true")
 
     rules = load_rules(token, rules_db_id, rule_types)
     fetched_articles = json.loads(INPUT_JSON.read_text(encoding="utf-8")) if INPUT_JSON.exists() else []
@@ -227,6 +263,24 @@ def main() -> int:
     scored = [score_article(a, rules, min_report_score) for a in articles]
     scored.sort(key=lambda x: (x.get("exclude_candidate", False), -float(x.get("importance_score", 0)), -int(x.get("priority", 0)), -int(x.get("text_length", 0))))
 
+    selected, cutoff_score, selection_mode_used = select_report_articles(
+        scored,
+        selection_mode=report_selection_mode,
+        min_report_score=min_report_score,
+        top_rank=report_top_rank,
+        include_ties=report_include_ties,
+    )
+    selected_urls = {str(a.get("url") or "") for a in selected}
+    for a in scored:
+        included = str(a.get("url") or "") in selected_urls
+        a["included_in_report"] = included
+        if included:
+            a["report_selection_reason"] = "top_importance_rank_or_tie" if selection_mode_used != "threshold" else "above_threshold"
+            a["report_excluded_reason"] = ""
+        else:
+            a["report_selection_reason"] = ""
+            a["report_excluded_reason"] = "below_top_rank_cutoff" if selection_mode_used != "threshold" else "below_threshold"
+
     OUTPUT_JSON.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_JSON.write_text(json.dumps(scored, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -254,13 +308,25 @@ def main() -> int:
         "scoring_input_saved_body_count": sum(1 for a in existing_articles if str(a.get('text') or '').strip()),
         "scoring_input_title_only_count": sum(1 for a in articles if not str(a.get('text') or '').strip() and str(a.get('source_title') or a.get('page_title') or '').strip()),
         "scoring_input_total_count": len(articles),
+        "report_selection_mode": selection_mode_used,
+        "report_top_rank": report_top_rank,
+        "report_include_ties": report_include_ties,
+        "report_candidate_count": len([a for a in scored if a.get("importance_score") is not None]),
+        "report_selected_count": len(selected),
+        "report_cutoff_importance_score": cutoff_score,
+        "selected_article_titles": [str(a.get("source_title") or a.get("page_title") or "") for a in selected],
+        "selected_article_scores": [float(a.get("importance_score", 0)) for a in selected],
+        "excluded_article_count": max(0, len(scored) - len(selected)),
+        "excluded_reason": "below_top_rank_cutoff" if selection_mode_used != "threshold" else "below_threshold",
     }
     SUMMARY_JSON.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
     for k, v in summary.items():
         print(f"{k}: {json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v}")
-    if scored and summary["max_importance_score"] < min_report_score:
+    if scored and selection_mode_used == "threshold" and summary["max_importance_score"] < min_report_score:
         print(f"WARNING: top_importance_score={summary['max_importance_score']} is below report threshold={min_report_score}. Rules may not be matching.")
+    if summary["report_candidate_count"] < report_top_rank:
+        print(f"INFO: report candidates are fewer than top rank. candidate_count={summary['report_candidate_count']} top_rank={report_top_rank}")
     return 0
 
 

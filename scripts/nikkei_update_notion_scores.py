@@ -50,7 +50,7 @@ def build_props_payload(article: dict[str, Any], db_props: dict[str, Any], missi
     def ptype(name: str) -> str:
         return (db_props.get(name) or {}).get("type", "")
 
-    targets = ["Importance Score", "Priority", "Tags", "Reason to Read", "Matched Rules", "Exclude Candidate", "Exclude Reason"]
+    targets = ["Importance Score", "Priority", "Tags", "Reason to Read", "Matched Rules", "Exclude Candidate", "Exclude Reason", "Included in Report", "Report Selection Reason", "Report Excluded Reason"]
     for t in targets:
         if t not in db_props:
             missing.add(t)
@@ -78,6 +78,12 @@ def build_props_payload(article: dict[str, Any], db_props: dict[str, Any], missi
         payload["Exclude Candidate"] = {"checkbox": bool(article.get("exclude_candidate", False))}
     if ptype("Exclude Reason") == "rich_text":
         payload["Exclude Reason"] = {"rich_text": rt(str(article.get("exclude_reason") or ""))}
+    if ptype("Included in Report") == "checkbox":
+        payload["Included in Report"] = {"checkbox": bool(article.get("included_in_report", False))}
+    if ptype("Report Selection Reason") == "rich_text":
+        payload["Report Selection Reason"] = {"rich_text": rt(str(article.get("report_selection_reason") or ""))}
+    if ptype("Report Excluded Reason") == "rich_text":
+        payload["Report Excluded Reason"] = {"rich_text": rt(str(article.get("report_excluded_reason") or ""))}
 
     return payload
 
