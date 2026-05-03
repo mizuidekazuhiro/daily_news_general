@@ -22,6 +22,7 @@ SUMMARY_JSON = Path('logs/nikkei_fetch_summary.json')
 INVENTORY_JSON = Path('logs/nikkei_issue_run_inventory.json')
 
 MAX_ARTICLES = int(os.getenv('NIKKEI_MAX_ARTICLES_TO_FETCH', '0'))
+MAX_ARTICLE_ATTEMPTS = int(os.getenv('NIKKEI_MAX_ARTICLE_ATTEMPTS', '0'))
 SLEEP_SECONDS = float(os.getenv('NIKKEI_FETCH_SLEEP_SECONDS', '1.0'))
 MIN_LEN = int(os.getenv('NIKKEI_MIN_ARTICLE_TEXT_LENGTH', '120'))
 RETRIES = int(os.getenv('NIKKEI_ARTICLE_EXTRACT_RETRIES', '3'))
@@ -279,9 +280,8 @@ def main():
     raw_arts = json.loads(INPUT_PATH.read_text(encoding='utf-8')) if INPUT_PATH.exists() else []
     arts = list(raw_arts)
     raw_article_count = len(raw_arts)
-    if MAX_ARTICLES > 0:
-        arts = arts[:MAX_ARTICLES]
-    article_count_after_pre_filter = len(arts)
+    max_success_articles = MAX_ARTICLES
+    max_article_attempts = MAX_ARTICLE_ATTEMPTS
     notion_diag = {}
     try:
         keys, existing_map, enabled, props, notion_diag = fetch_existing()
@@ -309,6 +309,7 @@ def main():
         arts, keys, existing_map, SKIP_EXISTING, BACKFILL_EXISTING_EMPTY_BODY
     )
     existing_url_skip_count = len(skipped)
+    pre_excluded_count = len(raw_arts) - len(arts)
     target_count = len(arts)
     compare_logs = []
     for idx, a in enumerate(raw_arts[:5]):
@@ -335,7 +336,13 @@ def main():
     retry_without_resource_block_success = False
     with sync_playwright() as p:
         b = p.chromium.launch(headless=True)
+        attempted_count = 0
         for i, a in enumerate(arts, 1):
+            if max_article_attempts > 0 and attempted_count >= max_article_attempts:
+                break
+            if max_success_articles > 0 and len(res) >= max_success_articles:
+                break
+            attempted_count += 1
             attempts = RETRIES + (1 if RETRY_WITHOUT_BLOCK else 0)
             ok = False
             for t in range(attempts):
@@ -433,6 +440,7 @@ def main():
     reason_counts = Counter((x.get('reason') or x.get('error_type') or 'unknown') for x in only_failed)
     fetch_success_count = len(res)
     fetch_failed_count = len(only_failed)
+    remaining_unattempted_count = max(target_count - attempted_count, 0)
     login_wall_count = sum(1 for x in only_failed if x.get('is_login_wall_detected'))
     paid_wall_count = sum(1 for x in only_failed if x.get('is_paid_article_wall_detected'))
     access_denied_count = sum(1 for x in only_failed if x.get('is_access_denied_detected'))
@@ -442,11 +450,15 @@ def main():
     backfill_failed_count = sum(1 for x in only_failed if x.get('existing_page'))
     summary = {
         'raw_article_count': raw_article_count,
-        'pre_excluded_count': max(raw_article_count - article_count_after_pre_filter, 0),
-        'article_count_after_pre_filter': article_count_after_pre_filter,
-        'article_count': article_count_after_pre_filter,
+        'pre_excluded_count': pre_excluded_count,
+        'article_count_after_pre_filter': len(arts),
+        'article_count': len(arts),
         'existing_url_skip_count': existing_url_skip_count,
         'target_count': target_count,
+        'max_success_articles': max_success_articles,
+        'max_article_attempts': max_article_attempts,
+        'attempted_count': attempted_count,
+        'remaining_unattempted_count': remaining_unattempted_count,
         'fetch_success_count': fetch_success_count,
         'fetch_failed_count': fetch_failed_count,
         'empty_body_count': empty_body_count,
@@ -494,7 +506,11 @@ def main():
     print('article_count_after_pre_filter:', summary['article_count_after_pre_filter'])
     print('article_count:', summary['article_count'])
     print('existing_url_skip_count:', summary['existing_url_skip_count'])
+    print('max_success_articles:', summary['max_success_articles'])
+    print('max_article_attempts:', summary['max_article_attempts'])
+    print('attempted_count:', summary['attempted_count'])
     print('target_count:', summary['target_count'])
+    print('remaining_unattempted_count:', summary['remaining_unattempted_count'])
     print('success_count:', summary['fetch_success_count'])
     print('failed_count:', summary['fetch_failed_count'])
     print('failure_reason_counts:', dict(reason_counts))
