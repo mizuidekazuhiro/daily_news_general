@@ -43,8 +43,23 @@ def read_fetch_summary() -> dict:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
-def should_fail_fetch(target_count: int, fetch_success_count: int, allow_empty_fetch: bool) -> bool:
-    return target_count > 0 and fetch_success_count == 0 and not allow_empty_fetch
+def decide_fetch_outcome(
+    *,
+    target_count: int,
+    fetch_success_count: int,
+    fetch_failed_count: int,
+    existing_url_skip_count: int,
+    allow_empty_fetch: bool,
+) -> tuple[str, str]:
+    if target_count == 0:
+        return "skip_no_targets", "all URLs already exist in Notion"
+    if fetch_success_count > 0:
+        return "continue", "at least one fetch target succeeded"
+    if existing_url_skip_count > 0:
+        return "continue", "all new targets failed but existing URL skips were present"
+    if allow_empty_fetch:
+        return "continue", "NIKKEI_ALLOW_EMPTY_FETCH=true"
+    return "fail", f"fetch_success_count=0 while target_count={target_count} failed_count={fetch_failed_count}"
 
 
 def main() -> int:
@@ -67,25 +82,44 @@ def main() -> int:
     empty_body_count = int(fetch_summary.get("empty_body_count", 0))
     failed_json_path = str(LOGS / "nikkei_articles_failed.json")
     failed_artifacts_dir = str(LOGS / "nikkei_failed_articles")
+    existing_url_skip_count = int(fetch_summary.get("existing_url_skip_count", 0))
+    too_short_count = int(fetch_summary.get("too_short_count", 0))
+    timeout_count = int(fetch_summary.get("timeout_count", 0))
     allow_empty_fetch = os.getenv("NIKKEI_ALLOW_EMPTY_FETCH", "false").lower() == "true"
-    if target_count == 0:
+    final_decision, final_reason = decide_fetch_outcome(
+        target_count=target_count,
+        fetch_success_count=fetch_success_count,
+        fetch_failed_count=fetch_failed_count,
+        existing_url_skip_count=existing_url_skip_count,
+        allow_empty_fetch=allow_empty_fetch,
+    )
+    if final_decision == "skip_no_targets":
         print("INFO: target_count=0 because all URLs already exist in Notion. Skip fetch/save without error.")
         step_save = 0.0
-    elif should_fail_fetch(target_count, fetch_success_count, allow_empty_fetch):
+    elif final_decision == "fail":
         print(f"article_count: {article_count}")
+        print(f"existing_url_skip_count: {existing_url_skip_count}")
         print(f"target_count: {target_count}")
         print(f"fetch_success_count: {fetch_success_count}")
         print(f"fetch_failed_count: {fetch_failed_count}")
         print(f"failure_reason_counts: {reason_counts}")
         print(f"empty_body_count: {empty_body_count}")
+        print(f"too_short_count: {too_short_count}")
+        print(f"timeout_count: {timeout_count}")
         print(f"failed_json_path: {failed_json_path}")
         print(f"failed_artifacts_dir: {failed_artifacts_dir}")
+        print(f"final_decision: {final_decision}")
+        print(f"final_decision_reason: {final_reason}")
         print(f"ERROR: fetch_success_count=0 while target_count={target_count}. failed_count={fetch_failed_count} reason_counts={reason_counts}. See {failed_json_path}")
         return 1
     else:
-        if target_count > 0 and fetch_failed_count > 0:
-            print(f"WARN: partial fetch failure. target_count={target_count} success_count={fetch_success_count} failed_count={fetch_failed_count}. Continue with successful articles.")
-        step_save = run([sys.executable, "scripts/nikkei_save_articles_to_notion.py"])
+        if target_count > 0 and fetch_success_count == 0 and existing_url_skip_count > 0:
+            print("WARN: all new fetch targets failed, but existing_url_skip_count>0. Continue without saving new articles.")
+            step_save = 0.0
+        else:
+            if target_count > 0 and fetch_failed_count > 0:
+                print(f"WARN: partial fetch failure. target_count={target_count} success_count={fetch_success_count} failed_count={fetch_failed_count}. Continue with successful articles.")
+            step_save = run([sys.executable, "scripts/nikkei_save_articles_to_notion.py"])
 
     step_score = 0.0
     step_update = 0.0
@@ -100,9 +134,18 @@ def main() -> int:
     scored_article_count, top_importance_score, warning_count = read_score_summary()
 
     print(f"article_count: {article_count}")
+    print(f"existing_url_skip_count: {existing_url_skip_count}")
     print(f"target_count: {target_count}")
     print(f"fetch_success_count: {fetch_success_count}")
     print(f"fetch_failed_count: {fetch_failed_count}")
+    print(f"failure_reason_counts: {reason_counts}")
+    print(f"empty_body_count: {empty_body_count}")
+    print(f"too_short_count: {too_short_count}")
+    print(f"timeout_count: {timeout_count}")
+    print(f"failed_json_path: {failed_json_path}")
+    print(f"failed_artifacts_dir: {failed_artifacts_dir}")
+    print(f"final_decision: {final_decision}")
+    print(f"final_decision_reason: {final_reason}")
     print(f"scored_article_count: {scored_article_count}")
     print(f"top_importance_score: {top_importance_score}")
     print(f"warning_count: {warning_count}")
