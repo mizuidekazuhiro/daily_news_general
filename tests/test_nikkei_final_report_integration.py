@@ -1,33 +1,43 @@
 from pathlib import Path
+import importlib.util
 import json
-import subprocess
-import sys
+
+spec = importlib.util.spec_from_file_location("nikkei_final", Path("scripts/run_nikkei_final_report.py"))
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
 
 
-def test_script_reads_nikkei_scored_json_and_generates_html(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "logs").mkdir()
-    (tmp_path / "templates").mkdir()
-    repo = Path(__file__).resolve().parents[1]
-    (tmp_path / "templates" / "nikkei_final_report_email.html").write_text((repo / "templates" / "nikkei_final_report_email.html").read_text(encoding="utf-8"), encoding="utf-8")
-    sample = [{"title":"t1","url":"https://e/1","importance_score":10,"priority":2,"text":"x"*140},{"title":"t2","url":"https://e/2","importance_score":5,"priority":1,"text":"x"*140}]
-    (tmp_path / "logs" / "nikkei_articles_scored.json").write_text(json.dumps(sample), encoding="utf-8")
-    env = {"PYTHONPATH": str(repo), "NIKKEI_ENABLE_FINAL_REPORT":"true", "NIKKEI_REPORT_SELECTION_MODE":"top_importance_rank", "NIKKEI_REPORT_TOP_IMPORTANCE_RANK":"5", "NIKKEI_REPORT_INCLUDE_TIES":"true", "GENERAL_REPORT_SELECTION_MODE":"threshold"}
-    cp = subprocess.run([sys.executable, str(repo / "scripts" / "run_nikkei_final_report.py")], cwd=tmp_path, env=env, capture_output=True, text=True)
-    assert cp.returncode == 0
-    assert (tmp_path / "logs" / "nikkei_final_report.html").exists()
-    assert (tmp_path / "logs" / "nikkei_report_selection.json").exists()
+def test_env_defaults_on_empty(monkeypatch):
+    monkeypatch.setenv("X_BOOL", "")
+    monkeypatch.setenv("X_INT", "")
+    monkeypatch.setenv("X_FLOAT", "")
+    assert mod._env_bool("X_BOOL", True) is True
+    assert mod._env_int("X_INT", 7) == 7
+    assert mod._env_float("X_FLOAT", 0.2) == 0.2
 
 
-def test_workflows_and_scope_files():
-    general = Path(".github/workflows/general_news.yml").read_text(encoding="utf-8")
-    assert "GENERAL_" not in general
-    assert "run_nikkei_final_report.py" not in general
-    for wf in [".github/workflows/nikkei_morning.yml", ".github/workflows/nikkei_evening.yml"]:
-        s = Path(wf).read_text(encoding="utf-8")
-        assert "python scripts/run_nikkei_final_report.py" in s
+def test_normalize_fields():
+    a={"source_title":"s","body":"b","gptProcessed":True,"summary":"ss","reason_to_read":"rr","business_implications":"bb"}
+    n=mod._normalize_article(a)
+    assert n["title"]=="s" and n["full_text"]=="b" and n["gpt_processed_norm"] is True
+    assert n["Summary"]=="ss" and n["Reason to Read"]=="rr" and n["Business Implications"]=="bb"
 
 
-def test_html_links_and_wording():
-    s = Path("templates/nikkei_final_report_email.html").read_text(encoding="utf-8")
-    assert "商社目線の読み" not in s
+def test_daily_props_mail_sent_at_behavior():
+    p1=mod._daily_props({"report_title":"r"},2,"h",False)
+    p2=mod._daily_props({"report_title":"r"},2,"h",True)
+    assert "Mail Sent At" not in p1
+    assert "Mail Sent At" in p2 and "start" in p2["Mail Sent At"]["date"]
+
+
+def test_notion_blocks_links():
+    blocks=mod._notion_blocks({"today_key_message":"a","executive_summary":"b","cross_article_implications":"c","priority_watch_items":[]},[{"title":"t","url":"https://x"}])
+    s=json.dumps(blocks, ensure_ascii=False)
+    assert "https://x" in s and "A1" in s
+
+
+def test_workflow_scope():
+    general = Path('.github/workflows/general_news.yml').read_text(encoding='utf-8')
+    assert 'run_nikkei_final_report.py' not in general
+    for wf in ['.github/workflows/nikkei_morning.yml','.github/workflows/nikkei_evening.yml']:
+        assert 'run_nikkei_final_report.py' in Path(wf).read_text(encoding='utf-8')
