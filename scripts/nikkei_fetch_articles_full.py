@@ -29,6 +29,8 @@ GOTO_TIMEOUT = int(os.getenv('NIKKEI_ARTICLE_GOTO_TIMEOUT_MS', '25000'))
 WAIT_AFTER = int(os.getenv('NIKKEI_ARTICLE_WAIT_AFTER_LOAD_MS', '800'))
 BLOCK_HEAVY = os.getenv('NIKKEI_BLOCK_HEAVY_RESOURCES', 'true').lower() == 'true'
 RETRY_WITHOUT_BLOCK = os.getenv('NIKKEI_RETRY_WITHOUT_RESOURCE_BLOCK_ON_FAILURE', 'true').lower() == 'true'
+ALLOW_META_DESCRIPTION_FALLBACK = os.getenv('NIKKEI_ALLOW_META_DESCRIPTION_FALLBACK', 'true').lower() == 'true'
+MIN_META_DESCRIPTION_LENGTH = int(os.getenv('NIKKEI_MIN_META_DESCRIPTION_LENGTH', '50'))
 
 SKIP_EXISTING = os.getenv('NIKKEI_SKIP_EXISTING_NOTION_URLS', 'true').lower() == 'true'
 BACKFILL_EXISTING_EMPTY_BODY = os.getenv('NIKKEI_BACKFILL_EXISTING_EMPTY_BODY', 'true').lower() == 'true'
@@ -169,30 +171,88 @@ def looks_like_noise(text: str) -> bool:
 
 def select_text_with_candidates(page):
     script = r'''() => {
-      const title = document.querySelector('h1')?.innerText?.trim() || document.title || '';
+      const title = document.querySelector('h1')?.innerText?.trim()
+        || document.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim()
+        || document.title || '';
+
       const cands = [
-        ['div.cmn-section.cmn-indent','div.cmn-section.cmn-indent'],
-        ['article','article'],
-        ['main','main'],
-        ['.cmn-section','.cmn-section'],
-        ['[data-track-article-body]','[data-track-article-body]'],
-        ['.articleBody','.articleBody'],
-        ['.article-body','.article-body']
+        ['div.cmn-section.cmn-indent','div.cmn-section.cmn-indent', 'selector'],
+        ['article','article', 'selector'],
+        ['main','main', 'selector'],
+        ['.cmn-section','.cmn-section', 'selector'],
+        ['div.cmn-section','div.cmn-section', 'selector'],
+        ['[data-track-article-body]','[data-track-article-body]', 'selector'],
+        ['.articleBody','.articleBody', 'selector'],
+        ['.article-body','.article-body', 'selector'],
+        ['#CONTENTS_MAIN','#CONTENTS_MAIN', 'selector'],
+        ['.newsText','.newsText', 'selector'],
+        ['.kiji','.kiji', 'selector']
       ];
+
       const out = [];
-      for (const [name, sel] of cands) {
+      for (const [name, sel, method] of cands) {
         const txt = Array.from(document.querySelectorAll(sel)).map(x => x.innerText || '').join('\n').trim();
-        out.push({selector: name, text: txt, text_length: txt.length, preview: txt.slice(0, 240)});
+        out.push({selector: name, extraction_method: method, text: txt, text_length: txt.length, preview: txt.slice(0, 240)});
       }
+
       let bodyText = (document.body?.innerText || '').trim();
       bodyText = bodyText.replace(/メニュー[\s\S]{0,400}?ログイン/g, '');
-      out.push({selector: 'document.body.innerText fallback', text: bodyText, text_length: bodyText.length, preview: bodyText.slice(0, 240)});
-      return {title, candidates: out, pageText: bodyText};
+      out.push({selector: 'document.body.innerText fallback', extraction_method: 'body_inner_text', text: bodyText, text_length: bodyText.length, preview: bodyText.slice(0, 240)});
+
+      let jsonLdText = '';
+      for (const node of Array.from(document.querySelectorAll('script[type="application/ld+json"]'))) {
+        try {
+          const data = JSON.parse(node.textContent || '{}');
+          const arr = Array.isArray(data) ? data : [data];
+          for (const item of arr) {
+            if (item && typeof item.articleBody === 'string' && item.articleBody.trim().length > jsonLdText.length) {
+              jsonLdText = item.articleBody.trim();
+            }
+          }
+        } catch (e) {}
+      }
+      out.push({selector: 'json-ld articleBody', extraction_method: 'json_ld_article_body', text: jsonLdText, text_length: jsonLdText.length, preview: jsonLdText.slice(0, 240)});
+
+      const ogDesc = document.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim() || '';
+      const metaDesc = document.querySelector('meta[name="description"]')?.getAttribute('content')?.trim() || '';
+      const ogTitle = document.querySelector('meta[property="og:title"]')?.getAttribute('content')?.trim() || title;
+
+      if (ogDesc) {
+        const combined = `タイトル: ${ogTitle}\n概要: ${ogDesc}`.trim();
+        out.push({selector: 'meta[property="og:description"]', extraction_method: 'og_description', text: combined, text_length: combined.length, preview: combined.slice(0, 240), meta_description_length: metaDesc.length, og_description_length: ogDesc.length});
+      }
+      if (metaDesc) {
+        const combined = `タイトル: ${ogTitle}\n概要: ${metaDesc}`.trim();
+        out.push({selector: 'meta[name="description"]', extraction_method: 'meta_description', text: combined, text_length: combined.length, preview: combined.slice(0, 240), meta_description_length: metaDesc.length, og_description_length: ogDesc.length});
+      }
+
+      return {title, candidates: out, pageText: bodyText, ogDescription: ogDesc, metaDescription: metaDesc};
     }'''
     data = page.evaluate(script)
     candidates = data.get('candidates', [])
+
+    selector_valid = [
+        c for c in candidates
+        if c.get('text_length', 0) >= MIN_LEN
+        and c.get('extraction_method') in {'selector', 'body_inner_text', 'json_ld_article_body'}
+        and not looks_like_noise(c.get('text', ''))
+    ]
+    if selector_valid:
+        best = max(selector_valid, key=lambda x: x.get('text_length', 0))
+        return data.get('title', ''), candidates, best, data.get('pageText', '')
+
+    if ALLOW_META_DESCRIPTION_FALLBACK:
+        meta_valid = [
+            c for c in candidates
+            if c.get('extraction_method') in {'og_description', 'meta_description'}
+            and c.get('text_length', 0) >= MIN_META_DESCRIPTION_LENGTH
+        ]
+        if meta_valid:
+            best = max(meta_valid, key=lambda x: x.get('text_length', 0))
+            return data.get('title', ''), candidates, best, data.get('pageText', '')
+
     valid = [c for c in candidates if c.get('text_length', 0) > 0 and not looks_like_noise(c.get('text', ''))]
-    best = max(valid, key=lambda x: x.get('text_length', 0)) if valid else {'selector': 'none', 'text': '', 'text_length': 0}
+    best = max(valid, key=lambda x: x.get('text_length', 0)) if valid else {'selector': 'none', 'extraction_method': 'none', 'text': '', 'text_length': 0}
     return data.get('title', ''), candidates, best, data.get('pageText', '')
 
 
@@ -292,7 +352,12 @@ def main():
                         raise RuntimeError('noise_or_empty_body')
                     if too_short and not (len(text) >= 40 and not login_wall and not paid_wall and not access_denied):
                         raise RuntimeError('too_short')
-                    status = 'success_short' if too_short else 'success'
+                    extraction_method = best.get('extraction_method', '') or best.get('selector', '')
+                    extraction_quality = 'meta_description_only' if extraction_method in {'og_description', 'meta_description'} else ('body_text' if extraction_method == 'body_inner_text' else 'full_text')
+                    if extraction_method in {'og_description', 'meta_description'}:
+                        status = 'success_meta_description_fallback'
+                    else:
+                        status = 'success_short' if too_short else 'success'
                     if RETRY_WITHOUT_BLOCK and (not use_block) and t == attempts - 1:
                         print('retry_without_resource_block_success: true')
                         retry_without_resource_block_success = True
@@ -300,6 +365,13 @@ def main():
                         'status': status, 'source_title': a.get('title', ''), 'url': a['url'], 'issue_url': a.get('issue_url', ''),
                         'issue_date': a.get('issue_date', ''), 'edition': a.get('edition', ''), 'page_title': page_title,
                         'text_length': len(text), 'text': text, 'selector_used': best.get('selector', ''), 'selector_candidates': selector_logs,
+                        'extraction_method': extraction_method,
+                        'extraction_quality': extraction_quality,
+                        'selector_lengths': {c.get('selector', ''): int(c.get('text_length', 0)) for c in selector_logs if c.get('selector')},
+                        'body_inner_text_length': next((int(c.get('text_length', 0)) for c in selector_logs if c.get('extraction_method') == 'body_inner_text'), 0),
+                        'json_ld_article_body_length': next((int(c.get('text_length', 0)) for c in selector_logs if c.get('extraction_method') == 'json_ld_article_body'), 0),
+                        'og_description_length': next((int(c.get('og_description_length', c.get('text_length', 0))) for c in selector_logs if c.get('extraction_method') == 'og_description'), 0),
+                        'meta_description_length': next((int(c.get('meta_description_length', c.get('text_length', 0))) for c in selector_logs if c.get('extraction_method') == 'meta_description'), 0),
                     }
                     ex = existing_map.get(a['url'], {})
                     if ex.get('page_id'):
@@ -333,7 +405,12 @@ def main():
                             'final_page_url': page.url if page else '', 'final_url': page.url if page else '', 'error_type': type(e).__name__, 'error_message': str(e),
                             'text_length': len(text), 'body_length': len(text), 'page_title': page_title, 'body_text_preview': text[:500],
                             'selector_used': selector_used, 'selector_candidates': selector_logs,
+                            'extraction_method': best.get('extraction_method', '') if 'best' in locals() else '',
                             'selector_lengths': {c.get('selector', ''): int(c.get('text_length', 0)) for c in selector_logs if c.get('selector')},
+                            'body_inner_text_length': next((int(c.get('text_length', 0)) for c in selector_logs if c.get('extraction_method') == 'body_inner_text'), 0),
+                            'json_ld_article_body_length': next((int(c.get('text_length', 0)) for c in selector_logs if c.get('extraction_method') == 'json_ld_article_body'), 0),
+                            'og_description_length': next((int(c.get('og_description_length', c.get('text_length', 0))) for c in selector_logs if c.get('extraction_method') == 'og_description'), 0),
+                            'meta_description_length': next((int(c.get('meta_description_length', c.get('text_length', 0))) for c in selector_logs if c.get('extraction_method') == 'meta_description'), 0),
                             'is_login_wall_detected': login_wall, 'is_paid_article_wall_detected': paid_wall,
                             'is_access_denied_detected': access_denied, 'is_timeout': is_timeout,
                             'is_empty_body': len(text) == 0, 'is_too_short': 0 < len(text) < MIN_LEN,
@@ -367,6 +444,7 @@ def main():
     access_denied_count = sum(1 for x in only_failed if x.get('is_access_denied_detected'))
     timeout_count = sum(1 for x in only_failed if x.get('is_timeout'))
     empty_body_count = sum(1 for x in only_failed if x.get('is_empty_body'))
+    meta_description_fallback_count = sum(1 for x in res if x.get('extraction_method') in {'og_description', 'meta_description'} or x.get('status') == 'success_meta_description_fallback')
     backfill_success_count = sum(1 for x in res if x.get('source') == 'backfill_existing')
     backfill_failed_count = sum(1 for x in only_failed if x.get('existing_page'))
     summary = {
@@ -398,6 +476,10 @@ def main():
         'backfill_success_count': backfill_success_count,
         'backfill_failed_count': backfill_failed_count,
         'backfill_updated_existing_page_count': backfill_success_count,
+        'meta_description_fallback_count': meta_description_fallback_count,
+        'meta_description_fallback_ratio': (meta_description_fallback_count / fetch_success_count) if fetch_success_count else 0,
+        'allow_meta_description_fallback': ALLOW_META_DESCRIPTION_FALLBACK,
+        'min_meta_description_length': MIN_META_DESCRIPTION_LENGTH,
     }
     SUMMARY_JSON.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
     print('raw_article_count:', summary['raw_article_count'])
@@ -417,6 +499,8 @@ def main():
     print('empty_body_count:', empty_body_count)
     print('failed_json_path:', summary['failed_json_path'])
     print('failed_artifacts_dir:', summary['failed_artifacts_dir'])
+    print('meta_description_fallback_count:', summary.get('meta_description_fallback_count', 0))
+    print('meta_description_fallback_ratio:', summary.get('meta_description_fallback_ratio', 0))
 
 
 if __name__ == '__main__':
