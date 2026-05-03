@@ -42,7 +42,15 @@ def extract_nikkei_ng_id(url: str) -> str:
 
 
 def normalize_nikkei_article_key(url: str) -> str:
-    return extract_nikkei_ng_id(url) or url.strip()
+    u = (url or '').strip()
+    if not u:
+        return ''
+    ng = extract_nikkei_ng_id(u)
+    if ng:
+        return f'ng:{ng}'
+    p = urlparse(u)
+    path = (p.path or '/').rstrip('/') or '/'
+    return f'{p.netloc.lower()}{path}'
 
 
 def notion_headers():
@@ -77,17 +85,33 @@ def _extract_text_property(prop: dict) -> str:
     return ''
 
 
+URL_PROPERTY_CANDIDATES = ['URL', 'Url', 'url', 'Link', 'Article URL', 'Source URL']
+
+
 def fetch_existing():
-    if not (SKIP_EXISTING and NOTION_TOKEN and DB):
-        return set(), {}, False, {}
-    meta = requests.get(f'https://api.notion.com/v1/databases/{DB}', headers=notion_headers(), timeout=60).json()
+    if not SKIP_EXISTING:
+        return set(), {}, False, {}, {'notion_existing_url_query_enabled': False, 'notion_existing_query_failed': False}
+    if not NOTION_TOKEN or not DB:
+        return set(), {}, True, {}, {
+            'notion_existing_url_query_enabled': True,
+            'notion_existing_query_failed': True,
+            'notion_existing_query_error': 'missing_notion_token_or_database_id',
+        }
+    meta_resp = requests.get(f'https://api.notion.com/v1/databases/{DB}', headers=notion_headers(), timeout=60)
+    meta_resp.raise_for_status()
+    meta = meta_resp.json()
     props = meta.get('properties', {})
-    if 'URL' not in props:
-        print('WARNING: URL property missing; disable skip existing')
-        return set(), {}, False, {}
+    url_prop_name = next((name for name in URL_PROPERTY_CANDIDATES if name in props), '')
+    if not url_prop_name:
+        return set(), {}, True, props, {
+            'notion_existing_url_query_enabled': True,
+            'notion_existing_query_failed': True,
+            'notion_existing_query_error': f'url_property_not_found candidates={URL_PROPERTY_CANDIDATES}',
+        }
     cur = None
     keys = set()
     existing_map = {}
+    samples = []
     while True:
         payload = {'page_size': PAGE_SIZE}
         if cur:
@@ -95,7 +119,7 @@ def fetch_existing():
         d = notion_req(f'https://api.notion.com/v1/databases/{DB}/query', payload)
         for it in d.get('results', []):
             item_props = it.get('properties', {})
-            p = item_props.get('URL', {})
+            p = item_props.get(url_prop_name, {})
             u = ''
             if p.get('type') == 'url':
                 u = p.get('url') or ''
@@ -104,6 +128,8 @@ def fetch_existing():
             if u:
                 keys.add(normalize_nikkei_article_key(u))
                 keys.add(u)
+                if len(samples) < 5:
+                    samples.append(u)
                 existing_map[u] = {
                     'page_id': it.get('id', ''),
                     'url': u,
@@ -117,7 +143,14 @@ def fetch_existing():
         if not d.get('has_more'):
             break
         cur = d.get('next_cursor')
-    return keys, existing_map, True, props
+    return keys, existing_map, True, props, {
+        'notion_existing_url_query_enabled': True,
+        'notion_existing_url_count': len(existing_map),
+        'notion_existing_url_sample': samples,
+        'notion_existing_query_failed': False,
+        'notion_existing_query_error': '',
+        'notion_existing_url_property': url_prop_name,
+    }
 
 
 def has_body_text(existing: dict) -> bool:
@@ -249,12 +282,49 @@ def main():
     if MAX_ARTICLES > 0:
         arts = arts[:MAX_ARTICLES]
     article_count_after_pre_filter = len(arts)
-    keys, existing_map, enabled, props = fetch_existing()
+    notion_diag = {}
+    try:
+        keys, existing_map, enabled, props, notion_diag = fetch_existing()
+    except Exception as e:
+        keys, existing_map, enabled, props = set(), {}, True, {}
+        notion_diag = {
+            'notion_existing_url_query_enabled': SKIP_EXISTING,
+            'notion_existing_query_failed': True,
+            'notion_existing_query_error': f'{type(e).__name__}: {e}',
+        }
+    print('notion_existing_url_query_enabled:', notion_diag.get('notion_existing_url_query_enabled', False))
+    print('notion_existing_url_count:', notion_diag.get('notion_existing_url_count', 0))
+    print('notion_existing_url_sample:', notion_diag.get('notion_existing_url_sample', []))
+    print('notion_existing_query_failed:', notion_diag.get('notion_existing_query_failed', False))
+    print('notion_existing_query_error:', notion_diag.get('notion_existing_query_error', ''))
+    print('notion_article_db_id_present:', bool(DB))
+    if SKIP_EXISTING and notion_diag.get('notion_existing_query_failed'):
+        print('ERROR: skip existing enabled but Notion existing URL query failed:', notion_diag.get('notion_existing_query_error', 'unknown'))
+        summary = {'existing_url_skip_count': 0, 'target_count': len(arts), **notion_diag, 'notion_article_db_id_present': bool(DB)}
+        SUMMARY_JSON.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
+        return 1
+    if SKIP_EXISTING and not notion_diag.get('notion_existing_query_failed') and notion_diag.get('notion_existing_url_count', 0) == 0:
+        print('WARN: skip existing enabled but no existing URLs loaded from Notion')
     arts, skipped, existing_with_body, existing_missing_body = classify_articles(
         arts, keys, existing_map, SKIP_EXISTING, BACKFILL_EXISTING_EMPTY_BODY
     )
     existing_url_skip_count = len(skipped)
     target_count = len(arts)
+    compare_logs = []
+    for idx, a in enumerate(raw_arts[:5]):
+        raw = a.get('url', '')
+        norm = normalize_nikkei_article_key(raw)
+        match = raw in keys or norm in keys
+        matched_norm = ''
+        if match:
+            matched_norm = norm if norm in keys else raw
+        compare_logs.append({
+            'issue_article_url_raw': raw,
+            'normalized_issue_url': norm,
+            'normalized_notion_existing_url': matched_norm,
+            'match': match,
+        })
+    print('url_normalization_match_samples:', json.dumps(compare_logs, ensure_ascii=False))
     Path('logs/nikkei_articles_skipped_existing.json').write_text(json.dumps(skipped, ensure_ascii=False, indent=2), encoding='utf-8')
     inventory = []
     for a in skipped + existing_missing_body:
@@ -340,6 +410,7 @@ def main():
                             'block_heavy_resources': BLOCK_HEAVY, 'resource_block_enabled': use_block,
                             'retried_without_resource_block': RETRY_WITHOUT_BLOCK,
                             'final_attempt_without_resource_block': RETRY_WITHOUT_BLOCK and (not use_block) and t == attempts - 1,
+                            'retry_without_resource_block_success': retry_without_resource_block_success,
                             'wait_strategy_used': {'wait_until': 'domcontentloaded', 'wait_after_ms': WAIT_AFTER, 'goto_timeout_ms': GOTO_TIMEOUT},
                             'screenshot_path': png_path, 'html_path': html_path, 'text_path': txt_path, 'artifact_html_path': html_path, 'artifact_screenshot_path': png_path,
                             'page_id': ex.get('page_id', ''), 'existing_page': bool(ex.get('page_id')),
@@ -398,7 +469,25 @@ def main():
         'backfill_success_count': backfill_success_count,
         'backfill_failed_count': backfill_failed_count,
         'backfill_updated_existing_page_count': backfill_success_count,
+        'retry_without_resource_block_success': retry_without_resource_block_success,
+        'notion_article_db_id_present': bool(DB),
+        **notion_diag,
+        'url_normalization_match_samples': compare_logs,
     }
+    if target_count > 0 and fetch_success_count == 0 and empty_body_count == fetch_failed_count:
+        summary['systemic_empty_body_failure'] = True
+        systemic_reason = 'unknown'
+        if login_wall_count == fetch_failed_count and fetch_failed_count > 0:
+            systemic_reason = 'login_state_invalid'
+        elif access_denied_count == fetch_failed_count and fetch_failed_count > 0:
+            systemic_reason = 'resource_block_side_effect'
+        elif paid_wall_count == fetch_failed_count and fetch_failed_count > 0:
+            systemic_reason = 'selector_mismatch'
+        else:
+            systemic_reason = 'article_dom_changed'
+        summary['systemic_failure_reason'] = systemic_reason
+    else:
+        summary['systemic_empty_body_failure'] = False
     SUMMARY_JSON.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
     print('raw_article_count:', summary['raw_article_count'])
     print('pre_excluded_count:', summary['pre_excluded_count'])
