@@ -27,6 +27,21 @@ jobs:
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
+          MAIL_CC: ${{ secrets.MAIL_CC }}
+          MAIL_BCC: ${{ secrets.MAIL_BCC }}
+          GENERAL_REPORT_SELECTION_MODE: ${{ vars.GENERAL_REPORT_SELECTION_MODE }}
+          GENERAL_REPORT_TOP_IMPORTANCE_RANK: ${{ vars.GENERAL_REPORT_TOP_IMPORTANCE_RANK }}
+          GENERAL_REPORT_INCLUDE_TIES: ${{ vars.GENERAL_REPORT_INCLUDE_TIES }}
+          GENERAL_ENABLE_ARTICLE_GPT_ENRICHMENT: ${{ vars.GENERAL_ENABLE_ARTICLE_GPT_ENRICHMENT }}
+          GENERAL_FORCE_ARTICLE_GPT_REPROCESS: ${{ vars.GENERAL_FORCE_ARTICLE_GPT_REPROCESS }}
+          GENERAL_ARTICLE_GPT_MODEL: ${{ vars.GENERAL_ARTICLE_GPT_MODEL }}
+          GENERAL_ENABLE_FINAL_REPORT_GPT: ${{ vars.GENERAL_ENABLE_FINAL_REPORT_GPT }}
+          GENERAL_FINAL_REPORT_MODEL: ${{ vars.GENERAL_FINAL_REPORT_MODEL }}
+          GENERAL_FORCE_FINAL_REPORT_REGENERATE: ${{ vars.GENERAL_FORCE_FINAL_REPORT_REGENERATE }}
+          GENERAL_SEND_REPORT_MAIL: ${{ vars.GENERAL_SEND_REPORT_MAIL }}
+          GENERAL_SAVE_FINAL_REPORT_TO_NOTION: ${{ vars.GENERAL_SAVE_FINAL_REPORT_TO_NOTION }}
+          GENERAL_PREVENT_DUPLICATE_MAIL: ${{ vars.GENERAL_PREVENT_DUPLICATE_MAIL }}
+          GENERAL_FINAL_REPORT_SUBJECT_PREFIX: ${{ vars.GENERAL_FINAL_REPORT_SUBJECT_PREFIX }}
         run: python news_digest.py
       - name: Upload logs
         if: always()
@@ -35,4 +50,7 @@ jobs:
           name: run-logs
           path: |
             *.log
+            logs/*.json
+            logs/*.log
+            data/*.json
             data/

@@ -236,3 +236,24 @@ NIKKEI_SKIP_EXISTING_NOTION_URLS=true \
 NIKKEI_ENABLE_SCORING=true \
 python scripts/run_nikkei_paper_pipeline.py
 ```
+
+## 二段階GPTレポート（案B）
+- 1段階目: 選定記事のみを記事単位で enrichment（Summary / Reason to Read / Business Implications）。
+- 2段階目: 記事単位の保存済み結果だけを材料に final report synthesis を実施。
+- 効果: 課金削減、冪等性、再実行耐性、Notionへの記事別示唆の蓄積。
+
+### 手動実行
+```bash
+python scripts/run_general_news_report.py
+```
+
+### 主要ログ
+- `logs/general_report_selection.json`
+- `logs/general_article_enrichment_summary.json`
+- `logs/general_article_enrichment_failed.json`
+- `logs/general_final_report_summary.json`
+- `logs/general_final_report_failed.json`
+
+### 必要なSecrets/Variables
+- Secrets: `OPENAI_API_KEY`, `NOTION_TOKEN`, `NOTION_DAILY_NEWS_DB_ID`, `NOTION_ARTICLE_DB_ID`, `MAIL_FROM`, `MAIL_PASSWORD`, `MAIL_TO`, `MAIL_CC`, `MAIL_BCC`
+- Variables: `GENERAL_*` 系（workflowの env を参照）
