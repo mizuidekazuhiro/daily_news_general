@@ -76,6 +76,13 @@ jobs:
       NIKKEI_RULES_FILTER_RULE_TYPES: "country,sector,importance"
       NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT: "5"
       NIKKEI_ALLOW_DEFAULT_RULES_DB_FALLBACK: "false"
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      NOTION_DAILY_NEWS_DB_ID: ${{ secrets.NOTION_DAILY_NEWS_DB_ID }}
+      MAIL_FROM: ${{ secrets.MAIL_FROM }}
+      MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+      MAIL_TO: ${{ secrets.MAIL_TO }}
+      MAIL_CC: ${{ secrets.MAIL_CC }}
+      MAIL_BCC: ${{ secrets.MAIL_BCC }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -92,6 +99,7 @@ jobs:
           Path('.storage/nikkei_storage_state.json').write_text(os.environ['NIKKEI_SESSION_STATE_JSON'],encoding='utf-8')
           P
       - run: python scripts/run_nikkei_paper_pipeline.py
+      - run: python scripts/run_nikkei_final_report.py
 
       - name: Upload Nikkei debug logs
         if: always()
