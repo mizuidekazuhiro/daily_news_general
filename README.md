@@ -257,3 +257,5 @@ python scripts/run_nikkei_final_report.py
 ### 必要なSecrets/Variables
 - Secrets: `OPENAI_API_KEY`, `NOTION_TOKEN`, `NOTION_DAILY_NEWS_DB_ID`, `NOTION_ARTICLE_DB_ID`, `MAIL_FROM`, `MAIL_PASSWORD`, `MAIL_TO`, `MAIL_CC`, `MAIL_BCC`
 - Variables: `NIKKEI_*` 系（Nikkei workflowで利用）。この二段階レポートはNikkei pipeline専用で、一般RSS/special/direct-siteには適用しません。入力は `logs/nikkei_articles_scored.json` 固定です。
+
+- `NIKKEI_ALLOW_FALLBACK_FINAL_REPORT_MAIL=false`（推奨）: final report GPT失敗でfallback生成時は、デフォルトでメール送信しません。trueでのみfallbackメール送信を許可。

@@ -146,6 +146,17 @@ def _send_mail(subject: str, html: str) -> bool:
     return True
 
 
+
+
+def _fallback_mail_decision(fallback_used: bool, fallback_mail_allowed: bool, already_sent: bool, send_enabled: bool) -> str:
+    if already_sent:
+        return "duplicate_input_hash"
+    if fallback_used and not fallback_mail_allowed:
+        return "fallback_mail_blocked"
+    if not send_enabled:
+        return "mail_disabled"
+    return "send"
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if not _env_bool("NIKKEI_ENABLE_FINAL_REPORT", True): return 0
@@ -162,7 +173,8 @@ def main() -> int:
     article_schema = _fetch_db_schema(article_db, token) if token and article_db else {}
     notion_ok = notion_ng = 0
 
-    targets, skipped = filter_targets([dict(a, full_text=a.get("full_text", ""), gpt_processed=a.get("gpt_processed_norm", False)) for a in selected_working], _env_bool("NIKKEI_FORCE_ARTICLE_GPT_REPROCESS", False))
+    gpt_candidates = [dict(a, full_text=a.get("full_text", ""), gpt_processed=a.get("gpt_processed_norm", False)) for a in selected_working]
+    targets, skipped = filter_targets(gpt_candidates, _env_bool("NIKKEI_FORCE_ARTICLE_GPT_REPROCESS", False))
     fails=[]; processed=0
     if _env_bool("NIKKEI_ENABLE_ARTICLE_GPT_ENRICHMENT", True) and client:
         sp = """あなたは日本語の業務分析アシスタント。出力はJSONのみ。schema:{summary,reason_to_read,business_implications}。summaryは120-220字で本文事実のみ。reason_to_readは80-160字で具体。business_implicationsは180-320字で記事由来論点のみ。数字/企業/国名/価格/数量の捏造禁止。Markdown禁止。"""
@@ -206,14 +218,13 @@ def main() -> int:
             if r.get("properties",{}).get("Mail Sent",{}).get("checkbox") is True: already_sent=True
 
     fallback_mail_allowed=_env_bool("NIKKEI_ALLOW_FALLBACK_FINAL_REPORT_MAIL", False)
+    decision = _fallback_mail_decision(fallback_used, fallback_mail_allowed, already_sent, _env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL", True))
     mail_sent=False; mail_reason=""
-    if already_sent: mail_reason="duplicate_input_hash"
-    elif fallback_used and not fallback_mail_allowed: mail_reason="fallback_mail_blocked"
-    elif _env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL", True):
+    if decision=="send":
         subj=f"{_env_str('NIKKEI_FINAL_REPORT_SUBJECT_PREFIX','【日経事業ブリーフ】')}{datetime.now().strftime('%Y-%m-%d')}（{len(selected_working)}件）"
         if fallback_used: subj="[fallback] "+subj
         mail_sent=_send_mail(subj, html); mail_reason="" if mail_sent else "no_recipients_or_send_failed"
-    else: mail_reason="mail_disabled"
+    else: mail_reason=decision
 
     notion_final_saved=False
     if _env_bool("NIKKEI_SAVE_FINAL_REPORT_TO_NOTION", True) and token and daily_db:
@@ -226,9 +237,9 @@ def main() -> int:
         except Exception as e:
             final_failed.append({"stage":"notion_daily_save","error":str(e)})
 
-    Path("logs/nikkei_article_enrichment_summary.json").write_text(json.dumps({"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"article_gpt_skipped_count":skipped},ensure_ascii=False,indent=2),encoding="utf-8")
+    Path("logs/nikkei_article_enrichment_summary.json").write_text(json.dumps({"selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails)},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_article_enrichment_failed.json").write_text(json.dumps(fails,ensure_ascii=False,indent=2),encoding="utf-8")
-    Path("logs/nikkei_final_report_summary.json").write_text(json.dumps({"pipeline_scope":"nikkei_only","selected_article_count":len(selected_working),"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"final_report_gpt_success":final_gpt_success,"fallback_used":fallback_used,"fallback_mail_allowed":fallback_mail_allowed,"notion_article_update_success_count":notion_ok,"notion_article_update_failed_count":notion_ng,"notion_final_report_saved":notion_final_saved,"mail_sent":mail_sent,"mail_skipped_reason":mail_reason,"input_hash":input_hash,"html_output_path":html_path},ensure_ascii=False,indent=2),encoding="utf-8")
+    Path("logs/nikkei_final_report_summary.json").write_text(json.dumps({"pipeline_scope":"nikkei_only","selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"final_report_gpt_success":final_gpt_success,"fallback_used":fallback_used,"fallback_mail_allowed":fallback_mail_allowed,"notion_article_update_success_count":notion_ok,"notion_article_update_failed_count":notion_ng,"notion_final_report_saved":notion_final_saved,"mail_sent":mail_sent,"mail_skipped_reason":mail_reason,"input_hash":input_hash,"html_output_path":html_path},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_final_report_failed.json").write_text(json.dumps(final_failed,ensure_ascii=False,indent=2),encoding="utf-8")
     return 0
 

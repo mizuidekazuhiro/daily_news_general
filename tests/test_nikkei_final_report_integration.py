@@ -41,3 +41,8 @@ def test_workflow_scope():
     assert 'run_nikkei_final_report.py' not in general
     for wf in ['.github/workflows/nikkei_morning.yml','.github/workflows/nikkei_evening.yml']:
         assert 'run_nikkei_final_report.py' in Path(wf).read_text(encoding='utf-8')
+
+
+def test_fallback_mail_policy():
+    assert mod._fallback_mail_decision(True, False, False, True) == "fallback_mail_blocked"
+    assert mod._fallback_mail_decision(True, True, False, True) == "send"
