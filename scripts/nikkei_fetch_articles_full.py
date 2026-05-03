@@ -18,6 +18,7 @@ INPUT_PATH = Path('logs/nikkei_issue_article_links.json')
 OUTPUT_JSON = Path('logs/nikkei_articles_full.json')
 FAILED_JSON = Path('logs/nikkei_articles_failed.json')
 FAILED_DIR = Path('logs/nikkei_failed_articles')
+SUMMARY_JSON = Path('logs/nikkei_fetch_summary.json')
 
 MAX_ARTICLES = int(os.getenv('NIKKEI_MAX_ARTICLES_TO_FETCH', '0'))
 SLEEP_SECONDS = float(os.getenv('NIKKEI_FETCH_SLEEP_SECONDS', '1.0'))
@@ -168,9 +169,12 @@ def save_failure_artifacts(page, idx: int):
 
 
 def main():
-    arts = json.loads(INPUT_PATH.read_text(encoding='utf-8')) if INPUT_PATH.exists() else []
+    raw_arts = json.loads(INPUT_PATH.read_text(encoding='utf-8')) if INPUT_PATH.exists() else []
+    arts = list(raw_arts)
+    raw_article_count = len(raw_arts)
     if MAX_ARTICLES > 0:
         arts = arts[:MAX_ARTICLES]
+    article_count_after_pre_filter = len(arts)
     keys, enabled = fetch_existing()
     skipped = []
     if enabled:
@@ -181,6 +185,8 @@ def main():
             else:
                 keep.append(a)
         arts = keep
+    existing_url_skip_count = len(skipped)
+    target_count = len(arts)
     Path('logs/nikkei_articles_skipped_existing.json').write_text(json.dumps(skipped, ensure_ascii=False, indent=2), encoding='utf-8')
 
     res, fail = [], []
@@ -242,17 +248,19 @@ def main():
                         html_path, png_path, txt_path = save_failure_artifacts(page, i)
                         is_timeout = isinstance(e, PlaywrightTimeoutError)
                         fail.append({
-                            'status': 'failed', 'url': a['url'], 'source_title': a.get('title', ''), 'attempt_count': attempts,
-                            'final_page_url': page.url if page else '', 'error_type': type(e).__name__, 'error_message': str(e),
-                            'text_length': len(text), 'page_title': page_title, 'body_text_preview': text[:500],
+                            'status': 'failed', 'title': a.get('title', ''), 'url': a['url'], 'source_title': a.get('title', ''), 'attempt_count': attempts,
+                            'final_page_url': page.url if page else '', 'final_url': page.url if page else '', 'error_type': type(e).__name__, 'error_message': str(e),
+                            'text_length': len(text), 'body_length': len(text), 'page_title': page_title, 'body_text_preview': text[:500],
                             'selector_used': selector_used, 'selector_candidates': selector_logs,
                             'is_login_wall_detected': login_wall, 'is_paid_article_wall_detected': paid_wall,
                             'is_access_denied_detected': access_denied, 'is_timeout': is_timeout,
                             'is_empty_body': len(text) == 0, 'is_too_short': 0 < len(text) < MIN_LEN,
-                            'block_heavy_resources': BLOCK_HEAVY,
+                            'block_heavy_resources': BLOCK_HEAVY, 'resource_block_enabled': use_block,
                             'retried_without_resource_block': RETRY_WITHOUT_BLOCK,
                             'final_attempt_without_resource_block': RETRY_WITHOUT_BLOCK and (not use_block) and t == attempts - 1,
                             'screenshot_path': png_path, 'html_path': html_path, 'text_path': txt_path,
+                            'reason': 'empty_body' if len(text) == 0 else ('too_short' if 0 < len(text) < MIN_LEN else type(e).__name__),
+                            'status_code': None,
                         })
                 finally:
                     c.close()
@@ -263,17 +271,51 @@ def main():
 
     OUTPUT_JSON.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding='utf-8')
     FAILED_JSON.write_text(json.dumps(fail, ensure_ascii=False, indent=2), encoding='utf-8')
-    reason_counts = Counter(x.get('error_type', 'unknown') for x in fail if x.get('status') == 'failed')
-    print('target_count:', len(arts))
-    print('success_count:', len(res))
-    print('failed_count:', len([x for x in fail if x.get('status') != 'excluded']))
+    only_failed = [x for x in fail if x.get('status') == 'failed']
+    reason_counts = Counter((x.get('reason') or x.get('error_type') or 'unknown') for x in only_failed)
+    fetch_success_count = len(res)
+    fetch_failed_count = len(only_failed)
+    login_wall_count = sum(1 for x in only_failed if x.get('is_login_wall_detected'))
+    paid_wall_count = sum(1 for x in only_failed if x.get('is_paid_article_wall_detected'))
+    access_denied_count = sum(1 for x in only_failed if x.get('is_access_denied_detected'))
+    timeout_count = sum(1 for x in only_failed if x.get('is_timeout'))
+    empty_body_count = sum(1 for x in only_failed if x.get('is_empty_body'))
+    summary = {
+        'raw_article_count': raw_article_count,
+        'pre_excluded_count': max(raw_article_count - article_count_after_pre_filter, 0),
+        'article_count_after_pre_filter': article_count_after_pre_filter,
+        'article_count': article_count_after_pre_filter,
+        'existing_url_skip_count': existing_url_skip_count,
+        'target_count': target_count,
+        'fetch_success_count': fetch_success_count,
+        'fetch_failed_count': fetch_failed_count,
+        'empty_body_count': empty_body_count,
+        'login_wall_count': login_wall_count,
+        'paid_wall_count': paid_wall_count,
+        'access_denied_count': access_denied_count,
+        'timeout_count': timeout_count,
+        'failure_reason_counts': dict(reason_counts),
+        'failed_json_path': str(FAILED_JSON),
+        'failed_artifacts_dir': str(FAILED_DIR),
+    }
+    SUMMARY_JSON.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding='utf-8')
+    print('raw_article_count:', summary['raw_article_count'])
+    print('pre_excluded_count:', summary['pre_excluded_count'])
+    print('article_count_after_pre_filter:', summary['article_count_after_pre_filter'])
+    print('article_count:', summary['article_count'])
+    print('existing_url_skip_count:', summary['existing_url_skip_count'])
+    print('target_count:', summary['target_count'])
+    print('success_count:', summary['fetch_success_count'])
+    print('failed_count:', summary['fetch_failed_count'])
     print('failure_reason_counts:', dict(reason_counts))
-    print('login_wall_count:', sum(1 for x in fail if x.get('is_login_wall_detected')))
-    print('paid_wall_count:', sum(1 for x in fail if x.get('is_paid_article_wall_detected')))
-    print('access_denied_count:', sum(1 for x in fail if x.get('is_access_denied_detected')))
-    print('timeout_count:', sum(1 for x in fail if x.get('is_timeout')))
-    print('too_short_count:', sum(1 for x in fail if x.get('is_too_short')))
-    print('empty_body_count:', sum(1 for x in fail if x.get('is_empty_body')))
+    print('login_wall_count:', login_wall_count)
+    print('paid_wall_count:', paid_wall_count)
+    print('access_denied_count:', access_denied_count)
+    print('timeout_count:', timeout_count)
+    print('too_short_count:', sum(1 for x in only_failed if x.get('is_too_short')))
+    print('empty_body_count:', empty_body_count)
+    print('failed_json_path:', summary['failed_json_path'])
+    print('failed_artifacts_dir:', summary['failed_artifacts_dir'])
 
 
 if __name__ == '__main__':
