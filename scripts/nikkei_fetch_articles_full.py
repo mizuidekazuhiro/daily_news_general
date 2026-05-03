@@ -397,6 +397,73 @@ def main():
                             login_wall, paid_wall, access_denied = detect_walls(text + '\n' + page_text)
                         except Exception:
                             selector_logs = []
+                        extraction_method = best.get('extraction_method', '') if 'best' in locals() else ''
+                        extraction_quality = 'meta_description_only' if extraction_method in {'og_description', 'meta_description'} else ('body_text' if extraction_method == 'body_inner_text' else 'full_text')
+
+                        # If the original extraction attempt failed because Playwright navigation destroyed
+                        # the execution context, but the final diagnostic extraction still recovered usable
+                        # text such as og:description/meta description, treat it as a successful fallback.
+                        recovered_by_meta = (
+                            extraction_method in {'og_description', 'meta_description'}
+                            and ALLOW_META_DESCRIPTION_FALLBACK
+                            and len(text) >= MIN_META_DESCRIPTION_LENGTH
+                        )
+                        recovered_by_text = (
+                            extraction_method not in {'og_description', 'meta_description', 'none', ''}
+                            and len(text) >= MIN_LEN
+                            and not looks_like_noise(text)
+                        )
+
+                        if recovered_by_meta or recovered_by_text:
+                            status = 'success_meta_description_fallback' if recovered_by_meta else 'success_recovered_after_context_destroyed'
+                            record = {
+                                'status': status,
+                                'source_title': a.get('title', ''),
+                                'url': a['url'],
+                                'issue_url': a.get('issue_url', ''),
+                                'issue_date': a.get('issue_date', ''),
+                                'edition': a.get('edition', ''),
+                                'page_title': page_title,
+                                'text_length': len(text),
+                                'text': text,
+                                'selector_used': selector_used,
+                                'selector_candidates': selector_logs,
+                                'extraction_method': extraction_method,
+                                'extraction_quality': extraction_quality,
+                                'selector_lengths': {c.get('selector', ''): int(c.get('text_length', 0)) for c in selector_logs if c.get('selector')},
+                                'body_inner_text_length': next((int(c.get('text_length', 0)) for c in selector_logs if c.get('extraction_method') == 'body_inner_text'), 0),
+                                'json_ld_article_body_length': next((int(c.get('text_length', 0)) for c in selector_logs if c.get('extraction_method') == 'json_ld_article_body'), 0),
+                                'og_description_length': next((int(c.get('og_description_length', c.get('text_length', 0))) for c in selector_logs if c.get('extraction_method') == 'og_description'), 0),
+                                'meta_description_length': next((int(c.get('meta_description_length', c.get('text_length', 0))) for c in selector_logs if c.get('extraction_method') == 'meta_description'), 0),
+                                'recovered_after_error': True,
+                                'recovered_from_error_type': type(e).__name__,
+                                'recovered_from_error_message': str(e)[:500],
+                            }
+                            ex = existing_map.get(a['url'], {})
+                            if ex.get('page_id'):
+                                record['source'] = 'backfill_existing'
+                                record['page_id'] = ex.get('page_id')
+                                inventory.append({
+                                    'url': a['url'],
+                                    'title': a.get('title', ''),
+                                    'status': 'backfilled_existing',
+                                    'page_id': ex.get('page_id', ''),
+                                    'has_existing_body': True,
+                                    'source': 'backfill_existing',
+                                })
+                            else:
+                                inventory.append({
+                                    'url': a['url'],
+                                    'title': a.get('title', ''),
+                                    'status': 'fetched_new',
+                                    'page_id': '',
+                                    'has_existing_body': False,
+                                    'source': 'fetch_new',
+                                })
+                            res.append(record)
+                            ok = True
+                            break
+
                         html_path, png_path, txt_path = save_failure_artifacts(page, i)
                         is_timeout = isinstance(e, PlaywrightTimeoutError)
                         ex = existing_map.get(a['url'], {})
