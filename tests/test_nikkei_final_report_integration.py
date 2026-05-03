@@ -46,3 +46,14 @@ def test_workflow_scope():
 def test_fallback_mail_policy():
     assert mod._fallback_mail_decision(True, False, False, True) == "fallback_mail_blocked"
     assert mod._fallback_mail_decision(True, True, False, True) == "send"
+
+
+def test_defaults_and_override(monkeypatch):
+    monkeypatch.delenv("NIKKEI_SEND_FINAL_REPORT_MAIL", raising=False)
+    monkeypatch.delenv("NIKKEI_FINAL_REPORT_SUBJECT_PREFIX", raising=False)
+    assert mod._env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL") is False
+    assert mod._env_str("NIKKEI_FINAL_REPORT_SUBJECT_PREFIX") == "【日経新聞ブリーフ】"
+    monkeypatch.setenv("NIKKEI_SEND_FINAL_REPORT_MAIL", "true")
+    monkeypatch.setenv("NIKKEI_FINAL_REPORT_SUBJECT_PREFIX", "[X]")
+    assert mod._env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL") is True
+    assert mod._env_str("NIKKEI_FINAL_REPORT_SUBJECT_PREFIX") == "[X]"

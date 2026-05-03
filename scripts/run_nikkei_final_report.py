@@ -14,27 +14,54 @@ from src.report_selection import SelectionConfig, select_articles
 
 NOTION_VERSION = "2022-06-28"
 
+DEFAULTS = {
+    "NIKKEI_ENABLE_FINAL_REPORT": True,
+    "NIKKEI_ENABLE_ARTICLE_GPT_ENRICHMENT": True,
+    "NIKKEI_FORCE_ARTICLE_GPT_REPROCESS": False,
+    "NIKKEI_ARTICLE_GPT_MODEL": "gpt-5-mini",
+    "NIKKEI_ARTICLE_GPT_MAX_OUTPUT_TOKENS": 1200,
+    "NIKKEI_ARTICLE_GPT_TEMPERATURE": 0.2,
+    "NIKKEI_ENABLE_FINAL_REPORT_GPT": True,
+    "NIKKEI_FINAL_REPORT_MODEL": "gpt-5-mini",
+    "NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS": 1800,
+    "NIKKEI_FINAL_REPORT_TEMPERATURE": 0.2,
+    "NIKKEI_FORCE_FINAL_REPORT_REGENERATE": False,
+    "NIKKEI_SEND_FINAL_REPORT_MAIL": False,
+    "NIKKEI_SAVE_FINAL_REPORT_TO_NOTION": True,
+    "NIKKEI_PREVENT_DUPLICATE_FINAL_REPORT_MAIL": True,
+    "NIKKEI_FINAL_REPORT_SUBJECT_PREFIX": "【日経新聞ブリーフ】",
+    "NIKKEI_ALLOW_FALLBACK_FINAL_REPORT_MAIL": False,
+}
 
-def _env_str(name: str, default: str) -> str:
+
+def _env_str(name: str, default: str | None = None) -> str:
+    if default is None:
+        default = str(DEFAULTS.get(name, ""))
     v = os.getenv(name)
     return default if v is None or v.strip() == "" else v.strip()
 
 
-def _env_bool(name: str, default: bool) -> bool:
+def _env_bool(name: str, default: bool | None = None) -> bool:
+    if default is None:
+        default = bool(DEFAULTS.get(name, False))
     v = os.getenv(name)
     if v is None or v.strip() == "":
         return default
     return v.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _env_int(name: str, default: int) -> int:
+def _env_int(name: str, default: int | None = None) -> int:
+    if default is None:
+        default = int(DEFAULTS.get(name, 0))
     v = os.getenv(name)
     if v is None or v.strip() == "":
         return default
     return int(v)
 
 
-def _env_float(name: str, default: float) -> float:
+def _env_float(name: str, default: float | None = None) -> float:
+    if default is None:
+        default = float(DEFAULTS.get(name, 0.0))
     v = os.getenv(name)
     if v is None or v.strip() == "":
         return default
@@ -88,7 +115,7 @@ def _daily_props(report: dict, selected_count: int, input_hash: str, mail_sent: 
         "Date": {"date": {"start": datetime.now().date().isoformat()}},
         "Article Count": {"number": selected_count},
         "Selected Article Count": {"number": selected_count},
-        "Final Report Model": {"rich_text": [{"text": {"content": _env_str("NIKKEI_FINAL_REPORT_MODEL", "gpt-5.1-mini")}}]},
+        "Final Report Model": {"rich_text": [{"text": {"content": _env_str("NIKKEI_FINAL_REPORT_MODEL")}}]},
         "Executive Summary": {"rich_text": [{"text": {"content": report.get("executive_summary", "")[:1800]}}]},
         "Key Message": {"rich_text": [{"text": {"content": report.get("today_key_message", "")[:1800]}}]},
         "Input Hash": {"rich_text": [{"text": {"content": input_hash}}]},
@@ -159,7 +186,7 @@ def _fallback_mail_decision(fallback_used: bool, fallback_mail_allowed: bool, al
 
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-    if not _env_bool("NIKKEI_ENABLE_FINAL_REPORT", True): return 0
+    if not _env_bool("NIKKEI_ENABLE_FINAL_REPORT"): return 0
     data = json.loads(Path("logs/nikkei_articles_scored.json").read_text(encoding="utf-8"))
     normalized = [_normalize_article(a) for a in data]
     cfg = SelectionConfig(mode=_env_str("NIKKEI_REPORT_SELECTION_MODE", "top_importance_rank"), top_rank=_env_int("NIKKEI_REPORT_TOP_IMPORTANCE_RANK", 5), include_ties=_env_bool("NIKKEI_REPORT_INCLUDE_TIES", True), min_importance_score=_env_float("NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT", 0))
@@ -174,20 +201,20 @@ def main() -> int:
     notion_ok = notion_ng = 0
 
     gpt_candidates = [dict(a, full_text=a.get("full_text", ""), gpt_processed=a.get("gpt_processed_norm", False)) for a in selected_working]
-    targets, skipped = filter_targets(gpt_candidates, _env_bool("NIKKEI_FORCE_ARTICLE_GPT_REPROCESS", False))
+    targets, skipped = filter_targets(gpt_candidates, _env_bool("NIKKEI_FORCE_ARTICLE_GPT_REPROCESS"))
     fails=[]; processed=0
-    if _env_bool("NIKKEI_ENABLE_ARTICLE_GPT_ENRICHMENT", True) and client:
+    if _env_bool("NIKKEI_ENABLE_ARTICLE_GPT_ENRICHMENT") and client:
         sp = """あなたは日本語の業務分析アシスタント。出力はJSONのみ。schema:{summary,reason_to_read,business_implications}。summaryは120-220字で本文事実のみ。reason_to_readは80-160字で具体。business_implicationsは180-320字で記事由来論点のみ。数字/企業/国名/価格/数量の捏造禁止。Markdown禁止。"""
         for t in targets:
             try:
-                out = client.generate_json(model=_env_str("NIKKEI_ARTICLE_GPT_MODEL", "gpt-5.1-mini"), system_prompt=sp, user_prompt=json.dumps({"title":t.get("title"),"url":t.get("url"),"source":t.get("source"),"edition":t.get("edition"),"issue_date":t.get("issue_date"),"importance_score":t.get("importance_score"),"priority":t.get("priority"),"matched_rules":t.get("matched_rules"),"full_text":t.get("full_text")}, ensure_ascii=False), max_output_tokens=_env_int("NIKKEI_ARTICLE_GPT_MAX_OUTPUT_TOKENS", 1200), temperature=_env_float("NIKKEI_ARTICLE_GPT_TEMPERATURE", 0.2))
+                out = client.generate_json(model=_env_str("NIKKEI_ARTICLE_GPT_MODEL"), system_prompt=sp, user_prompt=json.dumps({"title":t.get("title"),"url":t.get("url"),"source":t.get("source"),"edition":t.get("edition"),"issue_date":t.get("issue_date"),"importance_score":t.get("importance_score"),"priority":t.get("priority"),"matched_rules":t.get("matched_rules"),"full_text":t.get("full_text")}, ensure_ascii=False), max_output_tokens=_env_int("NIKKEI_ARTICLE_GPT_MAX_OUTPUT_TOKENS"), temperature=_env_float("NIKKEI_ARTICLE_GPT_TEMPERATURE"))
                 if not validate_article_json(out): raise ValueError("invalid article json")
                 for x in selected_working:
                     if x.get("url") == t.get("url"):
                         x["Summary"], x["Reason to Read"], x["Business Implications"] = out["summary"], out["reason_to_read"], out["business_implications"]
                 processed += 1
                 if token and t.get("page_id"):
-                    props = _filter_by_schema(_article_update_props(out["summary"], out["reason_to_read"], out["business_implications"], _env_str("NIKKEI_ARTICLE_GPT_MODEL", "gpt-5.1-mini")), article_schema)
+                    props = _filter_by_schema(_article_update_props(out["summary"], out["reason_to_read"], out["business_implications"], _env_str("NIKKEI_ARTICLE_GPT_MODEL")), article_schema)
                     try: _notion_update_page(t["page_id"], props, token); notion_ok += 1
                     except Exception as e: notion_ng += 1; fails.append({"page_id":t.get("page_id"),"error":str(e)})
             except Exception as e:
@@ -197,10 +224,10 @@ def main() -> int:
     selected_working = [x for x in selected_working if x.get("url")]
     final_failed=[]; fallback_used=False; final_gpt_success=False
     try:
-        if _env_bool("NIKKEI_ENABLE_FINAL_REPORT_GPT", True) and client:
+        if _env_bool("NIKKEI_ENABLE_FINAL_REPORT_GPT") and client:
             in_articles = build_synthesis_input([{**a, "summary":a.get("Summary"), "reason_to_read":a.get("Reason to Read"), "business_implications":a.get("Business Implications")} for a in selected_working])
             sp2 = """出力はJSONのみ。full_textは使わず、summary/reason_to_read/business_implicationsを根拠に最終レポートを作成。A1..ref_idとurl保持。商社目線の読みという語は禁止。"""
-            report = client.generate_json(model=_env_str("NIKKEI_FINAL_REPORT_MODEL", "gpt-5.1-mini"), system_prompt=sp2, user_prompt=json.dumps(in_articles, ensure_ascii=False), max_output_tokens=_env_int("NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS", 1800), temperature=_env_float("NIKKEI_FINAL_REPORT_TEMPERATURE", 0.2))
+            report = client.generate_json(model=_env_str("NIKKEI_FINAL_REPORT_MODEL"), system_prompt=sp2, user_prompt=json.dumps(in_articles, ensure_ascii=False), max_output_tokens=_env_int("NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS"), temperature=_env_float("NIKKEI_FINAL_REPORT_TEMPERATURE"))
             if not validate_final_report(report, len(selected_working)): raise ValueError("invalid final report")
             final_gpt_success=True
         else:
@@ -212,22 +239,22 @@ def main() -> int:
     html = render_final_report_html(Path("templates/nikkei_final_report_email.html"), report, _env_str("NIKKEI_TARGET_DATE", "auto")); html_path="logs/nikkei_final_report.html"; Path(html_path).write_text(html, encoding="utf-8")
     input_hash = hashlib.sha256(json.dumps({"target_date":_env_str("NIKKEI_TARGET_DATE","auto"),"selected":selected_working,"report":report},ensure_ascii=False,sort_keys=True).encode()).hexdigest()
 
-    duplicate_enabled=_env_bool("NIKKEI_PREVENT_DUPLICATE_FINAL_REPORT_MAIL", True); already_sent=False
+    duplicate_enabled=_env_bool("NIKKEI_PREVENT_DUPLICATE_FINAL_REPORT_MAIL"); already_sent=False
     if duplicate_enabled and token and daily_db:
         for r in _notion_query_daily(daily_db, token, input_hash):
             if r.get("properties",{}).get("Mail Sent",{}).get("checkbox") is True: already_sent=True
 
-    fallback_mail_allowed=_env_bool("NIKKEI_ALLOW_FALLBACK_FINAL_REPORT_MAIL", False)
-    decision = _fallback_mail_decision(fallback_used, fallback_mail_allowed, already_sent, _env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL", True))
+    fallback_mail_allowed=_env_bool("NIKKEI_ALLOW_FALLBACK_FINAL_REPORT_MAIL")
+    decision = _fallback_mail_decision(fallback_used, fallback_mail_allowed, already_sent, _env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL"))
     mail_sent=False; mail_reason=""
     if decision=="send":
-        subj=f"{_env_str('NIKKEI_FINAL_REPORT_SUBJECT_PREFIX','【日経事業ブリーフ】')}{datetime.now().strftime('%Y-%m-%d')}（{len(selected_working)}件）"
+        subj=f"{_env_str('NIKKEI_FINAL_REPORT_SUBJECT_PREFIX')}{datetime.now().strftime('%Y-%m-%d')}（{len(selected_working)}件）"
         if fallback_used: subj="[fallback] "+subj
         mail_sent=_send_mail(subj, html); mail_reason="" if mail_sent else "no_recipients_or_send_failed"
     else: mail_reason=decision
 
     notion_final_saved=False
-    if _env_bool("NIKKEI_SAVE_FINAL_REPORT_TO_NOTION", True) and token and daily_db:
+    if _env_bool("NIKKEI_SAVE_FINAL_REPORT_TO_NOTION") and token and daily_db:
         try:
             schema=_fetch_db_schema(daily_db, token)
             props=_filter_by_schema(_daily_props(report, len(selected_working), input_hash, mail_sent), schema)

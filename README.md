@@ -259,3 +259,7 @@ python scripts/run_nikkei_final_report.py
 - Variables: `NIKKEI_*` 系（Nikkei workflowで利用）。この二段階レポートはNikkei pipeline専用で、一般RSS/special/direct-siteには適用しません。入力は `logs/nikkei_articles_scored.json` 固定です。
 
 - `NIKKEI_ALLOW_FALLBACK_FINAL_REPORT_MAIL=false`（推奨）: final report GPT失敗でfallback生成時は、デフォルトでメール送信しません。trueでのみfallbackメール送信を許可。
+
+- 非機密のNIKKEI二段階レポート設定はコード内デフォルトで動作し、GitHub Variables / 環境変数が設定されている場合はその値を優先します。
+- 初期状態では `NIKKEI_SEND_FINAL_REPORT_MAIL=false` のため、メールは送信されません。送信開始時のみ `NIKKEI_SEND_FINAL_REPORT_MAIL=true` を設定してください。
+- Secrets（APIキー/トークン/メール認証）はコードへ固定値を記載しないでください。
