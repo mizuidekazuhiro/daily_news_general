@@ -54,7 +54,7 @@ jobs:
       NIKKEI_EDITION: evening
       NIKKEI_TARGET_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.target_date || 'auto' }}
       NIKKEI_MAX_ARTICLES_TO_FETCH: ${{ github.event_name == 'workflow_dispatch' && inputs.max_articles || '0' }}
-      NIKKEI_MAX_ARTICLE_ATTEMPTS: "0"
+      NIKKEI_MAX_ARTICLE_ATTEMPTS: "20"
       NIKKEI_SKIP_EXISTING_NOTION_URLS: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_existing || 'true' }}
       NIKKEI_ENABLE_PRE_TITLE_FILTER: ${{ github.event_name == 'workflow_dispatch' && inputs.pre_title_filter || 'true' }}
       NIKKEI_BLOCK_HEAVY_RESOURCES: ${{ github.event_name == 'workflow_dispatch' && inputs.block_heavy_resources || 'true' }}

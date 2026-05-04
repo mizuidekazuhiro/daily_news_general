@@ -251,21 +251,86 @@ def is_paper_index_title(title: str) -> bool:
     return bool(re.search(r'朝刊・夕刊(\s*\d+月\d+日.*付)?', t))
 
 
-def validate_article_body(text: str, page_title: str = '', source_title: str = '', h1_text: str = '') -> tuple[bool, str]:
+
+
+def normalize_title_for_match(title: str) -> str:
+    t = (title or '').strip()
+    t = re.sub(r'\s*-\s*日本経済新聞\s*$', '', t)
+    t = t.replace('　', ' ')
+    t = re.sub(r'\s+', '', t)
+    t = re.sub(r'[「」『』【】\[\]（）()〈〉《》“”"''・…‥,，、。\.!！?？:：;；/／\\-|]', '', t)
+    return t
+
+
+def title_tokens_for_match(title: str) -> list[str]:
+    norm = normalize_title_for_match(title)
+    return [tok for tok in re.findall(r'[\w぀-ヿ㐀-鿿]+', norm) if len(tok) >= 2]
+
+
+def article_title_match_result(source_title: str, page_title: str) -> dict:
+    src = normalize_title_for_match(source_title)
+    page = normalize_title_for_match(page_title)
+    src_tokens = title_tokens_for_match(source_title)
+    matched_tokens = [tok for tok in src_tokens if tok in page]
+    partial = bool(src and page and (src in page or page in src))
+    token_match_count = len(matched_tokens)
+    token_match_ratio = (token_match_count / len(src_tokens)) if src_tokens else 0.0
+    matched = partial or token_match_count >= 2 or token_match_ratio >= 0.4
+    return {
+        'matched': matched,
+        'partial_match': partial,
+        'source_norm': src,
+        'page_norm': page,
+        'source_token_count': len(src_tokens),
+        'matched_tokens': matched_tokens,
+        'token_match_count': token_match_count,
+        'token_match_ratio': round(token_match_ratio, 3),
+    }
+
+
+def text_headline_alignment(title: str, text: str) -> bool:
+    if not title or not text:
+        return False
+    t = normalize_title_for_match(title)
+    head = normalize_title_for_match((text or '')[:280])
+    if not t or not head:
+        return False
+    return t[:20] in head or head[:20] in t or sum(1 for tok in title_tokens_for_match(title) if tok in head) >= 2
+
+def validate_article_body(text: str, page_title: str = '', source_title: str = '', h1_text: str = '', article_url: str = '') -> tuple[bool, str]:
     cleaned = clean_article_text(text)
     if not cleaned:
         return False, 'empty_text'
-    if is_paper_index_title(page_title) or is_paper_index_title(h1_text):
+
+    metrics = article_body_quality_metrics(cleaned)
+    title_match = article_title_match_result(source_title, page_title)
+    headline_align = text_headline_alignment(source_title or page_title, cleaned)
+    strong_body = (
+        metrics['text_length'] >= MIN_LEN
+        and metrics['sentence_count_ja'] >= 2
+        and metrics['paragraph_count'] >= 2
+    )
+    likely_article = strong_body and (title_match['matched'] or headline_align)
+    paper_like_title = is_paper_index_title(page_title)
+    paper_like_h1 = is_paper_index_title(h1_text)
+    url_is_article = '/paper/article/' in (article_url or '')
+
+    if paper_like_title and not (url_is_article and likely_article):
         return False, 'paper_index_page_title'
-    if is_probably_navigation_text(cleaned):
+
+    nav_like = is_probably_navigation_text(cleaned)
+    if nav_like and not likely_article:
         return False, 'navigation_like_text'
+
     if len(cleaned) < MIN_LEN:
         return False, 'too_short'
-    if source_title and page_title and source_title.strip() not in page_title and page_title.strip() not in source_title:
-        # 一致しない場合は即失敗でなく警戒。本文品質が低い時にのみ失敗させる。
-        m = article_body_quality_metrics(cleaned)
-        if m['sentence_count_ja'] < 3:
+
+    if source_title and page_title and not title_match['matched']:
+        if metrics['sentence_count_ja'] < 3:
             return False, 'title_mismatch_with_low_quality'
+
+    # h1_textは診断用途のみ。単独で失敗にしない。
+    _ = paper_like_h1
     return True, ''
 
 
@@ -449,6 +514,8 @@ def main():
     raw_article_count = len(raw_arts)
     max_success_articles = MAX_SUCCESS_ARTICLES
     max_article_attempts = MAX_ARTICLE_ATTEMPTS
+    if max_success_articles > 0 and max_article_attempts == 0:
+        max_article_attempts = max(20, max_success_articles * 5)
     notion_diag = {}
     try:
         keys, existing_map, enabled, props, notion_diag = fetch_existing()
@@ -544,7 +611,7 @@ def main():
                     if embedded.get('articleBody'):
                         text = embedded.get('articleBody', '').strip()
                         extractor_name = f"embedded_json:{embedded.get('source','unknown')}"
-                    valid_body, rejection_reason = validate_article_body(text, page_title=page_title, source_title=a.get('title', ''), h1_text=h1_text)
+                    valid_body, rejection_reason = validate_article_body(text, page_title=page_title, source_title=a.get('title', ''), h1_text=h1_text, article_url=a.get('url', ''))
                     if extractor_name in {'[class*="content"]', 'document.body.innerText fallback'}:
                         valid_body = False
                         rejection_reason = 'disallowed_selector'
@@ -648,6 +715,10 @@ def main():
                             'screenshot_path': png_path, 'html_path': html_path, 'text_path': txt_path, 'artifact_html_path': html_path, 'artifact_screenshot_path': png_path,
                             'page_id': ex.get('page_id', ''), 'existing_page': bool(ex.get('page_id')),
                             'reason': failure_reason,
+                            'failure_reason': failure_reason,
+                            'h1_text': h1_text,
+                            'validation_metrics': article_body_quality_metrics(text),
+                            'article_title_match_result': article_title_match_result(a.get('title', ''), page_title),
                             'status_code': None,
                             'debug_json_path': debug_json_path,
                         })
@@ -676,7 +747,7 @@ def main():
     FAILED_JSON.write_text(json.dumps(fail, ensure_ascii=False, indent=2), encoding='utf-8')
     INVENTORY_JSON.write_text(json.dumps(inventory, ensure_ascii=False, indent=2), encoding='utf-8')
     only_failed = [x for x in fail if x.get('status') == 'failed']
-    reason_counts = Counter((x.get('reason') or x.get('error_type') or 'unknown') for x in only_failed)
+    reason_counts = Counter((x.get('reason') or x.get('failure_reason') or x.get('error_type') or 'unknown') for x in only_failed)
     fetch_success_count = len(res)
     fetch_failed_count = len(only_failed)
     remaining_unattempted_count = max(target_count - attempted_count, 0)
