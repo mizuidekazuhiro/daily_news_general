@@ -317,7 +317,6 @@ def select_text_with_candidates(page):
         ['[data-track-article-body]','[data-track-article-body]'],
         ['[class*="article"]','[class*="article"]'],
         ['[class*="body"]','[class*="body"]'],
-        ['[class*="content"]','[class*="content"]'],
         ['.articleBody','.articleBody'],
         ['.article-body','.article-body']
       ];
@@ -518,10 +517,19 @@ def main():
             ok = False
             for t in range(attempts):
                 use_block = BLOCK_HEAVY and not (RETRY_WITHOUT_BLOCK and t == attempts - 1)
-                c = b.new_context(storage_state=str(STORAGE_PATH), locale='ja-JP', timezone_id='Asia/Tokyo')
+                context = None
+                context = b.new_context(storage_state=str(STORAGE_PATH), locale='ja-JP', timezone_id='Asia/Tokyo')
                 if use_block:
-                    c.route('**/*', lambda route, req: route.abort() if req.resource_type in {'image', 'media', 'font'} else route.continue_())
-                page = c.new_page()
+                    def _route_handler(route, req):
+                        try:
+                            if req.resource_type in {'image', 'media', 'font'}:
+                                route.abort()
+                            else:
+                                route.continue_()
+                        except Exception as route_err:
+                            print(f'route_handler_warning: {type(route_err).__name__}: {route_err}')
+                    context.route('**/*', _route_handler)
+                page = context.new_page()
                 extract_data = {'snippets': {}, 'readyState': '', 'locationHref': ''}
                 selector_logs = []
                 try:
@@ -541,12 +549,12 @@ def main():
                         valid_body = False
                         rejection_reason = 'disallowed_selector'
                     candidate_diag = []
-                    for c in selector_logs:
-                        metrics = article_body_quality_metrics(c.get('text', ''))
+                    for candidate in selector_logs:
+                        metrics = article_body_quality_metrics(candidate.get('text', ''))
                         candidate_diag.append({
-                            'selector': c.get('selector', ''),
+                            'selector': candidate.get('selector', ''),
                             **metrics,
-                            'preview': (c.get('preview', '') or '')[:240],
+                            'preview': (candidate.get('preview', '') or '')[:240],
                         })
                     login_wall, paid_wall, access_denied = detect_walls(text + '\n' + page_text)
                     empty_body = len(text) == 0
@@ -607,9 +615,9 @@ def main():
                             failure_reason = str(e).split(':', 1)[1]
                         h1_text = (extract_data or {}).get('h1Text', '')
                         candidate_diag = []
-                        for c in selector_logs:
-                            metrics = article_body_quality_metrics(c.get('text', ''))
-                            candidate_diag.append({'selector': c.get('selector', ''), **metrics, 'preview': (c.get('preview', '') or '')[:240]})
+                        for candidate in selector_logs:
+                            metrics = article_body_quality_metrics(candidate.get('text', ''))
+                            candidate_diag.append({'selector': candidate.get('selector', ''), **metrics, 'preview': (candidate.get('preview', '') or '')[:240]})
                         if failure_reason == 'empty_body':
                             failure_reason = classify_empty_body_reason(text, page_text, login_wall, selector_logs, use_block)
                         Path(debug_json_path).write_text(json.dumps({
@@ -619,7 +627,7 @@ def main():
                             'html_snippets': (extract_data or {}).get('snippets', {}),
                             'document_ready_state': (extract_data or {}).get('readyState', ''),
                             'location_href': (extract_data or {}).get('locationHref', ''),
-                            'selector_lengths': {c.get('selector', ''): int(c.get('text_length', 0)) for c in selector_logs if c.get('selector')},
+                            'selector_lengths': {candidate.get('selector', ''): int(candidate.get('text_length', 0)) for candidate in selector_logs if candidate.get('selector')},
                         }, ensure_ascii=False, indent=2), encoding='utf-8')
                         is_timeout = isinstance(e, PlaywrightTimeoutError)
                         ex = existing_map.get(a['url'], {})
@@ -628,7 +636,7 @@ def main():
                             'final_page_url': page.url if page else '', 'final_url': page.url if page else '', 'error_type': type(e).__name__, 'error_message': str(e),
                             'text_length': len(text), 'body_length': len(text), 'page_title': page_title, 'body_text_preview': text[:500],
                             'selector_used': selector_used, 'selector_candidates': selector_logs,
-                            'selector_lengths': {c.get('selector', ''): int(c.get('text_length', 0)) for c in selector_logs if c.get('selector')},
+                            'selector_lengths': {candidate.get('selector', ''): int(candidate.get('text_length', 0)) for candidate in selector_logs if candidate.get('selector')},
                             'is_login_wall_detected': login_wall, 'is_paid_article_wall_detected': paid_wall,
                             'is_access_denied_detected': access_denied, 'is_timeout': is_timeout,
                             'is_empty_body': len(text) == 0, 'is_too_short': 0 < len(text) < MIN_LEN,
@@ -652,7 +660,11 @@ def main():
                         reason = 'failed_timeout' if is_timeout else ('failed_access_denied' if access_denied else ('failed_empty_body' if len(text) == 0 else 'failed_other'))
                         inventory.append({'url': a['url'], 'title': a.get('title', ''), 'status': reason, 'page_id': '', 'has_existing_body': False, 'source': 'fetch_failed', 'final_url': page.url if page else '', 'artifact_path': {'html': html_path, 'screenshot': png_path, 'text': txt_path}})
                 finally:
-                    c.close()
+                    if context is not None:
+                        try:
+                            context.close()
+                        except Exception as close_err:
+                            print(f"context_close_warning: {type(close_err).__name__}: {close_err}")
             time.sleep(SLEEP_SECONDS)
             if not ok:
                 pass

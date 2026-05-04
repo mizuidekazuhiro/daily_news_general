@@ -50,7 +50,7 @@ def build_props_payload(article: dict[str, Any], db_props: dict[str, Any], missi
     def ptype(name: str) -> str:
         return (db_props.get(name) or {}).get("type", "")
 
-    targets = ["Importance Score", "Priority", "Tags", "Reason to Read", "Matched Rules", "Exclude Candidate", "Exclude Reason", "Included in Report", "Report Selection Reason", "Report Excluded Reason"]
+    targets = ["Importance Score", "Priority", "Tags", "Reason to Read", "Matched Rules", "Exclude Candidate", "Exclude Reason", "Included in Report", "Report Selection Reason", "Report Excluded Reason", "Business Impact Areas", "Watch Themes", "Country Tags", "Sector Tags", "Importance Tags", "Negative Matches", "Score Breakdown", "Body Used For Scoring"]
     for t in targets:
         if t not in db_props:
             missing.add(t)
@@ -85,6 +85,19 @@ def build_props_payload(article: dict[str, Any], db_props: dict[str, Any], missi
     if ptype("Report Excluded Reason") == "rich_text":
         payload["Report Excluded Reason"] = {"rich_text": rt(str(article.get("report_excluded_reason") or ""))}
 
+    def set_list(name,key):
+        vals=[str(x) for x in article.get(key,[]) if str(x).strip()]
+        if ptype(name)=="multi_select": payload[name]={"multi_select":[{"name":v[:100]} for v in vals]}
+        elif ptype(name)=="rich_text": payload[name]={"rich_text":rt("、".join(vals))}
+    set_list("Business Impact Areas","business_impact_areas")
+    set_list("Watch Themes","watch_themes")
+    set_list("Country Tags","country_tags")
+    set_list("Sector Tags","sector_tags")
+    set_list("Importance Tags","importance_tags")
+    if ptype("Negative Matches")=="rich_text": payload["Negative Matches"]={"rich_text":rt("\n".join(str(x) for x in article.get("negative_matches",[])))}
+    if ptype("Score Breakdown")=="rich_text": payload["Score Breakdown"]={"rich_text":rt(json.dumps(article.get("score_breakdown",[]),ensure_ascii=False)[:1900])}
+    if ptype("Body Used For Scoring")=="checkbox": payload["Body Used For Scoring"]={"checkbox":bool(article.get("body_used_for_scoring",False))}
+
     return payload
 
 
@@ -117,8 +130,15 @@ def main() -> int:
         raise RuntimeError("URL 検索可能なプロパティが見つかりません")
 
     items = json.loads(INPUT_JSON.read_text(encoding="utf-8"))
-    query_resp = notion_req(token, "POST", f"https://api.notion.com/v1/databases/{db_id}/query", json={"page_size": 100})
-    pages = query_resp.json().get("results", [])
+    pages=[]
+    cur=None
+    while True:
+        qp={"page_size":100}
+        if cur: qp["start_cursor"]=cur
+        qr=notion_req(token,"POST",f"https://api.notion.com/v1/databases/{db_id}/query",json=qp).json()
+        pages.extend(qr.get("results",[]))
+        if not qr.get("has_more"): break
+        cur=qr.get("next_cursor")
     url_index: dict[str, dict[str, Any]] = {}
     for p in pages:
         props = p.get("properties", {})
