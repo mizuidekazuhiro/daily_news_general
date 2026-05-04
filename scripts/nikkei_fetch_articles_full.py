@@ -20,6 +20,7 @@ FAILED_JSON = Path('logs/nikkei_articles_failed.json')
 FAILED_DIR = Path('logs/nikkei_failed_articles')
 SUMMARY_JSON = Path('logs/nikkei_fetch_summary.json')
 INVENTORY_JSON = Path('logs/nikkei_issue_run_inventory.json')
+DOM_CANDIDATES_JSONL = Path('logs/nikkei_article_dom_candidates.jsonl')
 
 MAX_SUCCESS_ARTICLES = int(os.getenv('NIKKEI_MAX_SUCCESS_ARTICLES', os.getenv('NIKKEI_MAX_ARTICLES_TO_FETCH', '0')))
 MAX_ARTICLE_ATTEMPTS = int(os.getenv('NIKKEI_MAX_ARTICLE_ATTEMPTS', '0'))
@@ -202,6 +203,72 @@ def looks_like_noise(text: str) -> bool:
     return False
 
 
+NAV_KEYWORDS = [
+    '速報', 'アクセスランキング', 'トピック一覧', '人事', 'おくやみ', 'プレスリリース',
+    'メディア一覧', 'NIKKEI Digital Governance', 'NIKKEI Financial', 'ビューアーで読む',
+    'メニュー', 'カテゴリ', '一覧',
+]
+
+
+def clean_article_text(text: str) -> str:
+    txt = (text or '').replace('\xa0', ' ')
+    txt = re.sub(r'\r\n?', '\n', txt)
+    txt = re.sub(r'\n{3,}', '\n\n', txt)
+    return txt.strip()
+
+
+def article_body_quality_metrics(text: str) -> dict:
+    cleaned = clean_article_text(text)
+    lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
+    counts = Counter(lines)
+    duplicate_line_ratio = 0.0
+    if lines:
+        duplicate_line_ratio = sum(v for v in counts.values() if v > 1) / len(lines)
+    sentence_count_ja = len(re.findall(r'。', cleaned))
+    paragraph_count = sum(1 for ln in lines if len(ln) >= 20)
+    nav_keyword_hits = sum(cleaned.count(k) for k in NAV_KEYWORDS)
+    return {
+        'text_length': len(cleaned),
+        'paragraph_count': paragraph_count,
+        'sentence_count_ja': sentence_count_ja,
+        'nav_keyword_hits': nav_keyword_hits,
+        'duplicate_line_ratio': duplicate_line_ratio,
+    }
+
+
+def is_probably_navigation_text(text: str) -> bool:
+    m = article_body_quality_metrics(text)
+    return (
+        m['nav_keyword_hits'] >= 3
+        or m['sentence_count_ja'] <= 1
+        or m['duplicate_line_ratio'] >= 0.35
+        or (m['paragraph_count'] <= 2 and m['text_length'] < 700)
+    )
+
+
+def is_paper_index_title(title: str) -> bool:
+    t = (title or '').strip()
+    return bool(re.search(r'朝刊・夕刊(\s*\d+月\d+日.*付)?', t))
+
+
+def validate_article_body(text: str, page_title: str = '', source_title: str = '', h1_text: str = '') -> tuple[bool, str]:
+    cleaned = clean_article_text(text)
+    if not cleaned:
+        return False, 'empty_text'
+    if is_paper_index_title(page_title) or is_paper_index_title(h1_text):
+        return False, 'paper_index_page_title'
+    if is_probably_navigation_text(cleaned):
+        return False, 'navigation_like_text'
+    if len(cleaned) < MIN_LEN:
+        return False, 'too_short'
+    if source_title and page_title and source_title.strip() not in page_title and page_title.strip() not in source_title:
+        # 一致しない場合は即失敗でなく警戒。本文品質が低い時にのみ失敗させる。
+        m = article_body_quality_metrics(cleaned)
+        if m['sentence_count_ja'] < 3:
+            return False, 'title_mismatch_with_low_quality'
+    return True, ''
+
+
 def extract_from_embedded_json(page):
     script = r'''() => {
       const out = {articleBody: '', headline: '', datePublished: '', source: ''};
@@ -240,7 +307,8 @@ def extract_from_embedded_json(page):
 
 def select_text_with_candidates(page):
     script = r'''() => {
-      const title = document.querySelector('h1')?.innerText?.trim() || document.title || '';
+      const h1Text = document.querySelector('h1')?.innerText?.trim() || '';
+      const title = document.title || h1Text || '';
       const cands = [
         ['div.cmn-section.cmn-indent','div.cmn-section.cmn-indent'],
         ['article','article'],
@@ -266,12 +334,27 @@ def select_text_with_candidates(page):
         const node = document.querySelector(sel);
         snippets[sel] = (node?.outerHTML || '').slice(0, 3000);
       }
-      return {title, candidates: out, pageText: bodyText, snippets, readyState: document.readyState, locationHref: location.href};
+      return {title, h1Text, candidates: out, pageText: bodyText, snippets, readyState: document.readyState, locationHref: location.href};
     }'''
     data = page.evaluate(script)
     candidates = data.get('candidates', [])
-    valid = [c for c in candidates if c.get('text_length', 0) > 0 and not looks_like_noise(c.get('text', ''))]
-    best = max(valid, key=lambda x: x.get('text_length', 0)) if valid else {'selector': 'none', 'text': '', 'text_length': 0}
+    preferred = [
+        'article',
+        'main',
+        '.cmn-section',
+        '[data-track-article-body]',
+        '.articleBody',
+        '.article-body',
+        '[class*="article"]',
+        '[class*="body"]',
+    ]
+    best = {'selector': 'none', 'text': '', 'text_length': 0}
+    cand_map = {c.get('selector'): c for c in candidates}
+    for key in preferred:
+        c = cand_map.get(key)
+        if c and c.get('text_length', 0) > 0 and not looks_like_noise(c.get('text', '')):
+            best = c
+            break
     return data, data.get('title', ''), candidates, best, data.get('pageText', '')
 
 
@@ -420,6 +503,7 @@ def main():
         inventory.append({'url': a['url'], 'title': a.get('title', ''), 'status': 'existing_in_notion', 'page_id': ex.get('page_id', ''), 'has_existing_body': bool(ex.get('text')), 'source': 'notion_existing', 'notion_existing': ex})
 
     res, fail = [], []
+    dom_candidate_logs = []
     retry_without_resource_block_success = False
     with sync_playwright() as p:
         b = p.chromium.launch(headless=True)
@@ -445,12 +529,25 @@ def main():
                     page.wait_for_timeout(WAIT_AFTER)
                     wait_for_article_content(page)
                     extract_data, page_title, selector_logs, best, page_text = select_text_with_candidates(page)
+                    h1_text = extract_data.get('h1Text', '')
                     embedded = extract_from_embedded_json(page)
-                    text = (best.get('text') or '').strip()
+                    text = clean_article_text(best.get('text') or '')
                     extractor_name = best.get('selector', '')
-                    if len(text) < MIN_LEN and embedded.get('articleBody'):
+                    if embedded.get('articleBody'):
                         text = embedded.get('articleBody', '').strip()
                         extractor_name = f"embedded_json:{embedded.get('source','unknown')}"
+                    valid_body, rejection_reason = validate_article_body(text, page_title=page_title, source_title=a.get('title', ''), h1_text=h1_text)
+                    if extractor_name in {'[class*="content"]', 'document.body.innerText fallback'}:
+                        valid_body = False
+                        rejection_reason = 'disallowed_selector'
+                    candidate_diag = []
+                    for c in selector_logs:
+                        metrics = article_body_quality_metrics(c.get('text', ''))
+                        candidate_diag.append({
+                            'selector': c.get('selector', ''),
+                            **metrics,
+                            'preview': (c.get('preview', '') or '')[:240],
+                        })
                     login_wall, paid_wall, access_denied = detect_walls(text + '\n' + page_text)
                     empty_body = len(text) == 0
                     too_short = len(text) < MIN_LEN
@@ -459,6 +556,8 @@ def main():
                         fail.append({'status': 'excluded', 'exclude_reason': r, 'url': a['url'], 'source_title': a.get('title', '')})
                         ok = True
                         break
+                    if not valid_body:
+                        raise RuntimeError(f'invalid_article_body:{rejection_reason}')
                     if looks_like_noise(text) and too_short:
                         raise RuntimeError('noise_or_empty_body')
                     if too_short and not (len(text) >= 40 and not login_wall and not paid_wall and not access_denied):
@@ -473,6 +572,11 @@ def main():
                         'text_length': len(text), 'text': text, 'selector_used': extractor_name, 'selector_candidates': selector_logs,
                     }
                     print(f"[article] index={i} url={a['url']} final_url={page.url} title={page_title} extracted_text_length={len(text)} selected_extractor_name={extractor_name} failure_reason=")
+                    dom_candidate_logs.append({
+                        'url': a['url'], 'final_url': page.url, 'source_title': a.get('title', ''), 'page_title': page_title, 'h1_text': h1_text,
+                        'selector_used': extractor_name, 'selected_text_length': len(text), 'selected_preview': text[:240], 'extraction_status': 'success',
+                        'rejection_reason': '', 'candidates': candidate_diag,
+                    })
                     ex = existing_map.get(a['url'], {})
                     if ex.get('page_id'):
                         record['source'] = 'backfill_existing'
@@ -499,6 +603,13 @@ def main():
                             selector_logs = []
                         html_path, png_path, txt_path, debug_json_path = save_failure_artifacts(page, i)
                         failure_reason = 'empty_body' if len(text) == 0 else ('too_short' if 0 < len(text) < MIN_LEN else type(e).__name__)
+                        if 'invalid_article_body:' in str(e):
+                            failure_reason = str(e).split(':', 1)[1]
+                        h1_text = (extract_data or {}).get('h1Text', '')
+                        candidate_diag = []
+                        for c in selector_logs:
+                            metrics = article_body_quality_metrics(c.get('text', ''))
+                            candidate_diag.append({'selector': c.get('selector', ''), **metrics, 'preview': (c.get('preview', '') or '')[:240]})
                         if failure_reason == 'empty_body':
                             failure_reason = classify_empty_body_reason(text, page_text, login_wall, selector_logs, use_block)
                         Path(debug_json_path).write_text(json.dumps({
@@ -532,6 +643,11 @@ def main():
                             'status_code': None,
                             'debug_json_path': debug_json_path,
                         })
+                        dom_candidate_logs.append({
+                            'url': a['url'], 'final_url': page.url if page else '', 'source_title': a.get('title', ''), 'page_title': page_title,
+                            'h1_text': h1_text, 'selector_used': selector_used, 'selected_text_length': len(text), 'selected_preview': text[:240],
+                            'extraction_status': 'failed', 'rejection_reason': failure_reason, 'candidates': candidate_diag,
+                        })
                         print(f"[article] index={i} url={a['url']} final_url={page.url if page else ''} title={page_title} extracted_text_length={len(text)} selected_extractor_name={selector_used} failure_reason={failure_reason}")
                         reason = 'failed_timeout' if is_timeout else ('failed_access_denied' if access_denied else ('failed_empty_body' if len(text) == 0 else 'failed_other'))
                         inventory.append({'url': a['url'], 'title': a.get('title', ''), 'status': reason, 'page_id': '', 'has_existing_body': False, 'source': 'fetch_failed', 'final_url': page.url if page else '', 'artifact_path': {'html': html_path, 'screenshot': png_path, 'text': txt_path}})
@@ -543,6 +659,8 @@ def main():
         b.close()
 
     OUTPUT_JSON.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding='utf-8')
+    DOM_CANDIDATES_JSONL.parent.mkdir(parents=True, exist_ok=True)
+    DOM_CANDIDATES_JSONL.write_text('\n'.join(json.dumps(x, ensure_ascii=False) for x in dom_candidate_logs) + ('\n' if dom_candidate_logs else ''), encoding='utf-8')
     FAILED_JSON.write_text(json.dumps(fail, ensure_ascii=False, indent=2), encoding='utf-8')
     INVENTORY_JSON.write_text(json.dumps(inventory, ensure_ascii=False, indent=2), encoding='utf-8')
     only_failed = [x for x in fail if x.get('status') == 'failed']
