@@ -132,6 +132,17 @@ def load_rules(token: str, rules_db_id: str, rule_types: set[str]) -> list[dict[
     return rules
 
 
+
+
+def derive_tags_from_rules(tags_by_type: dict[str,list[str]]) -> dict[str,list[str]]:
+    return {
+        'country_tags': tags_by_type.get('country', []),
+        'sector_tags': tags_by_type.get('sector', []),
+        'importance_tags': tags_by_type.get('importance', []),
+        'business_impact_areas': tags_by_type.get('business_impact', []),
+        'watch_themes': tags_by_type.get('watch_theme', []),
+    }
+
 def score_article(article: dict[str, Any], rules: list[dict[str, Any]], min_report_score: float) -> dict[str, Any]:
     source_title = str(article.get("source_title") or "")
     page_title = str(article.get("page_title") or "")
@@ -146,6 +157,7 @@ def score_article(article: dict[str, Any], rules: list[dict[str, Any]], min_repo
     priority = 0
     tags: list[str] = []
     matched_rules: list[str] = []
+    tags_by_type: dict[str, list[str]] = {}
     negative_matches: list[str] = []
     score_breakdown: list[dict[str, Any]] = []
 
@@ -164,6 +176,11 @@ def score_article(article: dict[str, Any], rules: list[dict[str, Any]], min_repo
                 tags.append(tag)
             if tag and tag not in matched_rules:
                 matched_rules.append(tag)
+            rtype = str(rule.get('rule_type') or '')
+            if tag and rtype:
+                tags_by_type.setdefault(rtype, [])
+                if tag not in tags_by_type[rtype]:
+                    tags_by_type[rtype].append(tag)
             score_breakdown.append({"tag": tag, "type": "positive", "hits": positive_hits, "weight": rule.get("weight", 0.0)})
 
         if negative_hits:
@@ -181,6 +198,7 @@ def score_article(article: dict[str, Any], rules: list[dict[str, Any]], min_repo
     else:
         reason_to_read = ""
 
+    derived = derive_tags_from_rules(tags_by_type)
     out = dict(article)
     out.update(
         {
@@ -194,6 +212,7 @@ def score_article(article: dict[str, Any], rules: list[dict[str, Any]], min_repo
             "exclude_reason": exclude_reason,
             "score_breakdown": score_breakdown,
             "body_used_for_scoring": body_used_for_scoring,
+            **derived,
         }
     )
     return out

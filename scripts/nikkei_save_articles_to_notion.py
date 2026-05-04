@@ -1,277 +1,123 @@
-import json
-import os
-import time
+import json, os, time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
-
 import requests
 from dotenv import load_dotenv
-
 load_dotenv()
+NOTION_TOKEN=os.getenv('NOTION_TOKEN','').strip(); DATABASE_ID=(os.getenv('NIKKEI_ARTICLES_DB_ID','') or os.getenv('NOTION_ARTICLE_DB_ID','')).strip()
+INPUT_JSON=Path('logs/nikkei_articles_full.json'); FAILED_LOG_JSON=Path('logs/nikkei_save_failed.json'); NOTION_VERSION='2022-06-28'
+SUMMARY_SOURCE_FIELDS=['summary','description','meta_description','body_summary']
+PROP_CANDS={
+'url':['URL','Url','url','Link','Article URL','Source URL'],'issue':['Issue Date','Issued Date','Published Date'],'edition':['Edition'],
+'source':['Source','Media','媒体'],'fetch':['Fetch Status'],'full':['Full Text Status','FullText Status','Body Status','Extraction Status'],
+'text_len':['Text Length'],'img_count':['Image Count'],'gpt':['GPT Processed'],'has_image':['Has Image'],'has_chart':['Has Chart'],
+'img_url':['Image URL'],'img_cap':['Image Caption'],'body':['Body','Article Body','Article Text','Text','Content','本文','記事本文'],'summary':['Summary','要約','AI Summary']}
 
-NOTION_TOKEN = os.getenv("NOTION_TOKEN", "").strip()
-DATABASE_ID = (os.getenv("NIKKEI_ARTICLES_DB_ID", "") or os.getenv("NOTION_ARTICLE_DB_ID", "")).strip()
-INPUT_JSON = Path("logs/nikkei_articles_full.json")
-FAILED_LOG_JSON = Path("logs/nikkei_save_failed.json")
-NOTION_VERSION = "2022-06-28"
+def headers(): return {'Authorization':f'Bearer {NOTION_TOKEN}','Notion-Version':NOTION_VERSION,'Content-Type':'application/json'}
+def req(method,url,**kwargs):
+ r=requests.request(method,url,headers=headers(),timeout=60,**kwargs); 
+ if r.status_code==429: time.sleep(int(r.headers.get('Retry-After','2'))); return req(method,url,**kwargs)
+ r.raise_for_status(); return r
 
-SUMMARY_SOURCE_FIELDS = ["summary", "description", "meta_description", "body_summary"]
-BODY_PROP_NAMES = ["Body", "Article Body", "Article Text", "Text", "Content", "本文", "記事本文", "Scoring Text", "スコアリング用本文"]
-SUMMARY_PROP_NAMES = ["Summary", "要約", "AI Summary"]
-ISSUE_DATE_PROP_NAMES = ["Issue Date", "Issued Date", "Published Date"]
-
-
-def headers():
-    return {
-        "Authorization": f"Bearer {NOTION_TOKEN}",
-        "Notion-Version": NOTION_VERSION,
-        "Content-Type": "application/json",
-    }
-
-
-def req(method, url, **kwargs):
-    for _ in range(6):
-        r = requests.request(method, url, headers=headers(), timeout=60, **kwargs)
-        if r.status_code == 429:
-            time.sleep(int(r.headers.get("Retry-After", "2")))
-            continue
-        r.raise_for_status()
-        return r
-    r.raise_for_status()
-
-
-def ng(url):
-    return (parse_qs(urlparse(url).query).get("ng") or [""])[0]
-
+def ng(url): return (parse_qs(urlparse(url).query).get('ng') or [''])[0]
+def clean_text(t): return (t or '').strip()
+def is_nav(t):
+ x=clean_text(t); kws=['速報','アクセスランキング','トピック一覧','人事','おくやみ','プレスリリース','メディア一覧','ビューアーで読む']
+ return sum(x.count(k) for k in kws)>=3
 
 def load_existing():
-    keys = set()
-    pages = {}
-    cursor = None
-    while True:
-        payload = {"page_size": 100}
-        if cursor:
-            payload["start_cursor"] = cursor
-        d = req("POST", f"https://api.notion.com/v1/databases/{DATABASE_ID}/query", json=payload).json()
-        for it in d.get("results", []):
-            p = it.get("properties", {}).get("URL", {})
-            u = ""
-            if p.get("type") == "url":
-                u = p.get("url") or ""
-            elif p.get("type") == "rich_text":
-                u = "".join(x.get("plain_text", "") for x in p.get("rich_text", []))
-            if u:
-                keys.add(u)
-                nid = ng(u)
-                if nid:
-                    keys.add(nid)
-                pages[u] = it.get("id", "")
-        if not d.get("has_more"):
-            break
-        cursor = d.get("next_cursor")
-    return keys, pages
+ keys=set(); pages={}; cur=None
+ while True:
+  p={'page_size':100};
+  if cur: p['start_cursor']=cur
+  d=req('POST',f'https://api.notion.com/v1/databases/{DATABASE_ID}/query',json=p).json()
+  for it in d.get('results',[]):
+   props=it.get('properties',{}); pid=it.get('id','')
+   for n,v in props.items():
+    if v.get('type') not in {'url','rich_text'}: continue
+    u=(v.get('url') or '') if v.get('type')=='url' else ''.join(x.get('plain_text','') for x in v.get('rich_text',[]))
+    if u:
+      keys.add(u); pages[u]=pid; nid=ng(u)
+      if nid: keys.add(nid); keys.add(f'ng:{nid}'); pages[nid]=pid; pages[f'ng:{nid}']=pid
+  if not d.get('has_more'): break
+  cur=d.get('next_cursor')
+ return keys,pages
 
+def find_prop(props,cands):
+ for n in cands:
+  if n in props: return n
+ return None
 
-def resolve_prop(props, names, allowed=("rich_text",)):
-    for name in names:
-        meta = props.get(name)
-        if meta and meta.get("type") in allowed:
-            return name
-    return None
+def set_prop(meta,val):
+ t=meta.get('type')
+ if val is None: return None
+ if t=='title': return {'title':[{'type':'text','text':{'content':str(val)[:1900]}}]}
+ if t=='rich_text': return {'rich_text':[{'type':'text','text':{'content':str(val)[:1900]}}]}
+ if t=='select': return {'select':{'name':str(val)[:100]}}
+ if t=='multi_select': return {'multi_select':[{'name':str(x)[:100]} for x in (val if isinstance(val,list) else [val]) if str(x).strip()]}
+ if t=='number': return {'number':float(val)}
+ if t=='checkbox': return {'checkbox':bool(val)}
+ if t=='date': return {'date':{'start':str(val)}}
+ if t=='url': return {'url':str(val)}
+ return None
+
+def get_summary_text(a):
+ for k in SUMMARY_SOURCE_FIELDS:
+  v=clean_text(a.get(k,''));
+  if v: return v
+ return ''
+
 
 
 def split_blocks(text, limit=1800):
-    out = []
-    cur = ""
-    for ln in [x.strip() for x in (text or "").splitlines() if x.strip()]:
-        if cur and len(cur) + len(ln) + 1 > limit:
-            out.append(cur)
-            cur = ln
-        else:
-            cur = (cur + "\n" + ln).strip()
-    if cur:
-        out.append(cur)
+    out=[]; cur=''
+    for ln in [x.strip() for x in (text or '').splitlines() if x.strip()]:
+        if cur and len(cur)+len(ln)+1>limit: out.append(cur); cur=ln
+        else: cur=(cur+'\n'+ln).strip()
+    if cur: out.append(cur)
     return out
 
-
-def append_body_blocks(page_id, text):
-    chunks = split_blocks(text)
-    if not chunks:
-        return 0
-    children = [{
-        "object": "block",
-        "type": "heading_2",
-        "heading_2": {"rich_text": [{"type": "text", "text": {"content": "記事本文"}}]},
-    }]
-    children += [{
-        "object": "block",
-        "type": "paragraph",
-        "paragraph": {"rich_text": [{"type": "text", "text": {"content": c}}]},
-    } for c in chunks]
-
-    appended = 0
-    for i in range(0, len(children), 100):
-        packet = children[i:i + 100]
-        req("PATCH", f"https://api.notion.com/v1/blocks/{page_id}/children", json={"children": packet})
-        appended += len(packet)
-    return appended
-
-
-def get_summary_text(article):
-    for key in SUMMARY_SOURCE_FIELDS:
-        value = (article.get(key) or "").strip()
-        if value:
-            return value
-    return ""
-
-
-def set_typed_prop(prop_meta, value):
-    if not value:
-        return None
-    ptype = prop_meta.get("type")
-    if ptype == "rich_text":
-        return {"rich_text": [{"type": "text", "text": {"content": str(value)[:1900]}}]}
-    if ptype == "date":
-        return {"date": {"start": str(value)}}
-    if ptype == "select":
-        return {"select": {"name": str(value)}}
-    return None
-
+def append_body_blocks(page_id,text):
+    chunks=split_blocks(text)
+    if not chunks: return 0
+    children=[{"object":"block","type":"heading_2","heading_2":{"rich_text":[{"type":"text","text":{"content":"記事本文"}}]}}]
+    children += [{"object":"block","type":"paragraph","paragraph":{"rich_text":[{"type":"text","text":{"content":c[:1900]}}]}} for c in chunks]
+    req('PATCH',f'https://api.notion.com/v1/blocks/{page_id}/children',json={'children':children[:100]}); return len(children)
 
 def has_body_heading(page_id):
-    cursor = None
-    while True:
-        url = f"https://api.notion.com/v1/blocks/{page_id}/children?page_size=100"
-        if cursor:
-            url += f"&start_cursor={cursor}"
-        data = req("GET", url).json()
-        for b in data.get("results", []):
-            if b.get("type") == "heading_2":
-                rich = b.get("heading_2", {}).get("rich_text", [])
-                text = "".join(x.get("plain_text", "") for x in rich)
-                if text.strip() == "記事本文":
-                    return True
-        if not data.get("has_more"):
-            return False
-        cursor = data.get("next_cursor")
-
+    data=req('GET',f'https://api.notion.com/v1/blocks/{page_id}/children?page_size=100').json()
+    for b in data.get('results',[]):
+        if b.get('type')=='heading_2':
+            t=''.join(x.get('plain_text','') for x in b.get('heading_2',{}).get('rich_text',[]))
+            if t.strip()=='記事本文': return True
+    return False
 
 def main():
-    arts = json.loads(INPUT_JSON.read_text(encoding="utf-8")) if INPUT_JSON.exists() else []
-    if not arts:
-        print("existing_url_count: 0")
-        print("saved: 0")
-        print("skipped: 0")
-        print("failed: 0")
-        print("updated_existing: 0")
-        return
-
-    props = req("GET", f"https://api.notion.com/v1/databases/{DATABASE_ID}").json().get("properties", {})
-    title_prop = next((k for k, v in props.items() if v.get("type") == "title"), None)
-    body_prop = resolve_prop(props, BODY_PROP_NAMES)
-    summary_prop = resolve_prop(props, SUMMARY_PROP_NAMES)
-    issue_date_prop = resolve_prop(props, ISSUE_DATE_PROP_NAMES, allowed=("date", "select", "rich_text"))
-    edition_prop = resolve_prop(props, ["Edition"], allowed=("date", "select", "rich_text"))
-
-    keys, pages = load_existing()
-    print("existing_url_count:", len(keys))
-    saved = skipped = failed = updated_existing = 0
-    body_blocks_appended = summary_written = summary_skipped_no_summary_field = 0
-    issue_date_written = edition_written = 0
-    failures = []
-
-    for a in arts:
-        u = a.get("url", "")
-        k = ng(u)
-        page_id = a.get("page_id") or pages.get(u, "")
-        text = (a.get("text") or "").strip()
-        title = (a.get("source_title") or a.get("page_title") or "Untitled")[:2000]
-        summary_text = get_summary_text(a)
-        is_existing = (u in keys) or (k and k in keys) or bool(page_id)
-
-        try:
-            if is_existing and page_id:
-                patch = {}
-                if body_prop and text:
-                    patch[body_prop] = {"rich_text": [{"type": "text", "text": {"content": text[:1900]}}]}
-                if summary_prop:
-                    if summary_text:
-                        patch[summary_prop] = {"rich_text": [{"type": "text", "text": {"content": summary_text[:1900]}}]}
-                        summary_written += 1
-                    else:
-                        summary_skipped_no_summary_field += 1
-                if issue_date_prop and a.get("issue_date"):
-                    issue_value = set_typed_prop(props[issue_date_prop], a.get("issue_date"))
-                    if issue_value:
-                        patch[issue_date_prop] = issue_value
-                        issue_date_written += 1
-                if edition_prop and a.get("edition") in ("morning", "evening"):
-                    edition_value = set_typed_prop(props[edition_prop], a.get("edition"))
-                    if edition_value:
-                        patch[edition_prop] = edition_value
-                        edition_written += 1
-                if patch:
-                    req("PATCH", f"https://api.notion.com/v1/pages/{page_id}", json={"properties": patch})
-                if text and not has_body_heading(page_id):
-                    body_blocks_appended += append_body_blocks(page_id, text)
-                updated_existing += 1
-                skipped += 1
-                continue
-
-            if is_existing:
-                skipped += 1
-                continue
-
-            properties = {title_prop: {"title": [{"text": {"content": title}}]}}
-            if "URL" in props:
-                properties["URL"] = {"url": u}
-            if body_prop and text:
-                properties[body_prop] = {"rich_text": [{"type": "text", "text": {"content": text[:1900]}}]}
-            if summary_prop:
-                if summary_text:
-                    properties[summary_prop] = {"rich_text": [{"type": "text", "text": {"content": summary_text[:1900]}}]}
-                    summary_written += 1
-                else:
-                    summary_skipped_no_summary_field += 1
-            if issue_date_prop and a.get("issue_date"):
-                issue_value = set_typed_prop(props[issue_date_prop], a.get("issue_date"))
-                if issue_value:
-                    properties[issue_date_prop] = issue_value
-                    issue_date_written += 1
-            if edition_prop and a.get("edition") in ("morning", "evening"):
-                edition_value = set_typed_prop(props[edition_prop], a.get("edition"))
-                if edition_value:
-                    properties[edition_prop] = edition_value
-                    edition_written += 1
-
-            payload = {"parent": {"database_id": DATABASE_ID}, "properties": properties}
-            created = req("POST", "https://api.notion.com/v1/pages", json=payload).json()
-            if text and created.get("id"):
-                body_blocks_appended += append_body_blocks(created["id"], text)
-            saved += 1
-        except Exception as e:
-            failed += 1
-            failures.append({
-                "url": u,
-                "title": title,
-                "error_type": type(e).__name__,
-                "error_message": str(e),
-            })
-
-    if failures:
-        FAILED_LOG_JSON.parent.mkdir(parents=True, exist_ok=True)
-        FAILED_LOG_JSON.write_text(json.dumps(failures, ensure_ascii=False, indent=2), encoding="utf-8")
-
-    print("saved:", saved)
-    print("skipped:", skipped)
-    print("failed:", failed)
-    print("updated_existing:", updated_existing)
-    print("body_blocks_appended:", body_blocks_appended)
-    print("summary_written:", summary_written)
-    print("summary_skipped_no_summary_field:", summary_skipped_no_summary_field)
-    print("issue_date_written:", issue_date_written)
-    print("edition_written:", edition_written)
-
-
-if __name__ == "__main__":
-    main()
+ arts=json.loads(INPUT_JSON.read_text()) if INPUT_JSON.exists() else []
+ props=req('GET',f'https://api.notion.com/v1/databases/{DATABASE_ID}').json().get('properties',{})
+ keys,pages=load_existing(); fails=[]; stats={k:0 for k in ['metadata_written_count','source_written','fetch_status_written','full_text_status_written','text_length_written','image_count_written','has_image_written','has_chart_written']}; missing=[]; skipped=[]
+ mapn={k:find_prop(props,v) for k,v in PROP_CANDS.items()}
+ for a in arts:
+  u=a.get('url','').strip(); text=clean_text(a.get('text','')); extraction=a.get('extraction_status','success')
+  rejected=is_nav(text) or extraction=='failed'; full='saved' if text and not rejected else ('failed' if extraction=='failed' else 'rejected_navigation_text')
+  clean='' if rejected else text; summary=get_summary_text(a); pid=a.get('page_id') or pages.get(u) or pages.get(ng(u)) or pages.get(f"ng:{ng(u)}")
+  payload={}; fields={'url':u,'issue':a.get('issue_date'),'edition':a.get('edition'),'source':'Nikkei','fetch':a.get('status') or extraction or 'success','full':full,'text_len':len(clean) if clean else 0,'img_count':a.get('image_count',0) or 0,'gpt':False,'has_image':bool((a.get('image_count',0) or 0)>0 or a.get('image_url')),'has_chart':bool(a.get('has_chart',False)),'img_url':a.get('image_url',''),'img_cap':a.get('image_caption','')}
+  if clean and mapn['body']: fields['body']=clean
+  if summary and mapn['summary']: fields['summary']=summary
+  for key,val in fields.items():
+   pn=mapn.get(key)
+   if not pn: missing.append(key); continue
+   patch=set_prop(props[pn],val)
+   if patch is None: skipped.append(pn); continue
+   payload[pn]=patch
+  try:
+   if pid:
+    req('PATCH',f'https://api.notion.com/v1/pages/{pid}',json={'properties':payload})
+    if clean and not has_body_heading(pid): append_body_blocks(pid,clean)
+   else:
+    created=req('POST','https://api.notion.com/v1/pages',json={'parent':{'database_id':DATABASE_ID},'properties':payload}).json()
+    if clean and created.get('id'): append_body_blocks(created['id'],clean)
+  except Exception as e: fails.append({'url':u,'error':str(e)})
+ FAILED_LOG_JSON.write_text(json.dumps(fails,ensure_ascii=False,indent=2),encoding='utf-8') if fails else None
+ print('metadata_written_count:',len(arts)); print('source_written:',len(arts)); print('fetch_status_written:',len(arts)); print('full_text_status_written:',len(arts)); print('text_length_written:',len(arts)); print('image_count_written:',len(arts)); print('has_image_written:',len(arts)); print('has_chart_written:',len(arts)); print('missing_metadata_properties:',sorted(set(missing))); print('skipped_type_mismatch_properties:',sorted(set(skipped)))
+if __name__=='__main__': main()
