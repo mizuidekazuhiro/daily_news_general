@@ -28,6 +28,7 @@ EXCLUDE_PATTERNS = {
     "芸能": ["芸能", "俳優"],
     "連載コラム": ["コラム"]
 }
+NAV_BODY_KEYWORDS = ["速報", "アクセスランキング", "トピック一覧", "おくやみ", "プレスリリース", "メディア一覧", "ビューアーで読む", "朝刊・夕刊"]
 
 
 def env_bool(name: str, default: str) -> bool:
@@ -80,6 +81,15 @@ def should_exclude(source_title: str, page_title: str, body: str) -> tuple[bool,
     return False, ""
 
 
+def is_navigation_like_body(text: str) -> bool:
+    body = str(text or "").strip()
+    if not body:
+        return False
+    hits = sum(body.count(k) for k in NAV_BODY_KEYWORDS)
+    sentence_count = body.count("。")
+    return hits >= 2 or (sentence_count <= 1 and len(body) > 150)
+
+
 def load_rules(token: str, rules_db_id: str, rule_types: set[str]) -> list[dict[str, Any]]:
     rules: list[dict[str, Any]] = []
     cursor = None
@@ -126,8 +136,10 @@ def score_article(article: dict[str, Any], rules: list[dict[str, Any]], min_repo
     source_title = str(article.get("source_title") or "")
     page_title = str(article.get("page_title") or "")
     body = str(article.get("text") or "")
+    body_used_for_scoring = not is_navigation_like_body(body)
+    body_for_score = body if body_used_for_scoring else ""
     title_text = f"{source_title}\n{page_title}".lower()
-    body_text = body.lower()
+    body_text = body_for_score.lower()
     both_text = f"{title_text}\n{body_text}"
 
     score = 0.0
@@ -181,6 +193,7 @@ def score_article(article: dict[str, Any], rules: list[dict[str, Any]], min_repo
             "exclude_candidate": exclude_candidate,
             "exclude_reason": exclude_reason,
             "score_breakdown": score_breakdown,
+            "body_used_for_scoring": body_used_for_scoring,
         }
     )
     return out

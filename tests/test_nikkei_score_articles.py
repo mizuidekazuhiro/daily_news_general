@@ -1,6 +1,6 @@
 import json
 
-from scripts.nikkei_score_articles import OUTPUT_JSON, SUMMARY_JSON, score_article, select_report_articles, split_keywords
+from scripts.nikkei_score_articles import OUTPUT_JSON, SUMMARY_JSON, is_navigation_like_body, score_article, select_report_articles, split_keywords
 
 
 def test_split_keywords():
@@ -108,3 +108,19 @@ def test_select_report_threshold_mode_uses_legacy_threshold():
     assert mode == "threshold"
     assert cutoff == 5
     assert [a["importance_score"] for a in selected] == [10, 8, 6, 5]
+
+
+def test_navigation_like_existing_body_not_used_for_scoring():
+    assert is_navigation_like_body("アクセスランキング\nトピック一覧\n速報\nビューアーで読む")
+    rules = [{
+        "tag_name": "速報",
+        "match_field": "body",
+        "weight": 10,
+        "priority": 1,
+        "keywords": ["速報"],
+        "negative_keywords": [],
+    }]
+    article = {"source_title": "通常タイトル", "page_title": "通常タイトル", "text": "アクセスランキング\nトピック一覧\n速報"}
+    out = score_article(article, rules, min_report_score=5)
+    assert out["importance_score"] == 0
+    assert out["body_used_for_scoring"] is False
