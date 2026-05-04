@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import hashlib, json, logging, os, re, smtplib
+import sys
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any, Dict, List
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
 import requests
 from src.article_enrichment import build_notion_payload, filter_targets, validate_article_json
 from src.final_report_synthesis import build_synthesis_input, validate_final_report
@@ -185,6 +191,11 @@ def _fallback_mail_decision(fallback_used: bool, fallback_mail_allowed: bool, al
     return "send"
 
 def main() -> int:
+    if os.getenv("DEBUG_IMPORT_PATH", "").strip().lower() == "true":
+        print(f"debug_import_path cwd={Path.cwd()}")
+        print(f"debug_import_path ROOT_DIR={ROOT_DIR}")
+        print(f"debug_import_path src_exists={(ROOT_DIR / 'src').exists()}")
+
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if not _env_bool("NIKKEI_ENABLE_FINAL_REPORT"): return 0
     data = json.loads(Path("logs/nikkei_articles_scored.json").read_text(encoding="utf-8"))
