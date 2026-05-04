@@ -21,7 +21,7 @@ FAILED_DIR = Path('logs/nikkei_failed_articles')
 SUMMARY_JSON = Path('logs/nikkei_fetch_summary.json')
 INVENTORY_JSON = Path('logs/nikkei_issue_run_inventory.json')
 
-MAX_ARTICLES = int(os.getenv('NIKKEI_MAX_ARTICLES_TO_FETCH', '0'))
+MAX_SUCCESS_ARTICLES = int(os.getenv('NIKKEI_MAX_SUCCESS_ARTICLES', os.getenv('NIKKEI_MAX_ARTICLES_TO_FETCH', '0')))
 MAX_ARTICLE_ATTEMPTS = int(os.getenv('NIKKEI_MAX_ARTICLE_ATTEMPTS', '0'))
 SLEEP_SECONDS = float(os.getenv('NIKKEI_FETCH_SLEEP_SECONDS', '1.0'))
 MIN_LEN = int(os.getenv('NIKKEI_MIN_ARTICLE_TEXT_LENGTH', '120'))
@@ -30,6 +30,7 @@ GOTO_TIMEOUT = int(os.getenv('NIKKEI_ARTICLE_GOTO_TIMEOUT_MS', '25000'))
 WAIT_AFTER = int(os.getenv('NIKKEI_ARTICLE_WAIT_AFTER_LOAD_MS', '800'))
 BLOCK_HEAVY = os.getenv('NIKKEI_BLOCK_HEAVY_RESOURCES', 'true').lower() == 'true'
 RETRY_WITHOUT_BLOCK = os.getenv('NIKKEI_RETRY_WITHOUT_RESOURCE_BLOCK_ON_FAILURE', 'true').lower() == 'true'
+WAIT_FOR_CONTENT_MS = int(os.getenv('NIKKEI_WAIT_FOR_CONTENT_MS', '6000'))
 
 SKIP_EXISTING = os.getenv('NIKKEI_SKIP_EXISTING_NOTION_URLS', 'true').lower() == 'true'
 BACKFILL_EXISTING_EMPTY_BODY = os.getenv('NIKKEI_BACKFILL_EXISTING_EMPTY_BODY', 'true').lower() == 'true'
@@ -201,6 +202,42 @@ def looks_like_noise(text: str) -> bool:
     return False
 
 
+def extract_from_embedded_json(page):
+    script = r'''() => {
+      const out = {articleBody: '', headline: '', datePublished: '', source: ''};
+      const pick = (obj) => {
+        if (!obj || typeof obj !== 'object') return;
+        const body = obj.articleBody || obj.description || obj.text || '';
+        if (!out.articleBody && typeof body === 'string' && body.trim().length > 0) out.articleBody = body.trim();
+        const hl = obj.headline || obj.name || obj.title || '';
+        if (!out.headline && typeof hl === 'string') out.headline = hl.trim();
+        const dt = obj.datePublished || obj.dateCreated || '';
+        if (!out.datePublished && typeof dt === 'string') out.datePublished = dt.trim();
+      };
+      for (const node of document.querySelectorAll('script[type="application/ld+json"]')) {
+        try {
+          const parsed = JSON.parse(node.textContent || '{}');
+          const arr = Array.isArray(parsed) ? parsed : [parsed];
+          for (const it of arr) pick(it);
+          if (out.articleBody) { out.source = 'json_ld'; return out; }
+        } catch (_) {}
+      }
+      const nextNode = document.querySelector('script#__NEXT_DATA__');
+      if (nextNode?.textContent) {
+        try {
+          const parsed = JSON.parse(nextNode.textContent);
+          const text = JSON.stringify(parsed);
+          const m = text.match(/"articleBody":"([^"]{80,})"/);
+          if (m) out.articleBody = m[1].replace(/\\n/g, '\n').replace(/\\"/g, '"');
+          out.source = 'next_data';
+          return out;
+        } catch (_) {}
+      }
+      return out;
+    }'''
+    return page.evaluate(script)
+
+
 def select_text_with_candidates(page):
     script = r'''() => {
       const title = document.querySelector('h1')?.innerText?.trim() || document.title || '';
@@ -210,6 +247,9 @@ def select_text_with_candidates(page):
         ['main','main'],
         ['.cmn-section','.cmn-section'],
         ['[data-track-article-body]','[data-track-article-body]'],
+        ['[class*="article"]','[class*="article"]'],
+        ['[class*="body"]','[class*="body"]'],
+        ['[class*="content"]','[class*="content"]'],
         ['.articleBody','.articleBody'],
         ['.article-body','.article-body']
       ];
@@ -221,13 +261,57 @@ def select_text_with_candidates(page):
       let bodyText = (document.body?.innerText || '').trim();
       bodyText = bodyText.replace(/メニュー[\s\S]{0,400}?ログイン/g, '');
       out.push({selector: 'document.body.innerText fallback', text: bodyText, text_length: bodyText.length, preview: bodyText.slice(0, 240)});
-      return {title, candidates: out, pageText: bodyText};
+      const snippets = {};
+      for (const sel of ['article','main','section','body']) {
+        const node = document.querySelector(sel);
+        snippets[sel] = (node?.outerHTML || '').slice(0, 3000);
+      }
+      return {title, candidates: out, pageText: bodyText, snippets, readyState: document.readyState, locationHref: location.href};
     }'''
     data = page.evaluate(script)
     candidates = data.get('candidates', [])
     valid = [c for c in candidates if c.get('text_length', 0) > 0 and not looks_like_noise(c.get('text', ''))]
     best = max(valid, key=lambda x: x.get('text_length', 0)) if valid else {'selector': 'none', 'text': '', 'text_length': 0}
-    return data.get('title', ''), candidates, best, data.get('pageText', '')
+    return data, data.get('title', ''), candidates, best, data.get('pageText', '')
+
+
+def wait_for_article_content(page):
+    deadline = time.time() + (WAIT_FOR_CONTENT_MS / 1000)
+    while time.time() < deadline:
+        try:
+            l1 = page.locator('article').first.inner_text(timeout=700).strip()
+        except Exception:
+            l1 = ''
+        try:
+            l2 = page.locator('main').first.inner_text(timeout=700).strip()
+        except Exception:
+            l2 = ''
+        try:
+            l3 = page.inner_text('body', timeout=700).strip()
+        except Exception:
+            l3 = ''
+        if max(len(l1), len(l2), len(l3)) >= max(120, MIN_LEN // 2):
+            return True
+        page.wait_for_timeout(400)
+    return False
+
+
+def classify_empty_body_reason(text, page_text, login_like, selector_logs, used_block):
+    if login_like:
+        return 'empty_body_login_like_text'
+    if not selector_logs:
+        return 'empty_body_dom_missing'
+    if len((page_text or '').strip()) > 400 and len((text or '').strip()) == 0:
+        return 'empty_body_page_text_present_but_selector_failed'
+    if used_block and len((page_text or '').strip()) < 80:
+        return 'empty_body_resource_block_suspected'
+    if len((text or '').strip()) == 0:
+        return 'empty_body_dom_missing'
+    return 'empty_body_unknown'
+
+
+def should_stop_attempting(attempted_count: int, max_article_attempts: int) -> bool:
+    return max_article_attempts > 0 and attempted_count >= max_article_attempts
 
 
 def should_exclude_by_body(title, text):
@@ -244,6 +328,7 @@ def save_failure_artifacts(page, idx: int):
     html_path = f'{base}.html'
     png_path = f'{base}.png'
     txt_path = f'{base}.txt'
+    debug_json_path = f'{base}.debug.json'
     try:
         Path(html_path).write_text(page.content(), encoding='utf-8')
     except Exception:
@@ -256,7 +341,7 @@ def save_failure_artifacts(page, idx: int):
         Path(txt_path).write_text(page.inner_text('body'), encoding='utf-8')
     except Exception:
         pass
-    return html_path, png_path, txt_path
+    return html_path, png_path, txt_path, debug_json_path
 
 
 def split_text_blocks(text: str, limit: int = 1800):
@@ -280,7 +365,7 @@ def main():
     raw_arts = json.loads(INPUT_PATH.read_text(encoding='utf-8')) if INPUT_PATH.exists() else []
     arts = list(raw_arts)
     raw_article_count = len(raw_arts)
-    max_success_articles = MAX_ARTICLES
+    max_success_articles = MAX_SUCCESS_ARTICLES
     max_article_attempts = MAX_ARTICLE_ATTEMPTS
     notion_diag = {}
     try:
@@ -298,6 +383,8 @@ def main():
     print('notion_existing_query_failed:', notion_diag.get('notion_existing_query_failed', False))
     print('notion_existing_query_error:', notion_diag.get('notion_existing_query_error', ''))
     print('notion_article_db_id_present:', bool(DB))
+    if max_article_attempts == 0:
+        print('max_article_attempts: 0 (unbounded by setting; bounded by target_count)')
     if SKIP_EXISTING and notion_diag.get('notion_existing_query_failed'):
         print('ERROR: skip existing enabled but Notion existing URL query failed:', notion_diag.get('notion_existing_query_error', 'unknown'))
         summary = {'existing_url_skip_count': 0, 'target_count': len(arts), **notion_diag, 'notion_article_db_id_present': bool(DB)}
@@ -338,7 +425,7 @@ def main():
         b = p.chromium.launch(headless=True)
         attempted_count = 0
         for i, a in enumerate(arts, 1):
-            if max_article_attempts > 0 and attempted_count >= max_article_attempts:
+            if should_stop_attempting(attempted_count, max_article_attempts):
                 break
             if max_success_articles > 0 and len(res) >= max_success_articles:
                 break
@@ -349,14 +436,21 @@ def main():
                 use_block = BLOCK_HEAVY and not (RETRY_WITHOUT_BLOCK and t == attempts - 1)
                 c = b.new_context(storage_state=str(STORAGE_PATH), locale='ja-JP', timezone_id='Asia/Tokyo')
                 if use_block:
-                    c.route('**/*', lambda route, req: route.abort() if req.resource_type in {'image', 'media', 'font', 'stylesheet'} else route.continue_())
+                    c.route('**/*', lambda route, req: route.abort() if req.resource_type in {'image', 'media', 'font'} else route.continue_())
                 page = c.new_page()
+                extract_data = {'snippets': {}, 'readyState': '', 'locationHref': ''}
                 selector_logs = []
                 try:
                     page.goto(a['url'], wait_until='domcontentloaded', timeout=GOTO_TIMEOUT)
                     page.wait_for_timeout(WAIT_AFTER)
-                    page_title, selector_logs, best, page_text = select_text_with_candidates(page)
+                    wait_for_article_content(page)
+                    extract_data, page_title, selector_logs, best, page_text = select_text_with_candidates(page)
+                    embedded = extract_from_embedded_json(page)
                     text = (best.get('text') or '').strip()
+                    extractor_name = best.get('selector', '')
+                    if len(text) < MIN_LEN and embedded.get('articleBody'):
+                        text = embedded.get('articleBody', '').strip()
+                        extractor_name = f"embedded_json:{embedded.get('source','unknown')}"
                     login_wall, paid_wall, access_denied = detect_walls(text + '\n' + page_text)
                     empty_body = len(text) == 0
                     too_short = len(text) < MIN_LEN
@@ -376,8 +470,9 @@ def main():
                     record = {
                         'status': status, 'source_title': a.get('title', ''), 'url': a['url'], 'issue_url': a.get('issue_url', ''),
                         'issue_date': a.get('issue_date', ''), 'edition': a.get('edition', ''), 'page_title': page_title,
-                        'text_length': len(text), 'text': text, 'selector_used': best.get('selector', ''), 'selector_candidates': selector_logs,
+                        'text_length': len(text), 'text': text, 'selector_used': extractor_name, 'selector_candidates': selector_logs,
                     }
+                    print(f"[article] index={i} url={a['url']} final_url={page.url} title={page_title} extracted_text_length={len(text)} selected_extractor_name={extractor_name} failure_reason=")
                     ex = existing_map.get(a['url'], {})
                     if ex.get('page_id'):
                         record['source'] = 'backfill_existing'
@@ -396,13 +491,25 @@ def main():
                         page_text = ''
                         login_wall, paid_wall, access_denied = False, False, False
                         try:
-                            page_title, selector_logs, best, page_text = select_text_with_candidates(page)
+                            extract_data, page_title, selector_logs, best, page_text = select_text_with_candidates(page)
                             selector_used = best.get('selector', '')
                             text = (best.get('text') or '').strip()
                             login_wall, paid_wall, access_denied = detect_walls(text + '\n' + page_text)
                         except Exception:
                             selector_logs = []
-                        html_path, png_path, txt_path = save_failure_artifacts(page, i)
+                        html_path, png_path, txt_path, debug_json_path = save_failure_artifacts(page, i)
+                        failure_reason = 'empty_body' if len(text) == 0 else ('too_short' if 0 < len(text) < MIN_LEN else type(e).__name__)
+                        if failure_reason == 'empty_body':
+                            failure_reason = classify_empty_body_reason(text, page_text, login_wall, selector_logs, use_block)
+                        Path(debug_json_path).write_text(json.dumps({
+                            'final_url': page.url if page else '',
+                            'page_title': page_title,
+                            'body_inner_text_head_1000': (page_text or '')[:1000],
+                            'html_snippets': (extract_data or {}).get('snippets', {}),
+                            'document_ready_state': (extract_data or {}).get('readyState', ''),
+                            'location_href': (extract_data or {}).get('locationHref', ''),
+                            'selector_lengths': {c.get('selector', ''): int(c.get('text_length', 0)) for c in selector_logs if c.get('selector')},
+                        }, ensure_ascii=False, indent=2), encoding='utf-8')
                         is_timeout = isinstance(e, PlaywrightTimeoutError)
                         ex = existing_map.get(a['url'], {})
                         fail.append({
@@ -421,9 +528,11 @@ def main():
                             'wait_strategy_used': {'wait_until': 'domcontentloaded', 'wait_after_ms': WAIT_AFTER, 'goto_timeout_ms': GOTO_TIMEOUT},
                             'screenshot_path': png_path, 'html_path': html_path, 'text_path': txt_path, 'artifact_html_path': html_path, 'artifact_screenshot_path': png_path,
                             'page_id': ex.get('page_id', ''), 'existing_page': bool(ex.get('page_id')),
-                            'reason': 'empty_body' if len(text) == 0 else ('too_short' if 0 < len(text) < MIN_LEN else type(e).__name__),
+                            'reason': failure_reason,
                             'status_code': None,
+                            'debug_json_path': debug_json_path,
                         })
+                        print(f"[article] index={i} url={a['url']} final_url={page.url if page else ''} title={page_title} extracted_text_length={len(text)} selected_extractor_name={selector_used} failure_reason={failure_reason}")
                         reason = 'failed_timeout' if is_timeout else ('failed_access_denied' if access_denied else ('failed_empty_body' if len(text) == 0 else 'failed_other'))
                         inventory.append({'url': a['url'], 'title': a.get('title', ''), 'status': reason, 'page_id': '', 'has_existing_body': False, 'source': 'fetch_failed', 'final_url': page.url if page else '', 'artifact_path': {'html': html_path, 'screenshot': png_path, 'text': txt_path}})
                 finally:
