@@ -45,6 +45,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
+      PYTHONPATH: ${{ github.workspace }}
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       NOTION_ARTICLE_DB_ID: ${{ secrets.NOTION_ARTICLE_DB_ID }}
       NIKKEI_ARTICLES_DB_ID: ${{ secrets.NOTION_ARTICLE_DB_ID }}
