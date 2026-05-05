@@ -439,16 +439,23 @@ def select_text_with_candidates(page):
       const h1Text = document.querySelector('h1')?.innerText?.trim() || '';
       const title = document.title || h1Text || '';
       const cands = [
-        ['article','article'],
-        ['main','main'],
+        // Nikkei paper article body candidates. Keep these before broad wrappers.
+        ['div.cmn-section.cmn-indent','div.cmn-section.cmn-indent'],
+        ['section.cmn-section.cmn-indent','section.cmn-section.cmn-indent'],
+        ['.cmn-section.cmn-indent','.cmn-section.cmn-indent'],
+        ['.cmn-section','.cmn-section'],
+
+        // Structured article body candidates.
         ['[data-track-article-body]','[data-track-article-body]'],
         ['[itemprop="articleBody"]','[itemprop="articleBody"]'],
         ['[class*="article-body"]','[class*="article-body"]'],
         ['[class*="articleBody"]','[class*="articleBody"]'],
+
+        // Broad fallbacks. Use only if body-specific selectors fail.
+        ['article','article'],
+        ['main','main'],
         ['[class*="article"]','[class*="article"]'],
         ['[class*="content"]','[class*="content"]'],
-        ['div.cmn-section.cmn-indent','div.cmn-section.cmn-indent'],
-        ['.cmn-section','.cmn-section'],
       ];
       const paragraphTexts = paragraphFallback();
       if (paragraphTexts.length > 0) {
@@ -499,6 +506,19 @@ def select_text_with_candidates(page):
         '[class*="content"]',
     ]
     best = {'selector': 'none', 'text': '', 'text_length': 0}
+    for c in candidates:
+        print(
+            "dom_candidate:",
+            c.get('selector'),
+            "text_length=",
+            c.get('text_length', 0),
+            "paragraph_count=",
+            c.get('paragraph_count', 0),
+            "link_text_ratio=",
+            c.get('link_text_ratio', 0),
+            "preview=",
+            (c.get('preview') or '').replace("\n", " ")[:160],
+        )
     cand_map = {c.get('selector'): c for c in candidates}
     for key in preferred:
         c = cand_map.get(key)
