@@ -7,6 +7,7 @@ from typing import Any
 
 import requests
 from dotenv import load_dotenv
+from urllib.parse import urlparse, parse_qs
 
 load_dotenv()
 
@@ -133,6 +134,36 @@ def clean_text_for_scoring(text: str) -> str:
         kept.append(line)
 
     return "\n".join(kept).strip()
+
+
+def extract_article_id(url: str) -> str:
+    u = str(url or "")
+    if not u:
+        return ""
+    parsed = urlparse(u)
+    ng = parse_qs(parsed.query).get("ng", [""])[0]
+    if ng:
+        return ng
+    m = re.search(r"/article/([A-Z0-9]+)/", parsed.path)
+    return m.group(1) if m else ""
+
+
+def dedupe_articles(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ranked: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for a in articles:
+        aid = extract_article_id(a.get("url", "")) or a.get("url", "")
+        cand = dict(a)
+        cand["article_id"] = extract_article_id(cand.get("url", ""))
+        has_body = bool(str(cand.get("text") or "").strip())
+        cand_rank = 2 if has_body and cand.get("source") != "notion_existing" else 1 if has_body else 0
+        if aid not in ranked:
+            ranked[aid] = {"rank": cand_rank, "item": cand}
+            order.append(aid)
+            continue
+        if cand_rank > ranked[aid]["rank"]:
+            ranked[aid] = {"rank": cand_rank, "item": cand}
+    return [ranked[k]["item"] for k in order]
 
 
 def load_rules(token: str, rules_db_id: str, rule_types: set[str]) -> list[dict[str, Any]]:
@@ -337,7 +368,7 @@ def main() -> int:
             m = next((x for x in fetched_articles if x.get('url') == item.get('url')), None)
             if m:
                 backfilled_articles.append(m)
-    articles = fetched_articles + existing_articles
+    articles = dedupe_articles(fetched_articles + existing_articles)
     scored = [score_article(a, rules, min_report_score) for a in articles]
     scored.sort(key=lambda x: (x.get("exclude_candidate", False), -float(x.get("importance_score", 0)), -int(x.get("priority", 0)), -int(x.get("text_length", 0))))
 
