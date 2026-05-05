@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib, json, logging, os, re, smtplib
 import sys
+from urllib.parse import parse_qs, urlparse
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -110,6 +111,7 @@ def _article_update_props(summary: str, reason: str, biz: str, model: str) -> Di
         "Summary": {"rich_text": [{"text": {"content": summary[:1800]}}]},
         "Reason to Read": {"rich_text": [{"text": {"content": reason[:1800]}}]},
         "Business Implications": {"rich_text": [{"text": {"content": biz[:1800]}}]},
+        "Business Implication": {"rich_text": [{"text": {"content": biz[:1800]}}]},
         "GPT Processed": {"checkbox": True},
         "GPT Model": {"rich_text": [{"text": {"content": model}}]},
         "GPT Processed At": {"date": {"start": datetime.now(timezone.utc).isoformat()}},
@@ -145,6 +147,87 @@ def _filter_by_schema(payload: Dict[str, Any], schema: Dict[str, Any]) -> Dict[s
 
 def _notion_update_page(page_id: str, props: Dict[str, Any], token: str) -> None:
     requests.patch(f"https://api.notion.com/v1/pages/{page_id}", headers=_notion_headers(token), json={"properties": props}, timeout=30).raise_for_status()
+
+
+def _extract_ng_id(url: str) -> str:
+    try:
+        return (parse_qs(urlparse(str(url or "")).query).get("ng") or [""])[0]
+    except Exception:
+        return ""
+
+
+def _article_url_keys(url: str) -> list[str]:
+    u = str(url or "").strip()
+    keys = []
+    if u:
+        keys.append(u)
+    ng = _extract_ng_id(u)
+    if ng:
+        keys.extend([ng, f"ng:{ng}"])
+    return keys
+
+
+def _prop_text(prop: dict) -> str:
+    ptype = prop.get("type")
+    if ptype == "url":
+        return prop.get("url") or ""
+    if ptype in {"title", "rich_text"}:
+        return "".join(x.get("plain_text", "") for x in prop.get(ptype, []))
+    return ""
+
+
+def _build_article_page_index(article_db: str, token: str, schema: dict) -> dict[str, dict]:
+    url_props = [
+        name for name, meta in schema.items()
+        if meta.get("type") in {"url", "rich_text"} and "url" in name.lower()
+    ]
+    if not url_props:
+        logging.warning("article_url_property_not_found")
+        return {}
+
+    index = {}
+    cur = None
+    while True:
+        payload = {"page_size": 100}
+        if cur:
+            payload["start_cursor"] = cur
+
+        r = requests.post(
+            f"https://api.notion.com/v1/databases/{article_db}/query",
+            headers=_notion_headers(token),
+            json=payload,
+            timeout=30,
+        )
+        r.raise_for_status()
+        data = r.json()
+
+        for page in data.get("results", []):
+            props = page.get("properties", {})
+            for pname in url_props:
+                u = _prop_text(props.get(pname, {})).strip()
+                if not u:
+                    continue
+                for k in _article_url_keys(u):
+                    index[k] = page
+
+        if not data.get("has_more"):
+            break
+        cur = data.get("next_cursor")
+
+    return index
+
+
+def _resolve_article_page_id(article: dict, page_index: dict[str, dict]) -> str:
+    page_id = str(article.get("page_id") or "").strip()
+    if page_id:
+        return page_id
+
+    for key in _article_url_keys(str(article.get("url") or "")):
+        page = page_index.get(key)
+        if page and page.get("id"):
+            return str(page["id"])
+
+    return ""
 
 
 def _notion_query_daily(db_id: str, token: str, input_hash: str) -> list[dict]:
@@ -210,6 +293,8 @@ def main() -> int:
     token = _env_str("NOTION_TOKEN", ""); article_db = _env_str("NOTION_ARTICLE_DB_ID", ""); daily_db = _env_str("NOTION_DAILY_NEWS_DB_ID", "")
     client = OpenAIJsonClient(api_key=_env_str("OPENAI_API_KEY", "")) if _env_str("OPENAI_API_KEY", "") else None
     article_schema = _fetch_db_schema(article_db, token) if token and article_db else {}
+    article_page_index = _build_article_page_index(article_db, token, article_schema) if token and article_db and article_schema else {}
+    print(f"article_page_url_index_count: {len(article_page_index)}")
     notion_ok = notion_ng = 0
 
     gpt_candidates = [dict(a, full_text=a.get("full_text", ""), gpt_processed=a.get("gpt_processed_norm", False)) for a in selected_working]
@@ -236,10 +321,19 @@ Markdown禁止。"""
                     if x.get("url") == t.get("url"):
                         x["Summary"], x["Reason to Read"], x["Business Implications"] = out["summary"], out["reason_to_read"], out["business_implications"]
                 processed += 1
-                if token and t.get("page_id"):
-                    props = _filter_by_schema(_article_update_props(out["summary"], out["reason_to_read"], out["business_implications"], _env_str("NIKKEI_ARTICLE_GPT_MODEL")), article_schema)
-                    try: _notion_update_page(t["page_id"], props, token); notion_ok += 1
-                    except Exception as e: notion_ng += 1; fails.append({"page_id":t.get("page_id"),"error":str(e)})
+                if token:
+                    resolved_page_id = _resolve_article_page_id(t, article_page_index)
+                    if resolved_page_id:
+                        props = _filter_by_schema(_article_update_props(out["summary"], out["reason_to_read"], out["business_implications"], _env_str("NIKKEI_ARTICLE_GPT_MODEL")), article_schema)
+                        try:
+                            _notion_update_page(resolved_page_id, props, token)
+                            notion_ok += 1
+                        except Exception as e:
+                            notion_ng += 1
+                            fails.append({"page_id": resolved_page_id, "url": t.get("url"), "error": str(e)})
+                    else:
+                        notion_ng += 1
+                        fails.append({"url": t.get("url"), "error": "article_page_not_found_for_gpt_update"})
             except Exception as e:
                 fails.append({"title":t.get("title"),"error":str(e)})
 
@@ -291,6 +385,20 @@ Markdown禁止。"""
     Path("logs/nikkei_article_enrichment_failed.json").write_text(json.dumps(fails,ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_final_report_summary.json").write_text(json.dumps({"pipeline_scope":"nikkei_only","selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"final_report_gpt_success":final_gpt_success,"fallback_used":fallback_used,"fallback_mail_allowed":fallback_mail_allowed,"notion_article_update_success_count":notion_ok,"notion_article_update_failed_count":notion_ng,"notion_final_report_saved":notion_final_saved,"mail_sent":mail_sent,"mail_skipped_reason":mail_reason,"input_hash":input_hash,"html_output_path":html_path},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_final_report_failed.json").write_text(json.dumps(final_failed,ensure_ascii=False,indent=2),encoding="utf-8")
+
+    print(f"article_gpt_min_importance_score: {article_gpt_min_importance_score}")
+    print(f"article_gpt_candidate_count: {len(gpt_candidates)}")
+    print(f"article_gpt_target_count: {len(targets)}")
+    print(f"article_gpt_processed_count: {processed}")
+    print(f"article_gpt_failed_count: {len(fails)}")
+    print(f"notion_article_update_success_count: {notion_ok}")
+    print(f"notion_article_update_failed_count: {notion_ng}")
+    print(f"final_report_gpt_success: {final_gpt_success}")
+    print(f"fallback_used: {fallback_used}")
+    print(f"notion_final_report_saved: {notion_final_saved}")
+    print(f"mail_sent: {mail_sent}")
+    print(f"mail_skipped_reason: {mail_reason}")
+
     return 0
 
 if __name__ == "__main__":
