@@ -6,6 +6,11 @@ from string import Template
 from typing import Any, Dict
 
 
+def _opt(label: str, value: Any) -> str:
+    txt = str(value or "").strip()
+    return f"<div>{label}: {txt}</div>" if txt else ""
+
+
 def render_final_report_html(template_path: Path, report: Dict[str, Any], target_date: str) -> str:
     sections = []
     refs = []
@@ -16,9 +21,9 @@ def render_final_report_html(template_path: Path, report: Dict[str, Any], target
         sections.append(
             f"<li><strong><a href=\"{url}\">{ref}</a> {sec.get('title','')}</strong>"
             f"<div>Importance Score: {sec.get('importance_score','')}</div>"
-            f"<div>1行要約: {sec.get('one_line_summary','')}</div>"
-            f"<div>なぜ読むべきか: {sec.get('why_it_matters','')}</div>"
-            f"<div>業務への示唆: {sec.get('business_action_hint','')}</div></li>"
+            f"{_opt('1行要約', sec.get('one_line_summary'))}"
+            f"{_opt('なぜ読むべきか', sec.get('why_it_matters'))}"
+            f"{_opt('業務への示唆', sec.get('business_action_hint'))}</li>"
         )
     tpl = Template(template_path.read_text(encoding="utf-8"))
     return tpl.safe_substitute(
