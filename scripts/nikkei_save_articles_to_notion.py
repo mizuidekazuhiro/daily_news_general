@@ -63,7 +63,13 @@ def main():
     title_prop=next((k for k,v in props.items() if v.get('type')=='title'),None)
     body_prop=resolve_prop(props,['Body','Article Body','Article Text','Text','Content','本文','記事本文','Scoring Text','スコアリング用本文'])
     summary_prop=resolve_prop(props,['Summary','要約','AI Summary'])
-    keys,pages=load_existing(); print('existing_url_count:',len(keys)); saved=skipped=failed=updated_existing=0; skipped_existing=0
+    skip_existing = os.getenv("NIKKEI_SKIP_EXISTING_NOTION_URLS", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if skip_existing:
+        keys,pages=load_existing()
+    else:
+        keys,pages=set(),{}
+    print('skip_existing_notion_urls:', skip_existing)
+    print('existing_url_count:',len(keys)); saved=skipped=failed=updated_existing=0; skipped_existing=0
     for a in arts:
         u=a.get('url',''); k=ng(u); page_id=a.get('page_id') or pages.get(u,''); text=(a.get('text') or '').strip(); title=(a.get('source_title') or a.get('page_title') or 'Untitled')[:2000]
         is_existing = (u in keys) or (k and k in keys) or bool(page_id)
