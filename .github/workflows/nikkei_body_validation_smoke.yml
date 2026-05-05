@@ -1,0 +1,73 @@
+name: Nikkei Body Validation Smoke
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/nikkei_body_validation_smoke.yml"
+      - "scripts/nikkei_fetch_articles_full.py"
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install import dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Compile Nikkei scripts
+        run: |
+          python -m py_compile scripts/nikkei_fetch_articles_full.py scripts/run_nikkei_paper_pipeline.py
+      - name: Smoke test validate_article_body
+        run: |
+          python - <<'PY'
+          import importlib.util
+          from pathlib import Path
+
+          path = Path("scripts/nikkei_fetch_articles_full.py")
+          spec = importlib.util.spec_from_file_location("nikkei_fetch_articles_full", path)
+          mod = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(mod)
+
+          source_title = "JSR、台湾で生産・開発　半導体材料、中国勢に対抗 - 日本経済新聞"
+          body = """
+          JSR、台湾で生産・開発。半導体材料で中国勢に対抗する。
+          JSRは台湾で半導体材料の生産・開発体制を強化する。先端半導体向け材料の需要拡大を見込み、現地企業や顧客との連携を深める。
+          中国勢の台頭で競争環境は厳しくなっている。日本企業は品質や安定供給を武器に、台湾市場での存在感を高める必要がある。
+          メニュー ログイン 会員登録 速報 アクセスランキング トピック一覧
+          同社は研究開発と量産支援を一体で進める。半導体サプライチェーンの地政学リスクが高まるなか、台湾拠点の重要性は一段と増している。
+          """ * 3
+
+          cases = [
+              {
+                  "name": "article_page_with_nav_noise",
+                  "page_title": source_title,
+                  "h1_text": source_title,
+                  "article_url": "https://www.nikkei.com/paper/article/?b=20260505&ng=DGKKZO96061180V00C26A5MM8000",
+              },
+              {
+                  "name": "paper_index_title_but_article_url_and_strong_body",
+                  "page_title": "朝刊・夕刊 5月5日付 - 日本経済新聞",
+                  "h1_text": "朝刊・夕刊 5月5日付",
+                  "article_url": "https://www.nikkei.com/paper/article/?b=20260505&ng=DGKKZO96061180V00C26A5MM8000",
+              },
+          ]
+
+          for case in cases:
+              ok, reason = mod.validate_article_body(
+                  body,
+                  page_title=case["page_title"],
+                  source_title=source_title,
+                  h1_text=case["h1_text"],
+                  article_url=case["article_url"],
+              )
+              print(case["name"], ok, reason)
+              assert ok, f"{case['name']} failed: {reason}"
+
+          print("smoke_test_passed")
+          PY
