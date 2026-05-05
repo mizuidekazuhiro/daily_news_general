@@ -482,16 +482,17 @@ def select_text_with_candidates(page):
     }'''
     data = page.evaluate(script)
     candidates = data.get('candidates', [])
-    # Prefer narrow article-body containers before broad article/main wrappers.
-    # Broad wrappers may include Nikkei service notices, sharing/reprint notices,
-    # related links, and navigation text.
+    # Prefer Nikkei's known paper article body container first.
+    # Historical good saves used div.cmn-section.cmn-indent as the clean body selector.
+    # Fall back to paragraph_fallback only when the structured body container is absent.
     preferred = [
+        'div.cmn-section.cmn-indent',
+        '.cmn-section',
         '[data-track-article-body]',
         '[itemprop="articleBody"]',
         '[class*="article-body"]',
         '[class*="articleBody"]',
         'paragraph_fallback',
-        '.cmn-section',
         'article',
         'main',
         '[class*="article"]',

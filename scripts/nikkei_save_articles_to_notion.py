@@ -123,13 +123,43 @@ def append_body_blocks(page_id,text):
     children += [{"object":"block","type":"paragraph","paragraph":{"rich_text":[{"type":"text","text":{"content":c[:1900]}}]}} for c in chunks]
     req('PATCH',f'https://api.notion.com/v1/blocks/{page_id}/children',json={'children':children[:100]}); return len(children)
 
+def list_page_children(page_id):
+    out=[]; cur=None
+    while True:
+        url=f'https://api.notion.com/v1/blocks/{page_id}/children?page_size=100'
+        if cur:
+            url += f'&start_cursor={cur}'
+        data=req('GET',url).json()
+        out.extend(data.get('results',[]))
+        if not data.get('has_more'):
+            break
+        cur=data.get('next_cursor')
+    return out
+
 def has_body_heading(page_id):
-    data=req('GET',f'https://api.notion.com/v1/blocks/{page_id}/children?page_size=100').json()
-    for b in data.get('results',[]):
+    for b in list_page_children(page_id):
         if b.get('type')=='heading_2':
             t=''.join(x.get('plain_text','') for x in b.get('heading_2',{}).get('rich_text',[]))
             if t.strip()=='記事本文': return True
     return False
+
+def delete_existing_body_blocks(page_id):
+    children=list_page_children(page_id)
+    deleting=False
+    deleted=0
+    for b in children:
+        btype=b.get('type')
+        if btype=='heading_2':
+            t=''.join(x.get('plain_text','') for x in b.get('heading_2',{}).get('rich_text',[])).strip()
+            if t=='記事本文':
+                deleting=True
+            elif deleting:
+                break
+        if deleting:
+            req('PATCH',f"https://api.notion.com/v1/blocks/{b['id']}",json={'archived':True})
+            deleted += 1
+    print(f"deleted_existing_body_blocks: {deleted}")
+    return deleted
 
 def main():
  arts=json.loads(INPUT_JSON.read_text()) if INPUT_JSON.exists() else []
@@ -153,7 +183,10 @@ def main():
   try:
    if pid:
     req('PATCH',f'https://api.notion.com/v1/pages/{pid}',json={'properties':payload})
-    if clean and not has_body_heading(pid): append_body_blocks(pid,clean)
+    if clean:
+        if has_body_heading(pid):
+            delete_existing_body_blocks(pid)
+        append_body_blocks(pid,clean)
    else:
     created=req('POST','https://api.notion.com/v1/pages',json={'parent':{'database_id':DATABASE_ID},'properties':payload}).json()
     if clean and created.get('id'): append_body_blocks(created['id'],clean)
