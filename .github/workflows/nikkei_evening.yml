@@ -37,6 +37,45 @@ on:
         default: "true"
         type: choice
         options: ["true","false"]
+      run_final_report:
+        description: "Run final report generation"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true","false"]
+      report_top_rank:
+        description: "Number of top importance articles for GPT/report"
+        required: true
+        default: "10"
+        type: string
+      article_gpt_min_importance_score:
+        description: "Minimum importance score for article GPT enrichment. Articles with score <= this value are skipped."
+        required: true
+        default: "3"
+        type: string
+      enable_article_gpt_enrichment:
+        description: "Run article-level GPT enrichment"
+        required: true
+        default: "false"
+        type: choice
+        options: ["true","false"]
+      enable_final_report_gpt:
+        description: "Run final report GPT synthesis"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true","false"]
+      save_final_report_to_notion:
+        description: "Save final report to Notion Daily News DB"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true","false"]
+      final_report_article_text_chars:
+        description: "Max text excerpt characters per article for final report GPT"
+        required: true
+        default: "1800"
+        type: string
   schedule:
     - cron: "10,30,50 7 * * *"
 
@@ -75,8 +114,14 @@ jobs:
       NIKKEI_RULES_SOURCE: "notion"
       NIKKEI_RULES_FILTER_RULE_TYPES: "country,sector,importance"
       NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT: "5"
+      NIKKEI_REPORT_TOP_IMPORTANCE_RANK: ${{ github.event_name == 'workflow_dispatch' && inputs.report_top_rank || '10' }}
+      NIKKEI_ARTICLE_GPT_MIN_IMPORTANCE_SCORE: ${{ github.event_name == 'workflow_dispatch' && inputs.article_gpt_min_importance_score || '3' }}
+      NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS: ${{ github.event_name == 'workflow_dispatch' && inputs.final_report_article_text_chars || '1800' }}
       NIKKEI_ALLOW_DEFAULT_RULES_DB_FALLBACK: "false"
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      NIKKEI_ENABLE_ARTICLE_GPT_ENRICHMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_article_gpt_enrichment || 'false' }}
+      NIKKEI_ENABLE_FINAL_REPORT_GPT: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_final_report_gpt || 'true' }}
+      NIKKEI_SAVE_FINAL_REPORT_TO_NOTION: ${{ github.event_name == 'workflow_dispatch' && inputs.save_final_report_to_notion || 'true' }}
       NOTION_DAILY_NEWS_DB_ID: ${{ secrets.NOTION_DAILY_NEWS_DB_ID }}
       MAIL_FROM: ${{ secrets.MAIL_FROM }}
       MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
@@ -100,6 +145,7 @@ jobs:
           P
       - run: python scripts/run_nikkei_paper_pipeline.py
       - run: python scripts/run_nikkei_final_report.py
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_final_report == 'true' }}
 
       - name: Upload Nikkei debug logs
         if: always()
