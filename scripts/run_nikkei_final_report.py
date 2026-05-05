@@ -63,9 +63,19 @@ def _generate_report(client,input_payload,retry=False):
     prompt=(
         "JSONのみ。Markdown禁止。説明文禁止。"
         "必須キー: report_title,today_key_message,executive_summary,cross_article_implications,article_sections。"
-        "article_sectionsは入力articlesと同じ件数。"
-        "ref_idはA1,A2...の順。url/title/importance_scoreは入力値をそのまま保持。"
-        "article_sectionsの各要素キー: ref_id,title,url,importance_score,one_line_summary,why_it_matters,business_action_hint。"
+        "today_key_messageはメールの『本日のサマリー』に表示する。"
+        "250〜450字の日本語で、単なる記事列挙ではなく、今日の主要ニュースから読み取れる大きな流れ、背景、事業上の意味を示唆に富む形で書く。"
+        "抽象論だけにせず、入力記事の内容に根拠を置く。"
+        "executive_summaryはメールの『全体ブリーフ』に表示する。"
+        "700〜1200字の日本語で、5記事を機械的に並べず、共通テーマごとに統合して詳しく説明する。"
+        "商社・素材・エネルギー・半導体・防衛・物流・金融・政策リスクの観点から、事業判断に役立つ含意を具体的に書く。"
+        "ただし、記事本文にない数字、企業名、国名、価格、数量、時期は捏造しない。"
+        "cross_article_implicationsは検証用に100〜200字で返す。メールには表示しないため簡潔でよい。"
+        "article_sectionsは入力articlesと同じ件数にする。"
+        "ref_idはA1,A2...の順。"
+        "article_sectionsの各要素キー: ref_id,title,url,notion_url,page_url,importance_score,one_line_summary,why_it_matters,business_action_hint。"
+        "title,url,notion_url,page_url,importance_scoreは入力値がある場合はそのまま保持する。"
+        "one_line_summary,why_it_matters,business_action_hintは検証用でありメールには表示しないため短くてよい。"
     )
     if retry:
         prompt += " 前回はarticle_sections欠落のため失敗。必ずarticle_sectionsを含めること。"

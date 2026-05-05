@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from html import escape
 from pathlib import Path
 from string import Template
 from typing import Any, Dict
@@ -12,18 +13,14 @@ def _opt(label: str, value: Any) -> str:
 
 
 def render_final_report_html(template_path: Path, report: Dict[str, Any], target_date: str) -> str:
-    sections = []
     refs = []
     for sec in report.get("article_sections", []):
-        ref = sec.get("ref_id", "A?")
-        url = sec.get("url", "#")
-        refs.append(f'<li><a href="{url}">{ref}</a> {sec.get("title", "")}</li>')
-        sections.append(
-            f"<li><strong><a href=\"{url}\">{ref}</a> {sec.get('title','')}</strong>"
-            f"<div>Importance Score: {sec.get('importance_score','')}</div>"
-            f"{_opt('1行要約', sec.get('one_line_summary'))}"
-            f"{_opt('なぜ読むべきか', sec.get('why_it_matters'))}"
-            f"{_opt('業務への示唆', sec.get('business_action_hint'))}</li>"
+        title = str(sec.get("title") or "").strip()
+        link = sec.get("notion_url") or sec.get("page_url") or sec.get("url") or "#"
+        if not title:
+            continue
+        refs.append(
+            f'<li><a href="{escape(str(link), quote=True)}">{escape(title)}</a></li>'
         )
     tpl = Template(template_path.read_text(encoding="utf-8"))
     return tpl.safe_substitute(
@@ -34,7 +31,7 @@ def render_final_report_html(template_path: Path, report: Dict[str, Any], target
         today_key_message=report.get("today_key_message", ""),
         executive_summary=report.get("executive_summary", ""),
         cross_article_implications=report.get("cross_article_implications", ""),
-        priority_watch_items="".join(f"<li>{x}</li>" for x in report.get("priority_watch_items", [])),
-        article_items="".join(sections),
+        priority_watch_items="",
+        article_items="",
         reference_links="".join(refs),
     )
