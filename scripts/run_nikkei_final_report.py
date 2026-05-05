@@ -44,9 +44,31 @@ def _display_target_date(selected,in_articles):
         if a.get("issue_date"): return _format_date(str(a.get("issue_date")))
     return _format_date(_env_str("NIKKEI_TARGET_DATE","auto"))
 
+def _build_article_sections_from_input(in_articles:list[dict])->list[dict]:
+    out=[]
+    for i,a in enumerate(in_articles,1):
+        out.append({
+            "ref_id": f"A{i}",
+            "title": a.get("title",""),
+            "url": a.get("url",""),
+            "importance_score": a.get("importance_score",0),
+            "one_line_summary": a.get("summary") or (a.get("text_excerpt","")[:160] or "本文確認対象"),
+            "why_it_matters": a.get("reason_to_read") or "需給・投資・政策影響の確認対象。",
+            "business_action_hint": a.get("business_implications") or "価格・需給・政策・投資判断への影響を確認。",
+        })
+    return out
+
 def _generate_report(client,input_payload,retry=False):
     model=_env_str("NIKKEI_FINAL_REPORT_MODEL",DEFAULTS["NIKKEI_FINAL_REPORT_MODEL"])
-    prompt="JSONのみ。Markdown禁止。説明文禁止。必須キー: report_title,today_key_message,executive_summary,cross_article_implications。"
+    prompt=(
+        "JSONのみ。Markdown禁止。説明文禁止。"
+        "必須キー: report_title,today_key_message,executive_summary,cross_article_implications,article_sections。"
+        "article_sectionsは入力articlesと同じ件数。"
+        "ref_idはA1,A2...の順。url/title/importance_scoreは入力値をそのまま保持。"
+        "article_sectionsの各要素キー: ref_id,title,url,importance_score,one_line_summary,why_it_matters,business_action_hint。"
+    )
+    if retry:
+        prompt += " 前回はarticle_sections欠落のため失敗。必ずarticle_sectionsを含めること。"
     parsed={}; raw=""; finish_reason=""; parse_failed=False
     try:
         resp=client.client.responses.create(model=model,input=[{"role":"system","content":prompt},{"role":"user","content":json.dumps(input_payload,ensure_ascii=False)}],max_output_tokens=_env_int("NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS",8000))
@@ -77,21 +99,32 @@ def main()->int:
     client=OpenAIJsonClient(api_key=_env_str("OPENAI_API_KEY","")) if _env_str("OPENAI_API_KEY","") else None
 
     parsed={}; raw=""; finish=""; errs=[]; retry_raw=""; retry_parsed={}; retry_errs=[]; retry_used=False; success=False
+    recovered_missing_article_sections=False
     if client:
         parsed, raw, finish, errs, _ = _generate_report(client, report_input, retry=False)
+        core_ok = isinstance(parsed, dict) and all(parsed.get(k) for k in ["report_title","today_key_message","executive_summary","cross_article_implications"])
+        if core_ok and "missing_article_sections" in errs:
+            parsed["article_sections"] = _build_article_sections_from_input(in_articles)
+            recovered_missing_article_sections=True
+            errs=validate_final_report_errors(parsed, len(in_articles))
         if not errs:
             success=True
         else:
             retry_used=True
             retry_parsed, retry_raw, _, retry_errs, _ = _generate_report(client, report_input, retry=True)
+            retry_core_ok = isinstance(retry_parsed, dict) and all(retry_parsed.get(k) for k in ["report_title","today_key_message","executive_summary","cross_article_implications"])
+            if retry_core_ok and "missing_article_sections" in retry_errs:
+                retry_parsed["article_sections"] = _build_article_sections_from_input(in_articles)
+                recovered_missing_article_sections=True
+                retry_errs=validate_final_report_errors(retry_parsed, len(in_articles))
             if not retry_errs:
                 parsed=retry_parsed; success=True
 
     display_date=_display_target_date(sel,in_articles)
     fallback=not success
-    report=parsed if success else {"report_title":f"日経事業ブリーフ {display_date}","today_key_message":"最終GPT生成に失敗したため、重要記事の簡易一覧を表示します。記事本文・重要度・一致ルールをもとに確認してください。","executive_summary":"最終GPT生成に失敗したため、重要記事の簡易一覧を表示します。記事本文・重要度・一致ルールをもとに確認してください。","cross_article_implications":"重要記事の横断確認を実施してください。","priority_watch_items":["価格","需給","政策"],"article_sections":[{"ref_id":f"A{i+1}","title":a.get("title",""),"url":a.get("url",""),"importance_score":a.get("importance_score",0),"one_line_summary":(a.get("Summary") or a.get("full_text","")[:160] or "本文確認対象"),"why_it_matters":a.get("Reason to Read") or "需給・投資・政策影響の確認対象。","business_action_hint":a.get("Business Implications") or "価格・需給・政策・投資判断への影響を確認。"} for i,a in enumerate(sel)]}
+    report=parsed if success else {"report_title":f"日経事業ブリーフ {display_date}","today_key_message":"最終GPT生成に失敗したため、重要記事の簡易一覧を表示します。記事本文・重要度・一致ルールをもとに確認してください。","executive_summary":"最終GPT生成に失敗したため、重要記事の簡易一覧を表示します。記事本文・重要度・一致ルールをもとに確認してください。","cross_article_implications":"重要記事の横断確認を実施してください。","priority_watch_items":["価格","需給","政策"],"article_sections":_build_article_sections_from_input(in_articles)}
 
-    raw_log={"model":_env_str("NIKKEI_FINAL_REPORT_MODEL",DEFAULTS["NIKKEI_FINAL_REPORT_MODEL"]),"finish_reason":finish,"raw_response_text":raw,"parsed_json":parsed,"parsed_top_level_keys":list(parsed.keys()) if isinstance(parsed,dict) else [],"validation_errors":errs,"retry_used":retry_used,"retry_raw_response_text":retry_raw,"retry_parsed_json":retry_parsed,"retry_validation_errors":retry_errs,"retry_parsed_top_level_keys":list(retry_parsed.keys()) if isinstance(retry_parsed,dict) else []}
+    raw_log={"model":_env_str("NIKKEI_FINAL_REPORT_MODEL",DEFAULTS["NIKKEI_FINAL_REPORT_MODEL"]),"finish_reason":finish,"raw_response_text":raw,"parsed_json":parsed,"parsed_top_level_keys":list(parsed.keys()) if isinstance(parsed,dict) else [],"validation_errors":errs,"retry_used":retry_used,"retry_raw_response_text":retry_raw,"retry_parsed_json":retry_parsed,"retry_validation_errors":retry_errs,"retry_parsed_top_level_keys":list(retry_parsed.keys()) if isinstance(retry_parsed,dict) else [],"recovered_missing_article_sections":recovered_missing_article_sections,"final_validation_errors_after_recovery":(errs if success else (retry_errs or errs))}
     Path("logs/nikkei_final_report_gpt_raw.json").write_text(json.dumps(raw_log,ensure_ascii=False,indent=2),encoding="utf-8")
 
     html=render_final_report_html(Path("templates/nikkei_final_report_email.html"), report, display_date)
