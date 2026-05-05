@@ -90,6 +90,51 @@ def is_navigation_like_body(text: str) -> bool:
     return hits >= 2 or (sentence_count <= 1 and len(body) > 150)
 
 
+
+def clean_text_for_scoring(text: str) -> str:
+    body = str(text or "").replace("<br>", "\n")
+
+    drop_exact = {
+        "共有",
+        "文字サイズ",
+        "小",
+        "中",
+        "大",
+        "自動翻訳",
+        "英文（システムによる自動翻訳）を表示する",
+        "日経の記事利用サービス",
+        "保存",
+        "印刷 翻訳",
+        "検索する",
+        "その他",
+        "［有料会員限定］",
+        "[有料会員限定]",
+    }
+
+    drop_patterns = [
+        r"朝夕刊や電子版ではお伝えしきれない情報をお届けします。?.*",
+        r"企業での記事共有や会議資料への転載・複製.*",
+        r".*注文印刷.*",
+        r".*詳しくはこちら.*",
+        r"^\d+文字$",
+        r".*javascript:void\(0\).*",
+        r"^その他javascript:void\(0\).*$",
+    ]
+
+    kept = []
+    for line in body.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if line in drop_exact:
+            continue
+        if any(re.search(pattern, line) for pattern in drop_patterns):
+            continue
+        kept.append(line)
+
+    return "\n".join(kept).strip()
+
+
 def load_rules(token: str, rules_db_id: str, rule_types: set[str]) -> list[dict[str, Any]]:
     rules: list[dict[str, Any]] = []
     cursor = None
@@ -146,7 +191,8 @@ def derive_tags_from_rules(tags_by_type: dict[str,list[str]]) -> dict[str,list[s
 def score_article(article: dict[str, Any], rules: list[dict[str, Any]], min_report_score: float) -> dict[str, Any]:
     source_title = str(article.get("source_title") or "")
     page_title = str(article.get("page_title") or "")
-    body = str(article.get("text") or "")
+    raw_body = str(article.get("text") or "")
+    body = clean_text_for_scoring(raw_body)
     body_used_for_scoring = not is_navigation_like_body(body)
     body_for_score = body if body_used_for_scoring else ""
     title_text = f"{source_title}\n{page_title}".lower()
