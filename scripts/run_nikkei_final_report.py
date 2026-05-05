@@ -1,20 +1,20 @@
 from __future__ import annotations
 
-import hashlib, json, logging, os, re, smtplib
 import sys
-from urllib.parse import parse_qs, urlparse
-from datetime import datetime, timezone
-from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Any, Dict, List
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+import hashlib, json, logging, os, re, smtplib
+from datetime import datetime, timezone
+from email.mime.text import MIMEText
+from pathlib import Path
+from typing import Any, Dict, List
 import requests
 from src.article_enrichment import build_notion_payload, filter_targets, validate_article_json
-from src.final_report_synthesis import build_synthesis_input, validate_final_report
+from src.final_report_synthesis import build_synthesis_input, validate_final_report, validate_final_report_errors
 from src.openai_json_client import OpenAIJsonClient
 from src.report_renderer import render_final_report_html
 from src.report_selection import SelectionConfig, select_articles
@@ -25,14 +25,14 @@ DEFAULTS = {
     "NIKKEI_ENABLE_FINAL_REPORT": True,
     "NIKKEI_ENABLE_ARTICLE_GPT_ENRICHMENT": True,
     "NIKKEI_FORCE_ARTICLE_GPT_REPROCESS": False,
-    "NIKKEI_ARTICLE_GPT_MODEL": "gpt-5-nano",
+    "NIKKEI_ARTICLE_GPT_MODEL": "gpt-5-mini",
     "NIKKEI_ARTICLE_GPT_MAX_OUTPUT_TOKENS": 1200,
     "NIKKEI_ARTICLE_GPT_TEMPERATURE": 0.2,
-    "NIKKEI_ARTICLE_GPT_MIN_IMPORTANCE_SCORE": 3.0,
     "NIKKEI_ENABLE_FINAL_REPORT_GPT": True,
     "NIKKEI_FINAL_REPORT_MODEL": "gpt-5-mini",
-    "NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS": 1800,
+    "NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS": 5000,
     "NIKKEI_FINAL_REPORT_TEMPERATURE": 0.2,
+    "NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS": 1800,
     "NIKKEI_FORCE_FINAL_REPORT_REGENERATE": False,
     "NIKKEI_SEND_FINAL_REPORT_MAIL": False,
     "NIKKEI_SAVE_FINAL_REPORT_TO_NOTION": True,
@@ -111,7 +111,6 @@ def _article_update_props(summary: str, reason: str, biz: str, model: str) -> Di
         "Summary": {"rich_text": [{"text": {"content": summary[:1800]}}]},
         "Reason to Read": {"rich_text": [{"text": {"content": reason[:1800]}}]},
         "Business Implications": {"rich_text": [{"text": {"content": biz[:1800]}}]},
-        "Business Implication": {"rich_text": [{"text": {"content": biz[:1800]}}]},
         "GPT Processed": {"checkbox": True},
         "GPT Model": {"rich_text": [{"text": {"content": model}}]},
         "GPT Processed At": {"date": {"start": datetime.now(timezone.utc).isoformat()}},
@@ -147,87 +146,6 @@ def _filter_by_schema(payload: Dict[str, Any], schema: Dict[str, Any]) -> Dict[s
 
 def _notion_update_page(page_id: str, props: Dict[str, Any], token: str) -> None:
     requests.patch(f"https://api.notion.com/v1/pages/{page_id}", headers=_notion_headers(token), json={"properties": props}, timeout=30).raise_for_status()
-
-
-def _extract_ng_id(url: str) -> str:
-    try:
-        return (parse_qs(urlparse(str(url or "")).query).get("ng") or [""])[0]
-    except Exception:
-        return ""
-
-
-def _article_url_keys(url: str) -> list[str]:
-    u = str(url or "").strip()
-    keys = []
-    if u:
-        keys.append(u)
-    ng = _extract_ng_id(u)
-    if ng:
-        keys.extend([ng, f"ng:{ng}"])
-    return keys
-
-
-def _prop_text(prop: dict) -> str:
-    ptype = prop.get("type")
-    if ptype == "url":
-        return prop.get("url") or ""
-    if ptype in {"title", "rich_text"}:
-        return "".join(x.get("plain_text", "") for x in prop.get(ptype, []))
-    return ""
-
-
-def _build_article_page_index(article_db: str, token: str, schema: dict) -> dict[str, dict]:
-    url_props = [
-        name for name, meta in schema.items()
-        if meta.get("type") in {"url", "rich_text"} and "url" in name.lower()
-    ]
-    if not url_props:
-        logging.warning("article_url_property_not_found")
-        return {}
-
-    index = {}
-    cur = None
-    while True:
-        payload = {"page_size": 100}
-        if cur:
-            payload["start_cursor"] = cur
-
-        r = requests.post(
-            f"https://api.notion.com/v1/databases/{article_db}/query",
-            headers=_notion_headers(token),
-            json=payload,
-            timeout=30,
-        )
-        r.raise_for_status()
-        data = r.json()
-
-        for page in data.get("results", []):
-            props = page.get("properties", {})
-            for pname in url_props:
-                u = _prop_text(props.get(pname, {})).strip()
-                if not u:
-                    continue
-                for k in _article_url_keys(u):
-                    index[k] = page
-
-        if not data.get("has_more"):
-            break
-        cur = data.get("next_cursor")
-
-    return index
-
-
-def _resolve_article_page_id(article: dict, page_index: dict[str, dict]) -> str:
-    page_id = str(article.get("page_id") or "").strip()
-    if page_id:
-        return page_id
-
-    for key in _article_url_keys(str(article.get("url") or "")):
-        page = page_index.get(key)
-        if page and page.get("id"):
-            return str(page["id"])
-
-    return ""
 
 
 def _notion_query_daily(db_id: str, token: str, input_hash: str) -> list[dict]:
@@ -275,11 +193,6 @@ def _fallback_mail_decision(fallback_used: bool, fallback_mail_allowed: bool, al
     return "send"
 
 def main() -> int:
-    if os.getenv("DEBUG_IMPORT_PATH", "").strip().lower() == "true":
-        print(f"debug_import_path cwd={Path.cwd()}")
-        print(f"debug_import_path ROOT_DIR={ROOT_DIR}")
-        print(f"debug_import_path src_exists={(ROOT_DIR / 'src').exists()}")
-
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if not _env_bool("NIKKEI_ENABLE_FINAL_REPORT"): return 0
     data = json.loads(Path("logs/nikkei_articles_scored.json").read_text(encoding="utf-8"))
@@ -293,26 +206,13 @@ def main() -> int:
     token = _env_str("NOTION_TOKEN", ""); article_db = _env_str("NOTION_ARTICLE_DB_ID", ""); daily_db = _env_str("NOTION_DAILY_NEWS_DB_ID", "")
     client = OpenAIJsonClient(api_key=_env_str("OPENAI_API_KEY", "")) if _env_str("OPENAI_API_KEY", "") else None
     article_schema = _fetch_db_schema(article_db, token) if token and article_db else {}
-    article_page_index = _build_article_page_index(article_db, token, article_schema) if token and article_db and article_schema else {}
-    print(f"article_page_url_index_count: {len(article_page_index)}")
     notion_ok = notion_ng = 0
 
     gpt_candidates = [dict(a, full_text=a.get("full_text", ""), gpt_processed=a.get("gpt_processed_norm", False)) for a in selected_working]
-    article_gpt_min_importance_score = _env_float("NIKKEI_ARTICLE_GPT_MIN_IMPORTANCE_SCORE")
-    targets, skipped = filter_targets(
-        gpt_candidates,
-        _env_bool("NIKKEI_FORCE_ARTICLE_GPT_REPROCESS"),
-        min_importance_score=article_gpt_min_importance_score,
-    )
+    targets, skipped = filter_targets(gpt_candidates, _env_bool("NIKKEI_FORCE_ARTICLE_GPT_REPROCESS"))
     fails=[]; processed=0
     if _env_bool("NIKKEI_ENABLE_ARTICLE_GPT_ENRICHMENT") and client:
-        sp = """あなたは日本語の業務分析アシスタント。出力はJSONのみ。schema:{summary,reason_to_read,business_implications}。
-summaryは120-220字で、記事本文に書かれた事実だけを要約する。推測や一般論は禁止。
-reason_to_readは80-160字で、この記事を確認すべき具体的理由を書く。matched_rulesとimportance_scoreを参考にしてよいが、本文にない事実は足さない。
-business_implicationsは180-320字で、商社・素材・エネルギー・物流・金融・政策リスクのいずれかに関係する記事由来の論点のみを書く。
-数字・企業名・国名・価格・数量・時期の捏造は禁止。
-本文から根拠が取れない場合は、断定を避ける。
-Markdown禁止。"""
+        sp = """あなたは日本語の業務分析アシスタント。出力はJSONのみ。schema:{summary,reason_to_read,business_implications}。summaryは120-220字で本文事実のみ。reason_to_readは80-160字で具体。business_implicationsは180-320字で記事由来論点のみ。数字/企業/国名/価格/数量の捏造禁止。Markdown禁止。"""
         for t in targets:
             try:
                 out = client.generate_json(model=_env_str("NIKKEI_ARTICLE_GPT_MODEL"), system_prompt=sp, user_prompt=json.dumps({"title":t.get("title"),"url":t.get("url"),"source":t.get("source"),"edition":t.get("edition"),"issue_date":t.get("issue_date"),"importance_score":t.get("importance_score"),"priority":t.get("priority"),"matched_rules":t.get("matched_rules"),"full_text":t.get("full_text")}, ensure_ascii=False), max_output_tokens=_env_int("NIKKEI_ARTICLE_GPT_MAX_OUTPUT_TOKENS"), temperature=_env_float("NIKKEI_ARTICLE_GPT_TEMPERATURE"))
@@ -321,19 +221,10 @@ Markdown禁止。"""
                     if x.get("url") == t.get("url"):
                         x["Summary"], x["Reason to Read"], x["Business Implications"] = out["summary"], out["reason_to_read"], out["business_implications"]
                 processed += 1
-                if token:
-                    resolved_page_id = _resolve_article_page_id(t, article_page_index)
-                    if resolved_page_id:
-                        props = _filter_by_schema(_article_update_props(out["summary"], out["reason_to_read"], out["business_implications"], _env_str("NIKKEI_ARTICLE_GPT_MODEL")), article_schema)
-                        try:
-                            _notion_update_page(resolved_page_id, props, token)
-                            notion_ok += 1
-                        except Exception as e:
-                            notion_ng += 1
-                            fails.append({"page_id": resolved_page_id, "url": t.get("url"), "error": str(e)})
-                    else:
-                        notion_ng += 1
-                        fails.append({"url": t.get("url"), "error": "article_page_not_found_for_gpt_update"})
+                if token and t.get("page_id"):
+                    props = _filter_by_schema(_article_update_props(out["summary"], out["reason_to_read"], out["business_implications"], _env_str("NIKKEI_ARTICLE_GPT_MODEL")), article_schema)
+                    try: _notion_update_page(t["page_id"], props, token); notion_ok += 1
+                    except Exception as e: notion_ng += 1; fails.append({"page_id":t.get("page_id"),"error":str(e)})
             except Exception as e:
                 fails.append({"title":t.get("title"),"error":str(e)})
 
@@ -342,10 +233,69 @@ Markdown禁止。"""
     final_failed=[]; fallback_used=False; final_gpt_success=False
     try:
         if _env_bool("NIKKEI_ENABLE_FINAL_REPORT_GPT") and client:
-            in_articles = build_synthesis_input([{**a, "summary":a.get("Summary"), "reason_to_read":a.get("Reason to Read"), "business_implications":a.get("Business Implications")} for a in selected_working])
-            sp2 = """出力はJSONのみ。full_textは使わず、summary/reason_to_read/business_implicationsを根拠に最終レポートを作成。A1..ref_idとurl保持。商社目線の読みという語は禁止。"""
-            report = client.generate_json(model=_env_str("NIKKEI_FINAL_REPORT_MODEL"), system_prompt=sp2, user_prompt=json.dumps(in_articles, ensure_ascii=False), max_output_tokens=_env_int("NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS"), temperature=_env_float("NIKKEI_FINAL_REPORT_TEMPERATURE"))
-            if not validate_final_report(report, len(selected_working)): raise ValueError("invalid final report")
+            final_report_article_text_chars = _env_int("NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS")
+            in_articles = build_synthesis_input(
+                [
+                    {
+                        **a,
+                        "summary": a.get("Summary"),
+                        "reason_to_read": a.get("Reason to Read"),
+                        "business_implications": a.get("Business Implications"),
+                    }
+                    for a in selected_working
+                ],
+                text_chars=final_report_article_text_chars,
+            )
+            final_report_input = {
+                "target_date": _env_str("NIKKEI_TARGET_DATE", "auto"),
+                "edition": _env_str("NIKKEI_EDITION", ""),
+                "article_count": len(in_articles),
+                "article_text_chars": final_report_article_text_chars,
+                "articles": in_articles,
+            }
+            Path("logs/nikkei_final_report_input.json").write_text(
+                json.dumps(final_report_input, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            sp2 = """あなたは日本語の業務分析アシスタントです。出力はJSONのみ。
+入力された重要記事の title / importance_score / matched_rules / text_excerpt を根拠に、日経ブリーフを作成してください。
+記事本文にない数字、企業名、国名、価格、数量、時期を捏造しないでください。
+商社・素材・エネルギー・物流・金融・政策リスクの観点で横断整理してください。
+「商社目線の読み」という表現は禁止です。
+
+必ず以下のJSON schemaで返してください。
+{
+  "report_title": "string",
+  "executive_summary": "string",
+  "today_key_message": "string",
+  "cross_article_implications": "string",
+  "priority_watch_items": ["string"],
+  "article_sections": [
+    {
+      "ref_id": "A1",
+      "title": "string",
+      "url": "string",
+      "importance_score": 0,
+      "one_line_summary": "string",
+      "why_it_matters": "string",
+      "business_action_hint": "string"
+    }
+  ]
+}
+
+article_sections は入力記事数と同じ数にしてください。
+ref_id は A1, A2, ... の順にしてください。
+url は入力されたurlを必ず保持してください。"""
+            report = client.generate_json(
+                model=_env_str("NIKKEI_FINAL_REPORT_MODEL"),
+                system_prompt=sp2,
+                user_prompt=json.dumps(final_report_input, ensure_ascii=False),
+                max_output_tokens=_env_int("NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS"),
+                temperature=_env_float("NIKKEI_FINAL_REPORT_TEMPERATURE"),
+            )
+            validation_errors = validate_final_report_errors(report, len(selected_working))
+            if validation_errors:
+                raise ValueError("invalid final report: " + "; ".join(validation_errors[:12]))
             final_gpt_success=True
         else:
             fallback_used=True; report={"report_title":f"日経事業ブリーフ {_env_str('NIKKEI_TARGET_DATE','auto')}","executive_summary":"最終GPT無効のため簡易レポート。","today_key_message":"上位記事を確認。","cross_article_implications":"共通論点を確認。","priority_watch_items":["A1確認","A2確認","A3確認"],"article_sections":[{"ref_id":f"A{i}","title":a.get("title",""),"url":a.get("url",""),"importance_score":a.get("importance_score",0),"one_line_summary":a.get("Summary",""),"why_it_matters":a.get("Reason to Read",""),"business_action_hint":a.get("Business Implications","")} for i,a in enumerate(selected_working,1)]}
@@ -362,13 +312,32 @@ Markdown禁止。"""
             if r.get("properties",{}).get("Mail Sent",{}).get("checkbox") is True: already_sent=True
 
     fallback_mail_allowed=_env_bool("NIKKEI_ALLOW_FALLBACK_FINAL_REPORT_MAIL")
-    decision = _fallback_mail_decision(fallback_used, fallback_mail_allowed, already_sent, _env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL"))
-    mail_sent=False; mail_reason=""
+    mail_enabled=_env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL")
+    decision = _fallback_mail_decision(fallback_used, fallback_mail_allowed, already_sent, mail_enabled)
+    mail_sent=False; mail_reason=""; subj=""
+
+    to = [x.strip() for x in re.split(r"[,;\n]", os.getenv("MAIL_TO", "")) if x.strip()]
+    cc = [x.strip() for x in re.split(r"[,;\n]", os.getenv("MAIL_CC", "")) if x.strip()]
+    bcc = [x.strip() for x in re.split(r"[,;\n]", os.getenv("MAIL_BCC", "")) if x.strip()]
+    mail_recipient_count=len(to)+len(cc)+len(bcc)
+
+    edition = _env_str("NIKKEI_EDITION", "").lower()
+    if edition == "morning":
+        default_prefix = "【日経朝刊ブリーフ】"
+    elif edition == "evening":
+        default_prefix = "【日経夕刊ブリーフ】"
+    else:
+        default_prefix = "【日経新聞ブリーフ】"
+
+    prefix = _env_str("NIKKEI_FINAL_REPORT_SUBJECT_PREFIX", default_prefix)
+    subj=f"{prefix}{datetime.now().strftime('%Y-%m-%d')}｜重要{len(selected_working)}件"
+    if fallback_used:
+        subj="[fallback] "+subj
+
     if decision=="send":
-        subj=f"{_env_str('NIKKEI_FINAL_REPORT_SUBJECT_PREFIX')}{datetime.now().strftime('%Y-%m-%d')}（{len(selected_working)}件）"
-        if fallback_used: subj="[fallback] "+subj
         mail_sent=_send_mail(subj, html); mail_reason="" if mail_sent else "no_recipients_or_send_failed"
-    else: mail_reason=decision
+    else:
+        mail_reason=decision
 
     notion_final_saved=False
     if _env_bool("NIKKEI_SAVE_FINAL_REPORT_TO_NOTION") and token and daily_db:
@@ -381,23 +350,23 @@ Markdown禁止。"""
         except Exception as e:
             final_failed.append({"stage":"notion_daily_save","error":str(e)})
 
-    Path("logs/nikkei_article_enrichment_summary.json").write_text(json.dumps({"selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_min_importance_score":article_gpt_min_importance_score,"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails)},ensure_ascii=False,indent=2),encoding="utf-8")
+    Path("logs/nikkei_article_enrichment_summary.json").write_text(json.dumps({"selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails)},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_article_enrichment_failed.json").write_text(json.dumps(fails,ensure_ascii=False,indent=2),encoding="utf-8")
-    Path("logs/nikkei_final_report_summary.json").write_text(json.dumps({"pipeline_scope":"nikkei_only","selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"final_report_gpt_success":final_gpt_success,"fallback_used":fallback_used,"fallback_mail_allowed":fallback_mail_allowed,"notion_article_update_success_count":notion_ok,"notion_article_update_failed_count":notion_ng,"notion_final_report_saved":notion_final_saved,"mail_sent":mail_sent,"mail_skipped_reason":mail_reason,"input_hash":input_hash,"html_output_path":html_path},ensure_ascii=False,indent=2),encoding="utf-8")
+    Path("logs/nikkei_final_report_summary.json").write_text(json.dumps({"pipeline_scope":"nikkei_only","selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"final_report_gpt_success":final_gpt_success,"fallback_used":fallback_used,"fallback_mail_allowed":fallback_mail_allowed,"notion_article_update_success_count":notion_ok,"notion_article_update_failed_count":notion_ng,"notion_final_report_saved":notion_final_saved,"mail_enabled":mail_enabled,"mail_recipient_count":mail_recipient_count,"mail_subject":subj,"mail_sent":mail_sent,"mail_skipped_reason":mail_reason,"input_hash":input_hash,"html_output_path":html_path},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_final_report_failed.json").write_text(json.dumps(final_failed,ensure_ascii=False,indent=2),encoding="utf-8")
 
-    print(f"article_gpt_min_importance_score: {article_gpt_min_importance_score}")
-    print(f"article_gpt_candidate_count: {len(gpt_candidates)}")
-    print(f"article_gpt_target_count: {len(targets)}")
-    print(f"article_gpt_processed_count: {processed}")
-    print(f"article_gpt_failed_count: {len(fails)}")
-    print(f"notion_article_update_success_count: {notion_ok}")
-    print(f"notion_article_update_failed_count: {notion_ng}")
+    print(f"final_report_model: {_env_str('NIKKEI_FINAL_REPORT_MODEL')}")
+    print(f"final_report_input_article_count: {len(selected_working)}")
+    print(f"final_report_article_text_chars: {_env_int('NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS')}")
     print(f"final_report_gpt_success: {final_gpt_success}")
     print(f"fallback_used: {fallback_used}")
-    print(f"notion_final_report_saved: {notion_final_saved}")
+    print(f"mail_enabled: {mail_enabled}")
+    print(f"mail_recipient_count: {mail_recipient_count}")
+    print(f"mail_subject: {subj}")
     print(f"mail_sent: {mail_sent}")
     print(f"mail_skipped_reason: {mail_reason}")
+    print(f"fallback_used: {fallback_used}")
+    print(f"fallback_mail_allowed: {fallback_mail_allowed}")
 
     return 0
 

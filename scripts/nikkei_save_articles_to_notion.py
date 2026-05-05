@@ -237,7 +237,13 @@ def delete_existing_body_blocks(page_id):
 def main():
  arts=json.loads(INPUT_JSON.read_text()) if INPUT_JSON.exists() else []
  props=req('GET',f'https://api.notion.com/v1/databases/{DATABASE_ID}').json().get('properties',{})
- keys,pages=load_existing(); fails=[]; stats={k:0 for k in ['metadata_written_count','source_written','fetch_status_written','full_text_status_written','text_length_written','image_count_written','has_image_written','has_chart_written']}; missing=[]; skipped=[]
+ skip_existing = os.getenv("NIKKEI_SKIP_EXISTING_NOTION_URLS", "true").strip().lower() in {"1", "true", "yes", "on"}
+ if skip_existing:
+  keys,pages=load_existing()
+ else:
+  keys,pages=set(),{}
+ print('skip_existing_notion_urls:', skip_existing)
+ print('existing_url_count:',len(keys)); fails=[]; stats={k:0 for k in ['metadata_written_count','source_written','fetch_status_written','full_text_status_written','text_length_written','image_count_written','has_image_written','has_chart_written']}; missing=[]; skipped=[]
  mapn={k:find_prop(props,v) for k,v in PROP_CANDS.items()}
  for a in arts:
   u=a.get('url','').strip(); title=ensure_nikkei_title(a); text=clean_nikkei_body_text(a.get('text','')); extraction=a.get('extraction_status','success')
