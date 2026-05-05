@@ -258,7 +258,7 @@ def normalize_title_for_match(title: str) -> str:
     t = re.sub(r'\s*-\s*日本経済新聞\s*$', '', t)
     t = t.replace('　', ' ')
     t = re.sub(r'\s+', '', t)
-    t = re.sub(r'[「」『』【】\[\]（）()〈〉《》“”"''・…‥,，、。\.!！?？:：;；/／\\-|]', '', t)
+    t = re.sub("[「」『』【】\\[\\]（）()〈〉《》“”\"\'・…‥,，、。.!！?？:：;；/／\\\\|-]", "", t)
     return t
 
 
@@ -305,21 +305,30 @@ def validate_article_body(text: str, page_title: str = '', source_title: str = '
     metrics = article_body_quality_metrics(cleaned)
     title_match = article_title_match_result(source_title, page_title)
     headline_align = text_headline_alignment(source_title or page_title, cleaned)
+    url_is_article = '/paper/article/' in (article_url or '')
     strong_body = (
         metrics['text_length'] >= MIN_LEN
         and metrics['sentence_count_ja'] >= 2
         and metrics['paragraph_count'] >= 2
     )
-    likely_article = strong_body and (title_match['matched'] or headline_align)
+    very_strong_body = (
+        metrics['text_length'] >= max(MIN_LEN, 500)
+        and metrics['sentence_count_ja'] >= 4
+        and metrics['paragraph_count'] >= 2
+    )
+    likely_article = (
+        strong_body and (title_match['matched'] or headline_align)
+    ) or (
+        url_is_article and very_strong_body
+    )
     paper_like_title = is_paper_index_title(page_title)
     paper_like_h1 = is_paper_index_title(h1_text)
-    url_is_article = '/paper/article/' in (article_url or '')
 
-    if paper_like_title and not (url_is_article and likely_article):
+    if paper_like_title and not (url_is_article and (likely_article or very_strong_body)):
         return False, 'paper_index_page_title'
 
     nav_like = is_probably_navigation_text(cleaned)
-    if nav_like and not likely_article:
+    if nav_like and not (likely_article or (url_is_article and strong_body)):
         return False, 'navigation_like_text'
 
     if len(cleaned) < MIN_LEN:
