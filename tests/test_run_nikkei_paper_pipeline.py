@@ -54,3 +54,15 @@ def test_partial_success_continues():
         allow_empty_fetch=False,
     )
     assert decision == "continue"
+
+
+def test_target_zero_is_skip_reason_no_targets():
+    decision, reason = decide_fetch_outcome(
+        target_count=0,
+        fetch_success_count=0,
+        fetch_failed_count=0,
+        existing_url_skip_count=0,
+        allow_empty_fetch=False,
+    )
+    assert decision == "skip_no_targets"
+    assert "already exist" in reason

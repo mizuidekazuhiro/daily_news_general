@@ -34,7 +34,7 @@ DEFAULTS = {
     "NIKKEI_FINAL_REPORT_TEMPERATURE": 0.2,
     "NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS": 1800,
     "NIKKEI_FORCE_FINAL_REPORT_REGENERATE": False,
-    "NIKKEI_SEND_FINAL_REPORT_MAIL": False,
+    "NIKKEI_SEND_FINAL_REPORT_MAIL": True,
     "NIKKEI_SAVE_FINAL_REPORT_TO_NOTION": True,
     "NIKKEI_PREVENT_DUPLICATE_FINAL_REPORT_MAIL": True,
     "NIKKEI_FINAL_REPORT_SUBJECT_PREFIX": "【日経新聞ブリーフ】",
@@ -231,6 +231,13 @@ def main() -> int:
     # remove missing url
     selected_working = [x for x in selected_working if x.get("url")]
     final_failed=[]; fallback_used=False; final_gpt_success=False
+    if len(selected_working) == 0:
+        summary = {"mail_enabled": _env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL"), "mail_send_allowed": False, "mail_sent": False, "mail_skipped_reason": "no_articles_for_edition", "final_report_input_article_count": 0}
+        Path("logs/nikkei_final_report_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        print("final_report_input_article_count: 0")
+        print("mail_send_allowed: false")
+        print("mail_skipped_reason: no_articles_for_edition")
+        return 0
     try:
         if _env_bool("NIKKEI_ENABLE_FINAL_REPORT_GPT") and client:
             final_report_article_text_chars = _env_int("NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS")
@@ -334,6 +341,7 @@ url は入力されたurlを必ず保持してください。"""
     if fallback_used:
         subj="[fallback] "+subj
 
+    mail_send_allowed = decision == "send"
     if decision=="send":
         mail_sent=_send_mail(subj, html); mail_reason="" if mail_sent else "no_recipients_or_send_failed"
     else:
@@ -352,7 +360,7 @@ url は入力されたurlを必ず保持してください。"""
 
     Path("logs/nikkei_article_enrichment_summary.json").write_text(json.dumps({"selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails)},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_article_enrichment_failed.json").write_text(json.dumps(fails,ensure_ascii=False,indent=2),encoding="utf-8")
-    Path("logs/nikkei_final_report_summary.json").write_text(json.dumps({"pipeline_scope":"nikkei_only","selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"final_report_gpt_success":final_gpt_success,"fallback_used":fallback_used,"fallback_mail_allowed":fallback_mail_allowed,"notion_article_update_success_count":notion_ok,"notion_article_update_failed_count":notion_ng,"notion_final_report_saved":notion_final_saved,"mail_enabled":mail_enabled,"mail_recipient_count":mail_recipient_count,"mail_subject":subj,"mail_sent":mail_sent,"mail_skipped_reason":mail_reason,"input_hash":input_hash,"html_output_path":html_path},ensure_ascii=False,indent=2),encoding="utf-8")
+    Path("logs/nikkei_final_report_summary.json").write_text(json.dumps({"pipeline_scope":"nikkei_only","selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"final_report_gpt_success":final_gpt_success,"fallback_used":fallback_used,"fallback_mail_allowed":fallback_mail_allowed,"notion_article_update_success_count":notion_ok,"notion_article_update_failed_count":notion_ng,"notion_final_report_saved":notion_final_saved,"mail_enabled":mail_enabled,"mail_send_allowed":mail_send_allowed,"mail_recipient_count":mail_recipient_count,"mail_subject":subj,"mail_sent":mail_sent,"mail_skipped_reason":mail_reason,"input_hash":input_hash,"html_output_path":html_path},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_final_report_failed.json").write_text(json.dumps(final_failed,ensure_ascii=False,indent=2),encoding="utf-8")
 
     print(f"final_report_model: {_env_str('NIKKEI_FINAL_REPORT_MODEL')}")
@@ -361,6 +369,7 @@ url は入力されたurlを必ず保持してください。"""
     print(f"final_report_gpt_success: {final_gpt_success}")
     print(f"fallback_used: {fallback_used}")
     print(f"mail_enabled: {mail_enabled}")
+    print(f"mail_send_allowed: {mail_send_allowed}")
     print(f"mail_recipient_count: {mail_recipient_count}")
     print(f"mail_subject: {subj}")
     print(f"mail_sent: {mail_sent}")

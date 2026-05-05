@@ -43,6 +43,13 @@ def read_fetch_summary() -> dict:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
+def read_issue_skip_summary() -> dict:
+    p = LOGS / "nikkei_issue_skip_summary.json"
+    if not p.exists():
+        return {}
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
 def decide_fetch_outcome(
     *,
     target_count: int,
@@ -68,9 +75,17 @@ def main() -> int:
 
     step_extract = run([sys.executable, "scripts/nikkei_extract_issue_links.py"])
     article_count = read_count("nikkei_issue_article_links.json")
-    if article_count <= 0 and os.getenv("NIKKEI_ALLOW_EMPTY_ISSUE", "false").lower() != "true":
-        print("article_count is zero and NIKKEI_ALLOW_EMPTY_ISSUE=false")
-        return 1
+    issue_skip = read_issue_skip_summary()
+    if issue_skip.get("edition_check_result") == "edition_mismatch":
+        print("skip_reason: edition_mismatch")
+        print("skip_final_report: true")
+        print("mail_send_allowed: false")
+        return 0
+    if article_count <= 0:
+        print("skip_reason: no_articles_for_edition")
+        print("skip_final_report: true")
+        print("mail_send_allowed: false")
+        return 0
 
     step_fetch = run([sys.executable, "scripts/nikkei_fetch_articles_full.py"])
 
