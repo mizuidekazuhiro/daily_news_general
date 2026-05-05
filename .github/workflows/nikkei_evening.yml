@@ -79,7 +79,7 @@ on:
       send_final_report_mail:
         description: "Send final report email"
         required: true
-        default: "false"
+        default: "true"
         type: choice
         options: ["true","false"]
       allow_fallback_final_report_mail:
