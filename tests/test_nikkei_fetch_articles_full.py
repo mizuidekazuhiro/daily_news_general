@@ -1,5 +1,6 @@
 from scripts.nikkei_fetch_articles_full import (
     classify_empty_body_reason,
+    is_probably_navigation_text,
     is_paper_index_title,
     should_stop_attempting,
     validate_article_body,
@@ -41,3 +42,28 @@ def test_validate_accepts_normal_article_text():
     ok, reason = validate_article_body(text, page_title="日本企業、設備投資を拡大", source_title="日本企業、設備投資を拡大")
     assert ok is True
     assert reason == ""
+
+
+def test_navigation_classifier_accepts_japanese_article_shape():
+    text = "\n".join(
+        [
+            "日本企業の投資計画が拡大している。需要回復を見据えて工場の増設が進む。",
+            "政府の統計でも設備投資の増勢が確認された。地域経済にも波及効果が広がる。",
+            "市場関係者は慎重ながらも回復基調が続くとみる。企業収益の改善が背景にある。",
+            "海外需要の持ち直しも追い風となる。輸出関連の企業で増産体制の準備が進む。",
+        ]
+    )
+    assert is_probably_navigation_text(text) is False
+
+
+def test_navigation_classifier_rejects_link_list_text():
+    text = "\n".join(
+        [
+            "アクセスランキング",
+            "市場ニュース一覧",
+            "https://example.com/a",
+            "https://example.com/b",
+            "ログイン 会員登録 購読",
+        ]
+    )
+    assert is_probably_navigation_text(text) is True

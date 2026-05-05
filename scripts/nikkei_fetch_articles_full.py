@@ -185,11 +185,15 @@ def detect_walls(text: str):
     login_markers = ['ログイン', '会員登録', 'ログインしてください', '日経ID']
     paid_markers = ['有料会員', '続きは会員限定', 'この記事は会員限定', '購読']
     access_markers = ['Access Denied', 'Forbidden', '403', 'Bot', '不正なアクセス']
-    return (
-        any(x in text for x in login_markers),
-        any(x in text for x in paid_markers),
-        any(x in text for x in access_markers),
-    )
+    login = any(x in text for x in login_markers)
+    paid = any(x in text for x in paid_markers)
+    access = any(x in text for x in access_markers)
+    evidence = {
+        'login_markers': [x for x in login_markers if x in text][:5],
+        'paid_markers': [x for x in paid_markers if x in text][:5],
+        'access_markers': [x for x in access_markers if x in text][:5],
+    }
+    return login, paid, access, evidence
 
 
 def looks_like_noise(text: str) -> bool:
@@ -227,20 +231,32 @@ def article_body_quality_metrics(text: str) -> dict:
     sentence_count_ja = len(re.findall(r'。', cleaned))
     paragraph_count = sum(1 for ln in lines if len(ln) >= 20)
     nav_keyword_hits = sum(cleaned.count(k) for k in NAV_KEYWORDS)
+    link_like_line_count = sum(1 for ln in lines if re.search(r'https?://|www\.|▶|＞|→', ln))
+    link_text_ratio = (link_like_line_count / len(lines)) if lines else 0.0
     return {
         'text_length': len(cleaned),
         'paragraph_count': paragraph_count,
         'sentence_count_ja': sentence_count_ja,
         'nav_keyword_hits': nav_keyword_hits,
         'duplicate_line_ratio': duplicate_line_ratio,
+        'link_text_ratio': round(link_text_ratio, 3),
     }
 
 
 def is_probably_navigation_text(text: str) -> bool:
     m = article_body_quality_metrics(text)
+    has_article_shape = (
+        m['text_length'] >= MIN_LEN
+        and m['sentence_count_ja'] >= 3
+        and m['paragraph_count'] >= 3
+        and m['link_text_ratio'] <= 0.35
+    )
+    if has_article_shape:
+        return False
     return (
         m['nav_keyword_hits'] >= 3
         or m['sentence_count_ja'] <= 1
+        or m['link_text_ratio'] >= 0.55
         or m['duplicate_line_ratio'] >= 0.35
         or (m['paragraph_count'] <= 2 and m['text_length'] < 700)
     )
@@ -258,7 +274,7 @@ def normalize_title_for_match(title: str) -> str:
     t = re.sub(r'\s*-\s*日本経済新聞\s*$', '', t)
     t = t.replace('　', ' ')
     t = re.sub(r'\s+', '', t)
-    t = re.sub(r'[「」『』【】\[\]（）()〈〉《》“”"''・…‥,，、。\.!！?？:：;；/／\\-|]', '', t)
+    t = re.sub(r"[「」『』【】\[\]（）()〈〉《》“”\"'・…‥,，、。.!！?？:：;；/／\\|-]", '', t)
     return t
 
 
@@ -372,51 +388,101 @@ def extract_from_embedded_json(page):
 
 def select_text_with_candidates(page):
     script = r'''() => {
+      const removalSelectors = [
+        'header','footer','nav','aside','script','style','noscript',
+        '[role="navigation"]','.breadcrumb','.breadcrumbs','.related','.recommend',
+        '[class*="ranking"]','[class*="share"]','[class*="sns"]','[class*="advert"]',
+        '[class*="ad-"]','[class*="paid"]','[class*="subscription"]'
+      ];
+      for (const sel of removalSelectors) {
+        document.querySelectorAll(sel).forEach(n => n.remove());
+      }
+      const sanitize = (node) => {
+        if (!node) return null;
+        const c = node.cloneNode(true);
+        for (const sel of removalSelectors) c.querySelectorAll(sel).forEach(n => n.remove());
+        return c;
+      };
+      const paragraphFallback = () => {
+        const navWords = ['メニュー', 'ランキング', '関連記事', '購読', '会員登録', 'ログイン', 'シェア', '一覧'];
+        const seen = new Set();
+        const out = [];
+        for (const p of document.querySelectorAll('p')) {
+          const text = (p.innerText || '').replace(/\s+/g, ' ').trim();
+          if (!text || text.length < 20) continue;
+          if (seen.has(text)) continue;
+          seen.add(text);
+          const anchorTextLen = Array.from(p.querySelectorAll('a')).map(a => (a.innerText || '').trim().length).reduce((a, b) => a + b, 0);
+          const ratio = text.length ? (anchorTextLen / text.length) : 0;
+          if (ratio >= 0.6) continue;
+          if (navWords.filter(w => text.includes(w)).length >= 2 && text.length < 120) continue;
+          out.push(text);
+        }
+        return out;
+      };
       const h1Text = document.querySelector('h1')?.innerText?.trim() || '';
       const title = document.title || h1Text || '';
       const cands = [
-        ['div.cmn-section.cmn-indent','div.cmn-section.cmn-indent'],
         ['article','article'],
         ['main','main'],
-        ['.cmn-section','.cmn-section'],
         ['[data-track-article-body]','[data-track-article-body]'],
+        ['[itemprop="articleBody"]','[itemprop="articleBody"]'],
+        ['[class*="article-body"]','[class*="article-body"]'],
+        ['[class*="articleBody"]','[class*="articleBody"]'],
         ['[class*="article"]','[class*="article"]'],
-        ['[class*="body"]','[class*="body"]'],
-        ['.articleBody','.articleBody'],
-        ['.article-body','.article-body']
+        ['[class*="content"]','[class*="content"]'],
+        ['div.cmn-section.cmn-indent','div.cmn-section.cmn-indent'],
+        ['.cmn-section','.cmn-section'],
       ];
+      const paragraphTexts = paragraphFallback();
+      if (paragraphTexts.length > 0) {
+        cands.push(['paragraph_fallback', '__paragraph_fallback__']);
+      }
       const out = [];
       for (const [name, sel] of cands) {
-        const txt = Array.from(document.querySelectorAll(sel)).map(x => x.innerText || '').join('\n').trim();
-        out.push({selector: name, text: txt, text_length: txt.length, preview: txt.slice(0, 240)});
+        if (sel === '__paragraph_fallback__') {
+          const txt = paragraphTexts.join('\n\n').trim();
+          out.push({selector: name, text: txt, text_length: txt.length, preview: txt.slice(0, 240), paragraph_count: paragraphTexts.length, link_text_ratio: 0});
+          continue;
+        }
+        const nodes = Array.from(document.querySelectorAll(sel)).map(sanitize).filter(Boolean);
+        const txt = nodes.map(x => x.innerText || '').join('\n').trim();
+        let linkLen = 0;
+        for (const n of nodes) {
+          n.querySelectorAll('a').forEach(a => linkLen += (a.innerText || '').trim().length);
+        }
+        const linkRatio = txt.length ? (linkLen / txt.length) : 0;
+        out.push({selector: name, text: txt, text_length: txt.length, preview: txt.slice(0, 240), paragraph_count: txt ? txt.split('\n').filter(x => x.trim().length >= 20).length : 0, link_text_ratio: Number(linkRatio.toFixed(3))});
       }
-      let bodyText = (document.body?.innerText || '').trim();
+      let bodyText = (sanitize(document.body)?.innerText || '').trim();
       bodyText = bodyText.replace(/メニュー[\s\S]{0,400}?ログイン/g, '');
-      out.push({selector: 'document.body.innerText fallback', text: bodyText, text_length: bodyText.length, preview: bodyText.slice(0, 240)});
+      out.push({selector: 'document.body.innerText fallback', text: bodyText, text_length: bodyText.length, preview: bodyText.slice(0, 240), paragraph_count: bodyText ? bodyText.split('\n').filter(x => x.trim().length >= 20).length : 0, link_text_ratio: 0});
       const snippets = {};
       for (const sel of ['article','main','section','body']) {
         const node = document.querySelector(sel);
-        snippets[sel] = (node?.outerHTML || '').slice(0, 3000);
+        snippets[sel] = (sanitize(node)?.outerHTML || '').slice(0, 3000);
       }
-      return {title, h1Text, candidates: out, pageText: bodyText, snippets, readyState: document.readyState, locationHref: location.href};
+      return {title, h1Text, candidates: out, pageText: bodyText, snippets, readyState: document.readyState, locationHref: location.href, paragraphCount: paragraphTexts.length};
     }'''
     data = page.evaluate(script)
     candidates = data.get('candidates', [])
     preferred = [
         'article',
         'main',
-        '.cmn-section',
         '[data-track-article-body]',
-        '.articleBody',
-        '.article-body',
+        '[itemprop="articleBody"]',
+        '[class*="article-body"]',
+        '[class*="articleBody"]',
+        'paragraph_fallback',
+        '.cmn-section',
         '[class*="article"]',
-        '[class*="body"]',
+        '[class*="content"]',
     ]
     best = {'selector': 'none', 'text': '', 'text_length': 0}
     cand_map = {c.get('selector'): c for c in candidates}
     for key in preferred:
         c = cand_map.get(key)
-        if c and c.get('text_length', 0) > 0 and not looks_like_noise(c.get('text', '')):
+        if c and c.get('text_length', 0) > 0 and c.get('link_text_ratio', 0) <= 0.6 and not looks_like_noise(c.get('text', '')):
             best = c
             break
     return data, data.get('title', ''), candidates, best, data.get('pageText', '')
@@ -623,7 +689,7 @@ def main():
                             **metrics,
                             'preview': (candidate.get('preview', '') or '')[:240],
                         })
-                    login_wall, paid_wall, access_denied = detect_walls(text + '\n' + page_text)
+                    login_wall, paid_wall, access_denied, wall_evidence = detect_walls(text + '\n' + page_text)
                     empty_body = len(text) == 0
                     too_short = len(text) < MIN_LEN
                     ex, r = should_exclude_by_body(a.get('title', ''), text)
@@ -673,9 +739,10 @@ def main():
                             extract_data, page_title, selector_logs, best, page_text = select_text_with_candidates(page)
                             selector_used = best.get('selector', '')
                             text = (best.get('text') or '').strip()
-                            login_wall, paid_wall, access_denied = detect_walls(text + '\n' + page_text)
+                            login_wall, paid_wall, access_denied, wall_evidence = detect_walls(text + '\n' + page_text)
                         except Exception:
                             selector_logs = []
+                            wall_evidence = {}
                         html_path, png_path, txt_path, debug_json_path = save_failure_artifacts(page, i)
                         failure_reason = 'empty_body' if len(text) == 0 else ('too_short' if 0 < len(text) < MIN_LEN else type(e).__name__)
                         if 'invalid_article_body:' in str(e):
@@ -716,6 +783,14 @@ def main():
                             'page_id': ex.get('page_id', ''), 'existing_page': bool(ex.get('page_id')),
                             'reason': failure_reason,
                             'failure_reason': failure_reason,
+                            'selected_extractor_name': selector_used,
+                            'extracted_text_length': len(text),
+                            'extracted_text_head_1000': text[:1000],
+                            'paragraph_count': article_body_quality_metrics(text).get('paragraph_count', 0),
+                            'link_text_ratio': article_body_quality_metrics(text).get('link_text_ratio', 0),
+                            'paid_wall_detected': paid_wall,
+                            'login_wall_detected': login_wall,
+                            'wall_detection_evidence': wall_evidence,
                             'h1_text': h1_text,
                             'validation_metrics': article_body_quality_metrics(text),
                             'article_title_match_result': article_title_match_result(a.get('title', ''), page_title),
