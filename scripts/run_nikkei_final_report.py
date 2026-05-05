@@ -86,7 +86,25 @@ def _generate_report(client,input_payload,retry=False):
 
 def main()->int:
     logging.basicConfig(level=logging.INFO)
-    data=json.loads(Path("logs/nikkei_articles_scored.json").read_text(encoding="utf-8"))
+    scored_path = Path("logs/nikkei_articles_scored.json")
+    if not scored_path.exists():
+        Path("logs").mkdir(exist_ok=True)
+        mail_enabled = _env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL", True)
+        payload = {
+            "final_report_skipped": True,
+            "final_report_skip_reason": "missing_scored_articles_json",
+            "mail_enabled": mail_enabled,
+            "mail_send_allowed": False,
+            "mail_sent": False,
+            "mail_skipped_reason": "missing_scored_articles_json",
+            "exit_code": 0,
+        }
+        Path("logs/nikkei_final_report_summary.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        print("final_report_skipped: true")
+        print("final_report_skip_reason: missing_scored_articles_json")
+        print("mail_sent: false")
+        return 0
+    data=json.loads(scored_path.read_text(encoding="utf-8"))
     norm=[_normalize_article(a) for a in data]
     sel,log=select_articles(norm, SelectionConfig(mode="top_importance_rank", top_rank=5, include_ties=False, min_importance_score=0))
     sel=sel[:5]
