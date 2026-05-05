@@ -142,12 +142,50 @@ def split_blocks(text, limit=1800):
     if cur: out.append(cur)
     return out
 
-def append_body_blocks(page_id,text):
+def append_body_blocks(page_id,text,title=''):
     chunks=split_blocks(text)
     if not chunks: return 0
-    children=[{"object":"block","type":"heading_2","heading_2":{"rich_text":[{"type":"text","text":{"content":"記事本文"}}]}}]
-    children += [{"object":"block","type":"paragraph","paragraph":{"rich_text":[{"type":"text","text":{"content":c[:1900]}}]}} for c in chunks]
-    req('PATCH',f'https://api.notion.com/v1/blocks/{page_id}/children',json={'children':children[:100]}); return len(children)
+
+    children=[
+        {
+            "object":"block",
+            "type":"heading_2",
+            "heading_2":{
+                "rich_text":[{"type":"text","text":{"content":"タイトル"}}]
+            }
+        }
+    ]
+
+    if title:
+        children.append({
+            "object":"block",
+            "type":"heading_3",
+            "heading_3":{
+                "rich_text":[{"type":"text","text":{"content":str(title)[:1900]}}]
+            }
+        })
+
+    children.append({
+        "object":"block",
+        "type":"heading_2",
+        "heading_2":{
+            "rich_text":[{"type":"text","text":{"content":"本文"}}]
+        }
+    })
+
+    children += [
+        {
+            "object":"block",
+            "type":"paragraph",
+            "paragraph":{
+                "rich_text":[{"type":"text","text":{"content":c[:1900]}}]
+            }
+        }
+        for c in chunks
+    ]
+
+    req('PATCH',f'https://api.notion.com/v1/blocks/{page_id}/children',json={'children':children[:100]})
+    return len(children)
 
 def list_page_children(page_id):
     out=[]; cur=None
@@ -162,28 +200,37 @@ def list_page_children(page_id):
         cur=data.get('next_cursor')
     return out
 
+def _heading_text(block):
+    btype=block.get('type')
+    if btype not in {'heading_1','heading_2','heading_3'}:
+        return ''
+    return ''.join(x.get('plain_text','') for x in block.get(btype,{}).get('rich_text',[])).strip()
+
 def has_body_heading(page_id):
     for b in list_page_children(page_id):
-        if b.get('type')=='heading_2':
-            t=''.join(x.get('plain_text','') for x in b.get('heading_2',{}).get('rich_text',[]))
-            if t.strip()=='記事本文': return True
+        if _heading_text(b) in {'記事本文','タイトル','本文'}:
+            return True
     return False
 
 def delete_existing_body_blocks(page_id):
     children=list_page_children(page_id)
     deleting=False
     deleted=0
+    start_headings={'記事本文','タイトル','本文'}
+    stop_headings={'メタデータ'}
+
     for b in children:
-        btype=b.get('type')
-        if btype=='heading_2':
-            t=''.join(x.get('plain_text','') for x in b.get('heading_2',{}).get('rich_text',[])).strip()
-            if t=='記事本文':
-                deleting=True
-            elif deleting:
-                break
+        t=_heading_text(b)
+
+        if t in start_headings and not deleting:
+            deleting=True
+        elif deleting and t in stop_headings:
+            break
+
         if deleting:
             req('PATCH',f"https://api.notion.com/v1/blocks/{b['id']}",json={'archived':True})
             deleted += 1
+
     print(f"deleted_existing_body_blocks: {deleted}")
     return deleted
 
@@ -212,10 +259,10 @@ def main():
     if clean:
         if has_body_heading(pid):
             delete_existing_body_blocks(pid)
-        append_body_blocks(pid,clean)
+        append_body_blocks(pid,clean,title)
    else:
     created=req('POST','https://api.notion.com/v1/pages',json={'parent':{'database_id':DATABASE_ID},'properties':payload}).json()
-    if clean and created.get('id'): append_body_blocks(created['id'],clean)
+    if clean and created.get('id'): append_body_blocks(created['id'],clean,title)
   except Exception as e: fails.append({'url':u,'error':str(e)})
  FAILED_LOG_JSON.write_text(json.dumps(fails,ensure_ascii=False,indent=2),encoding='utf-8') if fails else None
  print('metadata_written_count:',len(arts)); print('source_written:',len(arts)); print('fetch_status_written:',len(arts)); print('full_text_status_written:',len(arts)); print('text_length_written:',len(arts)); print('image_count_written:',len(arts)); print('has_image_written:',len(arts)); print('has_chart_written:',len(arts)); print('missing_metadata_properties:',sorted(set(missing))); print('skipped_type_mismatch_properties:',sorted(set(skipped)))
