@@ -4,6 +4,11 @@ from datetime import datetime
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any
+import sys
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from src.final_report_synthesis import build_synthesis_input, validate_final_report_errors
 from src.openai_json_client import OpenAIJsonClient, OpenAIJsonError
