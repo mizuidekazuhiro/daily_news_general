@@ -37,6 +37,12 @@ on:
         default: "true"
         type: choice
         options: ["true","false"]
+      run_final_report:
+        description: "Run final report generation"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true","false"]
   schedule:
     - cron: "10,30,50 7 * * *"
 
@@ -102,6 +108,7 @@ jobs:
           P
       - run: python scripts/run_nikkei_paper_pipeline.py
       - run: python scripts/run_nikkei_final_report.py
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_final_report == 'true' }}
 
       - name: Upload Nikkei debug logs
         if: always()
