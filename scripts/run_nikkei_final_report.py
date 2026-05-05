@@ -53,6 +53,7 @@ def _build_article_sections_from_input(in_articles:list[dict])->list[dict]:
             "url": a.get("url",""),
             "importance_score": a.get("importance_score",0),
             "one_line_summary": a.get("summary") or (a.get("text_excerpt","")[:160] or "本文確認対象"),
+            "full_text": a.get("full_text") or a.get("text") or a.get("text_excerpt") or "",
             "full_text": a.get("full_text") or a.get("text_excerpt") or "",
             "why_it_matters": a.get("reason_to_read") or "",
             "business_action_hint": a.get("business_implications") or "",
@@ -118,7 +119,22 @@ def main()->int:
         return 0
     data=json.loads(scored_path.read_text(encoding="utf-8"))
     norm=[_normalize_article(a) for a in data]
-    sel,log=select_articles(norm, SelectionConfig(mode="top_importance_rank", top_rank=5, include_ties=False, min_importance_score=0))
+    sel_mode=_env_str("NIKKEI_REPORT_SELECTION_MODE","top_importance_rank")
+    sel_rank=_env_int("NIKKEI_REPORT_TOP_IMPORTANCE_RANK",5)
+    sel_ties=_env_bool("NIKKEI_REPORT_INCLUDE_TIES",False)
+    min_score=_env_int("NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT",5)
+    require_min=_env_bool("NIKKEI_REPORT_REQUIRE_MIN_SCORE",True)
+    allow_below_fill=_env_bool("NIKKEI_REPORT_ALLOW_BELOW_THRESHOLD_FILL",False)
+    pool=norm
+    if require_min:
+        pool=[a for a in norm if (a.get("importance_score") or 0)>=min_score]
+    sel,log=select_articles(pool, SelectionConfig(mode=sel_mode, top_rank=sel_rank, include_ties=sel_ties, min_importance_score=(min_score if require_min else 0)))
+    if require_min and allow_below_fill and len(sel)<sel_rank:
+        more,_=select_articles(norm, SelectionConfig(mode=sel_mode, top_rank=sel_rank, include_ties=sel_ties, min_importance_score=0))
+        seen={x.get("url") for x in sel}
+        for m in more:
+            if len(sel)>=sel_rank: break
+            if m.get("url") not in seen: sel.append(m)
     sel=sel[:5]
     log["report_selected_count"]=len(sel); log["selected_article_titles"]= [x.get("title","") for x in sel]; log["selected_article_scores"]= [x.get("importance_score",0) for x in sel]
     Path("logs").mkdir(exist_ok=True)
@@ -126,7 +142,7 @@ def main()->int:
     in_articles=build_synthesis_input([{**a,"summary":a.get("Summary"),"reason_to_read":a.get("Reason to Read"),"business_implications":a.get("Business Implications")} for a in sel], text_chars=_env_int("NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS",1800))
     report_input={"target_date":_env_str("NIKKEI_TARGET_DATE","auto"),"edition":_env_str("NIKKEI_EDITION",""),"article_count":len(in_articles),"articles":in_articles}
     Path("logs/nikkei_final_report_input.json").write_text(json.dumps(report_input,ensure_ascii=False,indent=2),encoding="utf-8")
-    client=OpenAIJsonClient(api_key=_env_str("OPENAI_API_KEY","")) if _env_str("OPENAI_API_KEY","") else None
+    client=OpenAIJsonClient(api_key=_env_str("OPENAI_API_KEY","")) if (_env_str("OPENAI_API_KEY","") and _env_bool("NIKKEI_ENABLE_FINAL_REPORT_GPT",True)) else None
 
     parsed={}; raw=""; finish=""; errs=[]; retry_raw=""; retry_parsed={}; retry_errs=[]; retry_used=False; success=False
     recovered_missing_article_sections=False
@@ -154,6 +170,16 @@ def main()->int:
     fallback=not success
     report=parsed if success else {"report_title":f"日経事業ブリーフ {display_date}","today_key_message":"最終GPT生成に失敗したため、重要記事の簡易一覧を表示します。記事本文・重要度・一致ルールをもとに確認してください。","executive_summary":"最終GPT生成に失敗したため、重要記事の簡易一覧を表示します。記事本文・重要度・一致ルールをもとに確認してください。","cross_article_implications":"重要記事の横断確認を実施してください。","priority_watch_items":["価格","需給","政策"],"article_sections":_build_article_sections_from_input(in_articles)}
 
+    if not _env_bool("NIKKEI_ENABLE_FINAL_REPORT_GPT",True):
+        raw="disabled"
+
+    # merge source body to gpt article_sections
+    if isinstance(parsed,dict) and isinstance(parsed.get("article_sections"),list):
+        by_ref={a.get("ref_id"):a for a in in_articles}
+        for sec in parsed.get("article_sections",[]):
+            src=by_ref.get(sec.get("ref_id"),{})
+            sec["full_text"]=src.get("full_text") or src.get("text") or src.get("text_excerpt") or sec.get("full_text") or ""
+
     raw_log={"model":_env_str("NIKKEI_FINAL_REPORT_MODEL",DEFAULTS["NIKKEI_FINAL_REPORT_MODEL"]),"finish_reason":finish,"raw_response_text":raw,"parsed_json":parsed,"parsed_top_level_keys":list(parsed.keys()) if isinstance(parsed,dict) else [],"validation_errors":errs,"retry_used":retry_used,"retry_raw_response_text":retry_raw,"retry_parsed_json":retry_parsed,"retry_validation_errors":retry_errs,"retry_parsed_top_level_keys":list(retry_parsed.keys()) if isinstance(retry_parsed,dict) else [],"recovered_missing_article_sections":recovered_missing_article_sections,"final_validation_errors_after_recovery":(errs if success else (retry_errs or errs))}
     Path("logs/nikkei_final_report_gpt_raw.json").write_text(json.dumps(raw_log,ensure_ascii=False,indent=2),encoding="utf-8")
 
@@ -174,7 +200,7 @@ def main()->int:
             sent=True
         except Exception as e:
             reason="smtp_send_failed"
-    summary={"final_report_gpt_success":success,"final_report_retry_success":retry_used and success,"fallback_used":fallback,"mail_sent":sent,"mail_send_allowed":can_send,"mail_subject":subj,"mail_skipped_reason":reason,"final_report_validation_errors":errs or retry_errs,"notion_final_report_skipped_reason":"missing_NOTION_DAILY_NEWS_DB_ID" if not _env_str("NOTION_DAILY_NEWS_DB_ID","") else ""}
+    summary={"final_report_gpt_success":success, "final_report_gpt_skipped_reason":("disabled_by_NIKKEI_ENABLE_FINAL_REPORT_GPT_false" if not _env_bool("NIKKEI_ENABLE_FINAL_REPORT_GPT",True) else ""), "report_selection_min_score_applied":_env_bool("NIKKEI_REPORT_REQUIRE_MIN_SCORE",True), "report_selection_min_score":_env_int("NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT",5),"final_report_retry_success":retry_used and success,"fallback_used":fallback,"mail_sent":sent,"mail_send_allowed":can_send,"mail_subject":subj,"mail_skipped_reason":reason,"final_report_validation_errors":errs or retry_errs,"notion_final_report_skipped_reason":"missing_NOTION_DAILY_NEWS_DB_ID" if not _env_str("NOTION_DAILY_NEWS_DB_ID","") else ""}
     Path("logs/nikkei_final_report_summary.json").write_text(json.dumps(summary,ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_final_report_failed.json").write_text(json.dumps([] if success else [{"stage":"final_report_gpt","error":";".join(errs or retry_errs)}],ensure_ascii=False,indent=2),encoding="utf-8")
     print(f"final_report_gpt_success: {success}")

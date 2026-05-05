@@ -16,7 +16,7 @@ def _pick_text(article: Dict[str, Any], keys: list[str]) -> str:
 def _clip(text: str, limit: int) -> str:
     text = str(text or "").strip()
     if limit <= 0:
-        return ""
+        return text
     return text[:limit]
 
 
