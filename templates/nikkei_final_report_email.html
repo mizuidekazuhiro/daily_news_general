@@ -20,6 +20,34 @@
     p {
       white-space: pre-line;
     }
+    .top-article {
+      margin: 18px 0 24px;
+    }
+    .top-article-title {
+      font-size: 15px;
+      font-weight: 700;
+    }
+    .top-article-title a {
+      color: #333;
+      text-decoration: none;
+    }
+    .top-article-title a:hover {
+      text-decoration: underline;
+    }
+    .top-article-summary {
+      margin-top: 6px;
+      font-size: 13px;
+      color: #555;
+      line-height: 1.6;
+      white-space: pre-line;
+    }
+    .top-article-body {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #888;
+      line-height: 1.6;
+      white-space: pre-line;
+    }
     ul {
       padding-left: 18px;
     }
@@ -42,13 +70,13 @@
 </head>
 <body>
   <section>
-    <h3>本日のサマリー</h3>
-    <p>${today_key_message}</p>
+    <h3>全体ブリーフ</h3>
+    <p>${executive_summary}</p>
   </section>
 
   <section>
-    <h3>全体ブリーフ</h3>
-    <p>${executive_summary}</p>
+    <h3>トップ5記事本文</h3>
+    <div class="top-article-list">${top_article_items}</div>
   </section>
 
   <section>
