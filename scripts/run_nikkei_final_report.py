@@ -53,8 +53,7 @@ def _build_article_sections_from_input(in_articles:list[dict])->list[dict]:
             "url": a.get("url",""),
             "importance_score": a.get("importance_score",0),
             "one_line_summary": a.get("summary") or (a.get("text_excerpt","")[:160] or "本文確認対象"),
-            "full_text": a.get("full_text") or a.get("text") or a.get("text_excerpt") or "",
-            "full_text": a.get("full_text") or a.get("text_excerpt") or "",
+            "full_text": a.get("full_text") or a.get("text") or a.get("article_text") or a.get("text_excerpt") or "",
             "why_it_matters": a.get("reason_to_read") or "",
             "business_action_hint": a.get("business_implications") or "",
         })
@@ -142,6 +141,16 @@ def main()->int:
     in_articles=build_synthesis_input([{**a,"summary":a.get("Summary"),"reason_to_read":a.get("Reason to Read"),"business_implications":a.get("Business Implications")} for a in sel], text_chars=_env_int("NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS",1800))
     report_input={"target_date":_env_str("NIKKEI_TARGET_DATE","auto"),"edition":_env_str("NIKKEI_EDITION",""),"article_count":len(in_articles),"articles":in_articles}
     Path("logs/nikkei_final_report_input.json").write_text(json.dumps(report_input,ensure_ascii=False,indent=2),encoding="utf-8")
+    mail_articles=[]
+    mail_text_by_ref={}
+    for i,a in enumerate(sel,1):
+        mtxt=str(a.get("full_text") or a.get("text") or a.get("article_body") or a.get("body") or "").strip()
+        if not mtxt:
+            mtxt=str(in_articles[i-1].get("text_excerpt") or "").strip()
+        ref=f"A{i}"
+        mail_text_by_ref[ref]=mtxt
+        mail_articles.append({"ref_id":ref,"title":a.get("title",""),"url":a.get("url",""),"mail_text_length":len(mtxt)})
+    Path("logs/nikkei_final_report_mail_articles.json").write_text(json.dumps(mail_articles,ensure_ascii=False,indent=2),encoding="utf-8")
     client=OpenAIJsonClient(api_key=_env_str("OPENAI_API_KEY","")) if (_env_str("OPENAI_API_KEY","") and _env_bool("NIKKEI_ENABLE_FINAL_REPORT_GPT",True)) else None
 
     parsed={}; raw=""; finish=""; errs=[]; retry_raw=""; retry_parsed={}; retry_errs=[]; retry_used=False; success=False
@@ -173,12 +182,12 @@ def main()->int:
     if not _env_bool("NIKKEI_ENABLE_FINAL_REPORT_GPT",True):
         raw="disabled"
 
-    # merge source body to gpt article_sections
-    if isinstance(parsed,dict) and isinstance(parsed.get("article_sections"),list):
-        by_ref={a.get("ref_id"):a for a in in_articles}
-        for sec in parsed.get("article_sections",[]):
-            src=by_ref.get(sec.get("ref_id"),{})
-            sec["full_text"]=src.get("full_text") or src.get("text") or src.get("text_excerpt") or sec.get("full_text") or ""
+    # merge full mail body into final sections
+    if isinstance(report,dict) and isinstance(report.get("article_sections"),list):
+        for sec in report.get("article_sections",[]):
+            ref=sec.get("ref_id")
+            if ref in mail_text_by_ref:
+                sec["full_text"]=mail_text_by_ref[ref]
 
     raw_log={"model":_env_str("NIKKEI_FINAL_REPORT_MODEL",DEFAULTS["NIKKEI_FINAL_REPORT_MODEL"]),"finish_reason":finish,"raw_response_text":raw,"parsed_json":parsed,"parsed_top_level_keys":list(parsed.keys()) if isinstance(parsed,dict) else [],"validation_errors":errs,"retry_used":retry_used,"retry_raw_response_text":retry_raw,"retry_parsed_json":retry_parsed,"retry_validation_errors":retry_errs,"retry_parsed_top_level_keys":list(retry_parsed.keys()) if isinstance(retry_parsed,dict) else [],"recovered_missing_article_sections":recovered_missing_article_sections,"final_validation_errors_after_recovery":(errs if success else (retry_errs or errs))}
     Path("logs/nikkei_final_report_gpt_raw.json").write_text(json.dumps(raw_log,ensure_ascii=False,indent=2),encoding="utf-8")

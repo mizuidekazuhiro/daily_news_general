@@ -21,6 +21,7 @@ FAILED_DIR = Path('logs/nikkei_failed_articles')
 SUMMARY_JSON = Path('logs/nikkei_fetch_summary.json')
 INVENTORY_JSON = Path('logs/nikkei_issue_run_inventory.json')
 DOM_CANDIDATES_JSONL = Path('logs/nikkei_article_dom_candidates.jsonl')
+EXTRACTION_QUALITY_JSONL = Path('logs/nikkei_article_extraction_quality.jsonl')
 
 MAX_SUCCESS_ARTICLES = int(os.getenv('NIKKEI_MAX_SUCCESS_ARTICLES', os.getenv('NIKKEI_MAX_ARTICLES_TO_FETCH', '0')))
 MAX_ARTICLE_ATTEMPTS = int(os.getenv('NIKKEI_MAX_ARTICLE_ATTEMPTS', '0'))
@@ -242,6 +243,22 @@ def article_body_quality_metrics(text: str) -> dict:
         'link_text_ratio': round(link_text_ratio, 3),
     }
 
+
+
+
+def score_body_candidate(title:str, cand:dict)->dict:
+    text=clean_article_text(cand.get('text',''))
+    m=article_body_quality_metrics(text)
+    boiler_hits=sum(text.count(x) for x in ['共有','文字サイズ','有料会員限定','詳しくはこちら'])
+    js_hits=text.count('javascript:void(0)')
+    overlap=0.0
+    toks=title_tokens_for_match(title)
+    if toks:
+        overlap=len([t for t in toks if t in normalize_title_for_match(text[:500])])/len(toks)
+    score=(m['text_length']/120)+(m['sentence_count_ja']*2)+(m['paragraph_count']*2)- (m['link_text_ratio']*40) - (m['nav_keyword_hits']*2) - (m['duplicate_line_ratio']*20) - (boiler_hits*3) - (js_hits*4) + (overlap*12)
+    if cand.get('selector') in {'div.cmn-section.cmn-indent','.cmn-section'}:
+        score += 3
+    return {**m,'title_overlap_score':round(overlap,3),'boilerplate_hit_count':boiler_hits,'javascript_void_count':js_hits,'nav_keyword_hit_count':m['nav_keyword_hits'],'cleaned_text_length':m['text_length'],'body_candidate_score':round(score,3)}
 
 def is_probably_navigation_text(text: str) -> bool:
     m = article_body_quality_metrics(text)
@@ -519,13 +536,15 @@ def select_text_with_candidates(page):
             "preview=",
             (c.get('preview') or '').replace("\n", " ")[:160],
         )
-    cand_map = {c.get('selector'): c for c in candidates}
-    for key in preferred:
-        c = cand_map.get(key)
-        if c and c.get('text_length', 0) > 0 and c.get('link_text_ratio', 0) <= 0.6 and not looks_like_noise(c.get('text', '')):
-            best = c
-            break
-    return data, data.get('title', ''), candidates, best, data.get('pageText', '')
+    scored=[]
+    for c in candidates:
+        q=score_body_candidate(data.get('title',''), c)
+        c.update(q)
+        scored.append(c)
+    scored.sort(key=lambda x:x.get('body_candidate_score',-10**9), reverse=True)
+    if scored:
+        best=scored[0]
+    return data, data.get('title', ''), scored, best, data.get('pageText', '')
 
 
 def wait_for_article_content(page):
@@ -859,6 +878,7 @@ def main():
     OUTPUT_JSON.write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding='utf-8')
     DOM_CANDIDATES_JSONL.parent.mkdir(parents=True, exist_ok=True)
     DOM_CANDIDATES_JSONL.write_text('\n'.join(json.dumps(x, ensure_ascii=False) for x in dom_candidate_logs) + ('\n' if dom_candidate_logs else ''), encoding='utf-8')
+    EXTRACTION_QUALITY_JSONL.write_text('\n'.join(json.dumps({k:v for k,v in x.items() if k in ['url','source_title','selected_extractor_name','selected_candidate_score','candidate_scores','text_length_before_clean','text_length_after_clean','failure_reason']}, ensure_ascii=False) for x in failed+full_articles) + ('\n' if (failed or full_articles) else ''), encoding='utf-8')
     FAILED_JSON.write_text(json.dumps(fail, ensure_ascii=False, indent=2), encoding='utf-8')
     INVENTORY_JSON.write_text(json.dumps(inventory, ensure_ascii=False, indent=2), encoding='utf-8')
     only_failed = [x for x in fail if x.get('status') == 'failed']
