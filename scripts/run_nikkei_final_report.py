@@ -252,13 +252,32 @@ def main() -> int:
             if r.get("properties",{}).get("Mail Sent",{}).get("checkbox") is True: already_sent=True
 
     fallback_mail_allowed=_env_bool("NIKKEI_ALLOW_FALLBACK_FINAL_REPORT_MAIL")
-    decision = _fallback_mail_decision(fallback_used, fallback_mail_allowed, already_sent, _env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL"))
-    mail_sent=False; mail_reason=""
+    mail_enabled=_env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL")
+    decision = _fallback_mail_decision(fallback_used, fallback_mail_allowed, already_sent, mail_enabled)
+    mail_sent=False; mail_reason=""; subj=""
+
+    to = [x.strip() for x in re.split(r"[,;\n]", os.getenv("MAIL_TO", "")) if x.strip()]
+    cc = [x.strip() for x in re.split(r"[,;\n]", os.getenv("MAIL_CC", "")) if x.strip()]
+    bcc = [x.strip() for x in re.split(r"[,;\n]", os.getenv("MAIL_BCC", "")) if x.strip()]
+    mail_recipient_count=len(to)+len(cc)+len(bcc)
+
+    edition = _env_str("NIKKEI_EDITION", "").lower()
+    if edition == "morning":
+        default_prefix = "【日経朝刊ブリーフ】"
+    elif edition == "evening":
+        default_prefix = "【日経夕刊ブリーフ】"
+    else:
+        default_prefix = "【日経新聞ブリーフ】"
+
+    prefix = _env_str("NIKKEI_FINAL_REPORT_SUBJECT_PREFIX", default_prefix)
+    subj=f"{prefix}{datetime.now().strftime('%Y-%m-%d')}｜重要{len(selected_working)}件"
+    if fallback_used:
+        subj="[fallback] "+subj
+
     if decision=="send":
-        subj=f"{_env_str('NIKKEI_FINAL_REPORT_SUBJECT_PREFIX')}{datetime.now().strftime('%Y-%m-%d')}（{len(selected_working)}件）"
-        if fallback_used: subj="[fallback] "+subj
         mail_sent=_send_mail(subj, html); mail_reason="" if mail_sent else "no_recipients_or_send_failed"
-    else: mail_reason=decision
+    else:
+        mail_reason=decision
 
     notion_final_saved=False
     if _env_bool("NIKKEI_SAVE_FINAL_REPORT_TO_NOTION") and token and daily_db:
@@ -273,8 +292,17 @@ def main() -> int:
 
     Path("logs/nikkei_article_enrichment_summary.json").write_text(json.dumps({"selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails)},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_article_enrichment_failed.json").write_text(json.dumps(fails,ensure_ascii=False,indent=2),encoding="utf-8")
-    Path("logs/nikkei_final_report_summary.json").write_text(json.dumps({"pipeline_scope":"nikkei_only","selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"final_report_gpt_success":final_gpt_success,"fallback_used":fallback_used,"fallback_mail_allowed":fallback_mail_allowed,"notion_article_update_success_count":notion_ok,"notion_article_update_failed_count":notion_ng,"notion_final_report_saved":notion_final_saved,"mail_sent":mail_sent,"mail_skipped_reason":mail_reason,"input_hash":input_hash,"html_output_path":html_path},ensure_ascii=False,indent=2),encoding="utf-8")
+    Path("logs/nikkei_final_report_summary.json").write_text(json.dumps({"pipeline_scope":"nikkei_only","selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"final_report_gpt_success":final_gpt_success,"fallback_used":fallback_used,"fallback_mail_allowed":fallback_mail_allowed,"notion_article_update_success_count":notion_ok,"notion_article_update_failed_count":notion_ng,"notion_final_report_saved":notion_final_saved,"mail_enabled":mail_enabled,"mail_recipient_count":mail_recipient_count,"mail_subject":subj,"mail_sent":mail_sent,"mail_skipped_reason":mail_reason,"input_hash":input_hash,"html_output_path":html_path},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_final_report_failed.json").write_text(json.dumps(final_failed,ensure_ascii=False,indent=2),encoding="utf-8")
+
+    print(f"mail_enabled: {mail_enabled}")
+    print(f"mail_recipient_count: {mail_recipient_count}")
+    print(f"mail_subject: {subj}")
+    print(f"mail_sent: {mail_sent}")
+    print(f"mail_skipped_reason: {mail_reason}")
+    print(f"fallback_used: {fallback_used}")
+    print(f"fallback_mail_allowed: {fallback_mail_allowed}")
+
     return 0
 
 if __name__ == "__main__":

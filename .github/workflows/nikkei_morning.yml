@@ -76,6 +76,18 @@ on:
         required: true
         default: "1800"
         type: string
+      send_final_report_mail:
+        description: "Send final report email"
+        required: true
+        default: "false"
+        type: choice
+        options: ["true","false"]
+      allow_fallback_final_report_mail:
+        description: "Allow sending fallback final report email"
+        required: true
+        default: "false"
+        type: choice
+        options: ["true","false"]
   schedule:
     - cron: "10,30,50 21 * * *"
 
@@ -117,6 +129,8 @@ jobs:
       NIKKEI_REPORT_TOP_IMPORTANCE_RANK: ${{ github.event_name == 'workflow_dispatch' && inputs.report_top_rank || '10' }}
       NIKKEI_ARTICLE_GPT_MIN_IMPORTANCE_SCORE: ${{ github.event_name == 'workflow_dispatch' && inputs.article_gpt_min_importance_score || '3' }}
       NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS: ${{ github.event_name == 'workflow_dispatch' && inputs.final_report_article_text_chars || '1800' }}
+      NIKKEI_SEND_FINAL_REPORT_MAIL: ${{ github.event_name == 'workflow_dispatch' && inputs.send_final_report_mail || 'false' }}
+      NIKKEI_ALLOW_FALLBACK_FINAL_REPORT_MAIL: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_fallback_final_report_mail || 'false' }}
       NIKKEI_ALLOW_DEFAULT_RULES_DB_FALLBACK: "false"
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       NIKKEI_ENABLE_ARTICLE_GPT_ENRICHMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.enable_article_gpt_enrichment || 'false' }}
