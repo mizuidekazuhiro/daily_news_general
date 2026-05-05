@@ -36,7 +36,9 @@ def rank_candidates(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def select_articles(candidates: List[Dict[str, Any]], cfg: SelectionConfig) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-    ranked = rank_candidates([c for c in candidates if c.get("importance_score") is not None])
+    ranked = rank_candidates(
+        [c for c in candidates if c.get("importance_score") is not None and not bool(c.get("exclude_candidate"))]
+    )
     if cfg.mode == "threshold":
         selected = [c for c in ranked if _num(c.get("importance_score")) >= cfg.min_importance_score]
         cutoff = cfg.min_importance_score
@@ -54,6 +56,7 @@ def select_articles(candidates: List[Dict[str, Any]], cfg: SelectionConfig) -> T
             selected = [c for c in pool if _num(c.get("importance_score")) > cutoff]
             ties = [c for c in pool if _num(c.get("importance_score")) == cutoff]
             selected.extend(ties if cfg.include_ties else ties[: max(0, cfg.top_rank - len(selected))])
+    selected = selected[: cfg.top_rank] if cfg.mode != "threshold" and not cfg.include_ties else selected
     return selected, {
         "report_selection_mode": cfg.mode,
         "report_candidate_count": len(ranked),
