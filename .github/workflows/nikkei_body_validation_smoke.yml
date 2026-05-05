@@ -1,5 +1,7 @@
 name: Nikkei Body Validation Smoke
 
+# smoke workflow trigger revision: 2026-05-05-0319
+
 on:
   workflow_dispatch:
   push:
