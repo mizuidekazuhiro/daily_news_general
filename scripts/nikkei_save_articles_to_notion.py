@@ -1,4 +1,4 @@
-import json, os, time
+import json, os, time, re
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import requests
@@ -8,6 +8,7 @@ NOTION_TOKEN=os.getenv('NOTION_TOKEN','').strip(); DATABASE_ID=(os.getenv('NIKKE
 INPUT_JSON=Path('logs/nikkei_articles_full.json'); FAILED_LOG_JSON=Path('logs/nikkei_save_failed.json'); NOTION_VERSION='2022-06-28'
 SUMMARY_SOURCE_FIELDS=['summary','description','meta_description','body_summary']
 PROP_CANDS={
+'title':['Name','Title','記事名','記事タイトル'],
 'url':['URL','Url','url','Link','Article URL','Source URL'],'issue':['Issue Date','Issued Date','Published Date'],'edition':['Edition'],
 'source':['Source','Media','媒体'],'fetch':['Fetch Status'],'full':['Full Text Status','FullText Status','Body Status','Extraction Status'],
 'text_len':['Text Length'],'img_count':['Image Count'],'gpt':['GPT Processed'],'has_image':['Has Image'],'has_chart':['Has Chart'],
@@ -21,6 +22,44 @@ def req(method,url,**kwargs):
 
 def ng(url): return (parse_qs(urlparse(url).query).get('ng') or [''])[0]
 def clean_text(t): return (t or '').strip()
+
+def ensure_nikkei_title(a):
+    title = clean_text(a.get('title') or a.get('headline') or a.get('source_title') or a.get('page_title') or a.get('h1_text'))
+    if title:
+        return title
+    u = clean_text(a.get('url'))
+    nid = ng(u)
+    return f"Untitled Nikkei Article - {nid or 'unknown'}"
+
+def clean_nikkei_body_text(text):
+    text = text or ''
+    before = len(text)
+    text = text.replace('<br>', '\n')
+
+    boilerplate_patterns = [
+        r'朝夕刊や電子版ではお伝えしきれない情報をお届けします。?.*',
+        r'企業での記事共有や会議資料への転載・複製.*',
+        r'.*注文印刷.*',
+        r'.*詳しくはこちら.*',
+    ]
+
+    removed = 0
+    kept_lines = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if any(re.search(pattern, line) for pattern in boilerplate_patterns):
+            removed += 1
+            continue
+        kept_lines.append(line)
+
+    text = '\n'.join(kept_lines)
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    print(f"text_length_before_clean: {before}")
+    print(f"text_length_after_clean: {len(text)}")
+    print(f"removed_boilerplate_count: {removed}")
+    return text.strip()
 def is_nav(t):
  x=clean_text(t); kws=['速報','アクセスランキング','トピック一覧','人事','おくやみ','プレスリリース','メディア一覧','ビューアーで読む']
  return sum(x.count(k) for k in kws)>=3
@@ -98,10 +137,11 @@ def main():
  keys,pages=load_existing(); fails=[]; stats={k:0 for k in ['metadata_written_count','source_written','fetch_status_written','full_text_status_written','text_length_written','image_count_written','has_image_written','has_chart_written']}; missing=[]; skipped=[]
  mapn={k:find_prop(props,v) for k,v in PROP_CANDS.items()}
  for a in arts:
-  u=a.get('url','').strip(); text=clean_text(a.get('text','')); extraction=a.get('extraction_status','success')
+  u=a.get('url','').strip(); title=ensure_nikkei_title(a); text=clean_nikkei_body_text(a.get('text','')); extraction=a.get('extraction_status','success')
   rejected=is_nav(text) or extraction=='failed'; full='saved' if text and not rejected else ('failed' if extraction=='failed' else 'rejected_navigation_text')
   clean='' if rejected else text; summary=get_summary_text(a); pid=a.get('page_id') or pages.get(u) or pages.get(ng(u)) or pages.get(f"ng:{ng(u)}")
-  payload={}; fields={'url':u,'issue':a.get('issue_date'),'edition':a.get('edition'),'source':'Nikkei','fetch':a.get('status') or extraction or 'success','full':full,'text_len':len(clean) if clean else 0,'img_count':a.get('image_count',0) or 0,'gpt':False,'has_image':bool((a.get('image_count',0) or 0)>0 or a.get('image_url')),'has_chart':bool(a.get('has_chart',False)),'img_url':a.get('image_url',''),'img_cap':a.get('image_caption','')}
+  payload={}; fields={'title':title,'url':u,'issue':a.get('issue_date'),'edition':a.get('edition'),'source':'Nikkei','fetch':a.get('status') or extraction or 'success','full':full,'text_len':len(clean) if clean else 0,'img_count':a.get('image_count',0) or 0,'gpt':False,'has_image':bool((a.get('image_count',0) or 0)>0 or a.get('image_url')),'has_chart':bool(a.get('has_chart',False)),'img_url':a.get('image_url',''),'img_cap':a.get('image_caption','')}
+  print(f"title_saved_to_notion: {title}")
   if clean and mapn['body']: fields['body']=clean
   if summary and mapn['summary']: fields['summary']=summary
   for key,val in fields.items():
