@@ -158,8 +158,24 @@ jobs:
           Path('.storage/nikkei_storage_state.json').write_text(os.environ['NIKKEI_SESSION_STATE_JSON'],encoding='utf-8')
           P
       - run: python scripts/run_nikkei_paper_pipeline.py
+      - name: Check final report skip marker
+        id: fr_skip
+        run: |
+          python - <<'P'
+          import json
+          from pathlib import Path
+          p = Path('logs/nikkei_paper_pipeline_skip.json')
+          skip = False
+          if p.exists():
+            try:
+              skip = bool(json.loads(p.read_text(encoding='utf-8')).get('skip_final_report'))
+            except Exception:
+              skip = True
+          with open(Path('${GITHUB_OUTPUT}'), 'a', encoding='utf-8') as f:
+            f.write(f"skip={str(skip).lower()}\n")
+          P
       - run: python scripts/run_nikkei_final_report.py
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.run_final_report == 'true' }}
+        if: ${{ (github.event_name != 'workflow_dispatch' || inputs.run_final_report == 'true') && steps.fr_skip.outputs.skip != 'true' }}
 
       - name: Upload Nikkei debug logs
         if: always()

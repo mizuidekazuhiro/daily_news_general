@@ -192,10 +192,55 @@ def _fallback_mail_decision(fallback_used: bool, fallback_mail_allowed: bool, al
         return "mail_disabled"
     return "send"
 
+
+def _read_skip_marker() -> dict:
+    candidates = [
+        Path("logs/nikkei_paper_pipeline_skip.json"),
+        Path("logs/nikkei_pipeline_skip.json"),
+        Path("logs/nikkei_issue_skip.json"),
+    ]
+    for p in candidates:
+        if p.exists():
+            try:
+                return json.loads(p.read_text(encoding="utf-8"))
+            except json.JSONDecodeError:
+                return {"skip_final_report": True, "skip_reason": "invalid_skip_json"}
+    return {}
+
+
+def _exit_skip(skip_reason: str, *, mail_enabled: bool) -> int:
+    Path("logs").mkdir(exist_ok=True)
+    payload = {
+        "final_report_skipped": True,
+        "final_report_skip_reason": skip_reason,
+        "mail_enabled": mail_enabled,
+        "mail_send_allowed": False,
+        "mail_sent": False,
+        "mail_skipped_reason": skip_reason,
+        "exit_code": 0,
+    }
+    Path("logs/nikkei_final_report_summary.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    for k, v in payload.items():
+        print(f"{k}: {str(v).lower() if isinstance(v, bool) else v}")
+    return 0
+
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     if not _env_bool("NIKKEI_ENABLE_FINAL_REPORT"): return 0
-    data = json.loads(Path("logs/nikkei_articles_scored.json").read_text(encoding="utf-8"))
+    mail_enabled = _env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL")
+    skip_marker = _read_skip_marker()
+    marker_reason = str(skip_marker.get("skip_reason", ""))
+    if skip_marker.get("skip_final_report") is True or marker_reason in {"edition_mismatch", "no_articles_for_edition", "missing_scored_articles_json"}:
+        return _exit_skip(marker_reason or "skip_final_report", mail_enabled=mail_enabled)
+
+    scored_path = Path("logs/nikkei_articles_scored.json")
+    if not scored_path.exists():
+        return _exit_skip("missing_scored_articles_json", mail_enabled=mail_enabled)
+
+    data = json.loads(scored_path.read_text(encoding="utf-8"))
+    if not data:
+        return _exit_skip("no_scored_articles", mail_enabled=mail_enabled)
+
     normalized = [_normalize_article(a) for a in data]
     cfg = SelectionConfig(mode=_env_str("NIKKEI_REPORT_SELECTION_MODE", "top_importance_rank"), top_rank=_env_int("NIKKEI_REPORT_TOP_IMPORTANCE_RANK", 5), include_ties=_env_bool("NIKKEI_REPORT_INCLUDE_TIES", True), min_importance_score=_env_float("NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT", 0))
     selected, sel_log = select_articles(normalized, cfg)
@@ -232,12 +277,7 @@ def main() -> int:
     selected_working = [x for x in selected_working if x.get("url")]
     final_failed=[]; fallback_used=False; final_gpt_success=False
     if len(selected_working) == 0:
-        summary = {"mail_enabled": _env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL"), "mail_send_allowed": False, "mail_sent": False, "mail_skipped_reason": "no_articles_for_edition", "final_report_input_article_count": 0}
-        Path("logs/nikkei_final_report_summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-        print("final_report_input_article_count: 0")
-        print("mail_send_allowed: false")
-        print("mail_skipped_reason: no_articles_for_edition")
-        return 0
+        return _exit_skip("no_articles_for_edition", mail_enabled=mail_enabled)
     try:
         if _env_bool("NIKKEI_ENABLE_FINAL_REPORT_GPT") and client:
             final_report_article_text_chars = _env_int("NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS")
@@ -360,10 +400,11 @@ url は入力されたurlを必ず保持してください。"""
 
     Path("logs/nikkei_article_enrichment_summary.json").write_text(json.dumps({"selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails)},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_article_enrichment_failed.json").write_text(json.dumps(fails,ensure_ascii=False,indent=2),encoding="utf-8")
-    Path("logs/nikkei_final_report_summary.json").write_text(json.dumps({"pipeline_scope":"nikkei_only","selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"final_report_gpt_success":final_gpt_success,"fallback_used":fallback_used,"fallback_mail_allowed":fallback_mail_allowed,"notion_article_update_success_count":notion_ok,"notion_article_update_failed_count":notion_ng,"notion_final_report_saved":notion_final_saved,"mail_enabled":mail_enabled,"mail_send_allowed":mail_send_allowed,"mail_recipient_count":mail_recipient_count,"mail_subject":subj,"mail_sent":mail_sent,"mail_skipped_reason":mail_reason,"input_hash":input_hash,"html_output_path":html_path},ensure_ascii=False,indent=2),encoding="utf-8")
+    Path("logs/nikkei_final_report_summary.json").write_text(json.dumps({"pipeline_scope":"nikkei_only","final_report_skipped":False,"selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"final_report_gpt_success":final_gpt_success,"fallback_used":fallback_used,"fallback_mail_allowed":fallback_mail_allowed,"notion_article_update_success_count":notion_ok,"notion_article_update_failed_count":notion_ng,"notion_final_report_saved":notion_final_saved,"mail_enabled":mail_enabled,"mail_send_allowed":mail_send_allowed,"mail_recipient_count":mail_recipient_count,"mail_subject":subj,"mail_sent":mail_sent,"mail_skipped_reason":mail_reason,"input_hash":input_hash,"html_output_path":html_path},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_final_report_failed.json").write_text(json.dumps(final_failed,ensure_ascii=False,indent=2),encoding="utf-8")
 
     print(f"final_report_model: {_env_str('NIKKEI_FINAL_REPORT_MODEL')}")
+    print("final_report_skipped: false")
     print(f"final_report_input_article_count: {len(selected_working)}")
     print(f"final_report_article_text_chars: {_env_int('NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS')}")
     print(f"final_report_gpt_success: {final_gpt_success}")

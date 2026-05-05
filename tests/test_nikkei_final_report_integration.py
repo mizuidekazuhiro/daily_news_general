@@ -46,6 +46,7 @@ def test_workflow_scope():
 def test_fallback_mail_policy():
     assert mod._fallback_mail_decision(True, False, False, True) == "fallback_mail_blocked"
     assert mod._fallback_mail_decision(True, True, False, True) == "send"
+    assert mod._fallback_mail_decision(False, False, False, True) == "send"
 
 
 def test_defaults_and_override(monkeypatch):

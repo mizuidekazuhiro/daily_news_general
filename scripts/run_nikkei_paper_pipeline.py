@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 LOGS = Path("logs")
+PIPELINE_SKIP_JSON = LOGS / "nikkei_paper_pipeline_skip.json"
 
 
 def run(cmd: list[str]) -> float:
@@ -50,6 +51,10 @@ def read_issue_skip_summary() -> dict:
     return json.loads(p.read_text(encoding="utf-8"))
 
 
+def write_pipeline_skip(summary: dict) -> None:
+    PIPELINE_SKIP_JSON.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def decide_fetch_outcome(
     *,
     target_count: int,
@@ -77,11 +82,31 @@ def main() -> int:
     article_count = read_count("nikkei_issue_article_links.json")
     issue_skip = read_issue_skip_summary()
     if issue_skip.get("edition_check_result") == "edition_mismatch":
+        write_pipeline_skip({
+            "skip_final_report": True,
+            "skip_reason": "edition_mismatch",
+            "mail_skipped_reason": "edition_mismatch",
+            "expected_edition": issue_skip.get("expected_edition", ""),
+            "expected_edition_marker": issue_skip.get("expected_edition_marker", ""),
+            "detected_edition_id": issue_skip.get("detected_edition_id", ""),
+            "detected_edition_marker": issue_skip.get("detected_edition_marker", ""),
+            "opened_issue_url": issue_skip.get("opened_issue_url", ""),
+            "target_date": os.getenv("NIKKEI_TARGET_DATE", "auto"),
+        })
         print("skip_reason: edition_mismatch")
         print("skip_final_report: true")
         print("mail_send_allowed: false")
         return 0
     if article_count <= 0:
+        write_pipeline_skip({
+            "skip_final_report": True,
+            "skip_reason": "no_articles_for_edition",
+            "mail_skipped_reason": "no_articles_for_edition",
+            "edition": os.getenv("NIKKEI_EDITION", ""),
+            "target_date": os.getenv("NIKKEI_TARGET_DATE", "auto"),
+            "article_count": 0,
+            "opened_issue_url": issue_skip.get("opened_issue_url", ""),
+        })
         print("skip_reason: no_articles_for_edition")
         print("skip_final_report: true")
         print("mail_send_allowed: false")
