@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 import requests
 from src.article_enrichment import build_notion_payload, filter_targets, validate_article_json
-from src.final_report_synthesis import build_synthesis_input, validate_final_report
+from src.final_report_synthesis import build_synthesis_input, validate_final_report, validate_final_report_errors
 from src.openai_json_client import OpenAIJsonClient
 from src.report_renderer import render_final_report_html
 from src.report_selection import SelectionConfig, select_articles
@@ -30,8 +30,9 @@ DEFAULTS = {
     "NIKKEI_ARTICLE_GPT_TEMPERATURE": 0.2,
     "NIKKEI_ENABLE_FINAL_REPORT_GPT": True,
     "NIKKEI_FINAL_REPORT_MODEL": "gpt-5-mini",
-    "NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS": 1800,
+    "NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS": 5000,
     "NIKKEI_FINAL_REPORT_TEMPERATURE": 0.2,
+    "NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS": 1800,
     "NIKKEI_FORCE_FINAL_REPORT_REGENERATE": False,
     "NIKKEI_SEND_FINAL_REPORT_MAIL": False,
     "NIKKEI_SAVE_FINAL_REPORT_TO_NOTION": True,
@@ -232,10 +233,69 @@ def main() -> int:
     final_failed=[]; fallback_used=False; final_gpt_success=False
     try:
         if _env_bool("NIKKEI_ENABLE_FINAL_REPORT_GPT") and client:
-            in_articles = build_synthesis_input([{**a, "summary":a.get("Summary"), "reason_to_read":a.get("Reason to Read"), "business_implications":a.get("Business Implications")} for a in selected_working])
-            sp2 = """出力はJSONのみ。full_textは使わず、summary/reason_to_read/business_implicationsを根拠に最終レポートを作成。A1..ref_idとurl保持。商社目線の読みという語は禁止。"""
-            report = client.generate_json(model=_env_str("NIKKEI_FINAL_REPORT_MODEL"), system_prompt=sp2, user_prompt=json.dumps(in_articles, ensure_ascii=False), max_output_tokens=_env_int("NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS"), temperature=_env_float("NIKKEI_FINAL_REPORT_TEMPERATURE"))
-            if not validate_final_report(report, len(selected_working)): raise ValueError("invalid final report")
+            final_report_article_text_chars = _env_int("NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS")
+            in_articles = build_synthesis_input(
+                [
+                    {
+                        **a,
+                        "summary": a.get("Summary"),
+                        "reason_to_read": a.get("Reason to Read"),
+                        "business_implications": a.get("Business Implications"),
+                    }
+                    for a in selected_working
+                ],
+                text_chars=final_report_article_text_chars,
+            )
+            final_report_input = {
+                "target_date": _env_str("NIKKEI_TARGET_DATE", "auto"),
+                "edition": _env_str("NIKKEI_EDITION", ""),
+                "article_count": len(in_articles),
+                "article_text_chars": final_report_article_text_chars,
+                "articles": in_articles,
+            }
+            Path("logs/nikkei_final_report_input.json").write_text(
+                json.dumps(final_report_input, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            sp2 = """あなたは日本語の業務分析アシスタントです。出力はJSONのみ。
+入力された重要記事の title / importance_score / matched_rules / text_excerpt を根拠に、日経ブリーフを作成してください。
+記事本文にない数字、企業名、国名、価格、数量、時期を捏造しないでください。
+商社・素材・エネルギー・物流・金融・政策リスクの観点で横断整理してください。
+「商社目線の読み」という表現は禁止です。
+
+必ず以下のJSON schemaで返してください。
+{
+  "report_title": "string",
+  "executive_summary": "string",
+  "today_key_message": "string",
+  "cross_article_implications": "string",
+  "priority_watch_items": ["string"],
+  "article_sections": [
+    {
+      "ref_id": "A1",
+      "title": "string",
+      "url": "string",
+      "importance_score": 0,
+      "one_line_summary": "string",
+      "why_it_matters": "string",
+      "business_action_hint": "string"
+    }
+  ]
+}
+
+article_sections は入力記事数と同じ数にしてください。
+ref_id は A1, A2, ... の順にしてください。
+url は入力されたurlを必ず保持してください。"""
+            report = client.generate_json(
+                model=_env_str("NIKKEI_FINAL_REPORT_MODEL"),
+                system_prompt=sp2,
+                user_prompt=json.dumps(final_report_input, ensure_ascii=False),
+                max_output_tokens=_env_int("NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS"),
+                temperature=_env_float("NIKKEI_FINAL_REPORT_TEMPERATURE"),
+            )
+            validation_errors = validate_final_report_errors(report, len(selected_working))
+            if validation_errors:
+                raise ValueError("invalid final report: " + "; ".join(validation_errors[:12]))
             final_gpt_success=True
         else:
             fallback_used=True; report={"report_title":f"日経事業ブリーフ {_env_str('NIKKEI_TARGET_DATE','auto')}","executive_summary":"最終GPT無効のため簡易レポート。","today_key_message":"上位記事を確認。","cross_article_implications":"共通論点を確認。","priority_watch_items":["A1確認","A2確認","A3確認"],"article_sections":[{"ref_id":f"A{i}","title":a.get("title",""),"url":a.get("url",""),"importance_score":a.get("importance_score",0),"one_line_summary":a.get("Summary",""),"why_it_matters":a.get("Reason to Read",""),"business_action_hint":a.get("Business Implications","")} for i,a in enumerate(selected_working,1)]}
@@ -295,6 +355,11 @@ def main() -> int:
     Path("logs/nikkei_final_report_summary.json").write_text(json.dumps({"pipeline_scope":"nikkei_only","selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"final_report_gpt_success":final_gpt_success,"fallback_used":fallback_used,"fallback_mail_allowed":fallback_mail_allowed,"notion_article_update_success_count":notion_ok,"notion_article_update_failed_count":notion_ng,"notion_final_report_saved":notion_final_saved,"mail_enabled":mail_enabled,"mail_recipient_count":mail_recipient_count,"mail_subject":subj,"mail_sent":mail_sent,"mail_skipped_reason":mail_reason,"input_hash":input_hash,"html_output_path":html_path},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_final_report_failed.json").write_text(json.dumps(final_failed,ensure_ascii=False,indent=2),encoding="utf-8")
 
+    print(f"final_report_model: {_env_str('NIKKEI_FINAL_REPORT_MODEL')}")
+    print(f"final_report_input_article_count: {len(selected_working)}")
+    print(f"final_report_article_text_chars: {_env_int('NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS')}")
+    print(f"final_report_gpt_success: {final_gpt_success}")
+    print(f"fallback_used: {fallback_used}")
     print(f"mail_enabled: {mail_enabled}")
     print(f"mail_recipient_count: {mail_recipient_count}")
     print(f"mail_subject: {subj}")
