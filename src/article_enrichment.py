@@ -20,16 +20,33 @@ def build_notion_payload(data: Dict[str, Any], model: str) -> Dict[str, Any]:
     }
 
 
-def filter_targets(selected: List[Dict[str, Any]], force_reprocess: bool = False) -> Tuple[List[Dict[str, Any]], int]:
+def filter_targets(
+    selected: List[Dict[str, Any]],
+    force_reprocess: bool = False,
+    min_importance_score: float = 3.0,
+) -> Tuple[List[Dict[str, Any]], int]:
     out = []
     skipped = 0
     for a in selected:
         if (not force_reprocess) and a.get("gpt_processed"):
+            a["gpt_enrichment_skipped_reason"] = "already_processed"
             skipped += 1
             continue
+
+        try:
+            importance_score = float(a.get("importance_score", 0) or 0)
+        except Exception:
+            importance_score = 0.0
+
+        if importance_score <= min_importance_score:
+            a["gpt_enrichment_skipped_reason"] = f"importance_score_lte_{min_importance_score:g}"
+            skipped += 1
+            continue
+
         if len((a.get("full_text") or "").strip()) < 120:
             a["gpt_enrichment_skipped_reason"] = "missing_or_short_text"
             skipped += 1
             continue
+
         out.append(a)
     return out, skipped

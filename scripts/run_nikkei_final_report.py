@@ -24,9 +24,10 @@ DEFAULTS = {
     "NIKKEI_ENABLE_FINAL_REPORT": True,
     "NIKKEI_ENABLE_ARTICLE_GPT_ENRICHMENT": True,
     "NIKKEI_FORCE_ARTICLE_GPT_REPROCESS": False,
-    "NIKKEI_ARTICLE_GPT_MODEL": "gpt-5-mini",
+    "NIKKEI_ARTICLE_GPT_MODEL": "gpt-5-nano",
     "NIKKEI_ARTICLE_GPT_MAX_OUTPUT_TOKENS": 1200,
     "NIKKEI_ARTICLE_GPT_TEMPERATURE": 0.2,
+    "NIKKEI_ARTICLE_GPT_MIN_IMPORTANCE_SCORE": 3.0,
     "NIKKEI_ENABLE_FINAL_REPORT_GPT": True,
     "NIKKEI_FINAL_REPORT_MODEL": "gpt-5-mini",
     "NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS": 1800,
@@ -212,10 +213,21 @@ def main() -> int:
     notion_ok = notion_ng = 0
 
     gpt_candidates = [dict(a, full_text=a.get("full_text", ""), gpt_processed=a.get("gpt_processed_norm", False)) for a in selected_working]
-    targets, skipped = filter_targets(gpt_candidates, _env_bool("NIKKEI_FORCE_ARTICLE_GPT_REPROCESS"))
+    article_gpt_min_importance_score = _env_float("NIKKEI_ARTICLE_GPT_MIN_IMPORTANCE_SCORE")
+    targets, skipped = filter_targets(
+        gpt_candidates,
+        _env_bool("NIKKEI_FORCE_ARTICLE_GPT_REPROCESS"),
+        min_importance_score=article_gpt_min_importance_score,
+    )
     fails=[]; processed=0
     if _env_bool("NIKKEI_ENABLE_ARTICLE_GPT_ENRICHMENT") and client:
-        sp = """あなたは日本語の業務分析アシスタント。出力はJSONのみ。schema:{summary,reason_to_read,business_implications}。summaryは120-220字で本文事実のみ。reason_to_readは80-160字で具体。business_implicationsは180-320字で記事由来論点のみ。数字/企業/国名/価格/数量の捏造禁止。Markdown禁止。"""
+        sp = """あなたは日本語の業務分析アシスタント。出力はJSONのみ。schema:{summary,reason_to_read,business_implications}。
+summaryは120-220字で、記事本文に書かれた事実だけを要約する。推測や一般論は禁止。
+reason_to_readは80-160字で、この記事を確認すべき具体的理由を書く。matched_rulesとimportance_scoreを参考にしてよいが、本文にない事実は足さない。
+business_implicationsは180-320字で、商社・素材・エネルギー・物流・金融・政策リスクのいずれかに関係する記事由来の論点のみを書く。
+数字・企業名・国名・価格・数量・時期の捏造は禁止。
+本文から根拠が取れない場合は、断定を避ける。
+Markdown禁止。"""
         for t in targets:
             try:
                 out = client.generate_json(model=_env_str("NIKKEI_ARTICLE_GPT_MODEL"), system_prompt=sp, user_prompt=json.dumps({"title":t.get("title"),"url":t.get("url"),"source":t.get("source"),"edition":t.get("edition"),"issue_date":t.get("issue_date"),"importance_score":t.get("importance_score"),"priority":t.get("priority"),"matched_rules":t.get("matched_rules"),"full_text":t.get("full_text")}, ensure_ascii=False), max_output_tokens=_env_int("NIKKEI_ARTICLE_GPT_MAX_OUTPUT_TOKENS"), temperature=_env_float("NIKKEI_ARTICLE_GPT_TEMPERATURE"))
@@ -275,7 +287,7 @@ def main() -> int:
         except Exception as e:
             final_failed.append({"stage":"notion_daily_save","error":str(e)})
 
-    Path("logs/nikkei_article_enrichment_summary.json").write_text(json.dumps({"selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails)},ensure_ascii=False,indent=2),encoding="utf-8")
+    Path("logs/nikkei_article_enrichment_summary.json").write_text(json.dumps({"selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_min_importance_score":article_gpt_min_importance_score,"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails)},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_article_enrichment_failed.json").write_text(json.dumps(fails,ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_final_report_summary.json").write_text(json.dumps({"pipeline_scope":"nikkei_only","selected_article_count":len(selected_working),"article_gpt_candidate_count":len(gpt_candidates),"article_gpt_skipped_count":skipped,"article_gpt_target_count":len(targets),"article_gpt_processed_count":processed,"article_gpt_failed_count":len(fails),"final_report_gpt_success":final_gpt_success,"fallback_used":fallback_used,"fallback_mail_allowed":fallback_mail_allowed,"notion_article_update_success_count":notion_ok,"notion_article_update_failed_count":notion_ng,"notion_final_report_saved":notion_final_saved,"mail_sent":mail_sent,"mail_skipped_reason":mail_reason,"input_hash":input_hash,"html_output_path":html_path},ensure_ascii=False,indent=2),encoding="utf-8")
     Path("logs/nikkei_final_report_failed.json").write_text(json.dumps(final_failed,ensure_ascii=False,indent=2),encoding="utf-8")
