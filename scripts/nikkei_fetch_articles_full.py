@@ -313,6 +313,21 @@ def text_headline_alignment(title: str, text: str) -> bool:
         return False
     return t[:20] in head or head[:20] in t or sum(1 for tok in title_tokens_for_match(title) if tok in head) >= 2
 
+
+def title_body_overlap(title: str, text: str) -> bool:
+    if not title or not text:
+        return False
+    body = normalize_title_for_match(text)
+    if not body:
+        return False
+    tokens = title_tokens_for_match(title)
+    if not tokens:
+        return False
+    matched = [tok for tok in tokens if tok in body]
+    ratio = len(matched) / len(tokens)
+    return len(matched) >= 2 or ratio >= 0.4
+
+
 def validate_article_body(text: str, page_title: str = '', source_title: str = '', h1_text: str = '', article_url: str = '') -> tuple[bool, str]:
     cleaned = clean_article_text(text)
     if not cleaned:
@@ -326,12 +341,13 @@ def validate_article_body(text: str, page_title: str = '', source_title: str = '
         and metrics['sentence_count_ja'] >= 2
         and metrics['paragraph_count'] >= 2
     )
-    likely_article = strong_body and (title_match['matched'] or headline_align)
+    title_overlap = title_body_overlap(source_title or page_title, cleaned)
+    likely_article = strong_body and (title_match['matched'] or headline_align or title_overlap)
     paper_like_title = is_paper_index_title(page_title)
     paper_like_h1 = is_paper_index_title(h1_text)
     url_is_article = '/paper/article/' in (article_url or '')
 
-    if paper_like_title and not (url_is_article and likely_article):
+    if paper_like_title and not url_is_article and not likely_article:
         return False, 'paper_index_page_title'
 
     nav_like = is_probably_navigation_text(cleaned)
