@@ -73,7 +73,7 @@ def test_existing_page_no_duplicate_body_heading(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "FAILED_LOG_JSON", tmp_path / "failed.json")
     monkeypatch.setattr(mod, "SAVE_RESULTS_JSON", tmp_path / "save_results.json")
     mod.INPUT_JSON.write_text(json.dumps([
-        {"url": "https://example.com?p=1", "text": "body", "page_title": "t"}
+        {"url": "https://example.com?p=1", "text": "", "page_title": "t"}
     ]), encoding="utf-8")
 
     def fake_req(method, url, **kwargs):
@@ -82,8 +82,10 @@ def test_existing_page_no_duplicate_body_heading(monkeypatch, tmp_path):
         if method == "POST" and url.endswith("/query"):
             return DummyResp({"results": [{"id": "page1", "properties": {"URL": {"type": "url", "url": "https://example.com?p=1"}}}], "has_more": False})
         if method == "GET" and "/blocks/page1/children" in url:
-            return DummyResp({"results": [{"type": "heading_2", "heading_2": {"rich_text": [{"plain_text": "記事本文"}]}}], "has_more": False})
+            return DummyResp({"results": [{"id":"block-body-heading","type": "heading_2", "heading_2": {"rich_text": [{"plain_text": "記事本文"}]}}], "has_more": False})
         if method == "PATCH" and "/pages/page1" in url:
+            return DummyResp({})
+        if method == "PATCH" and "/blocks/block-body-heading" in url:
             return DummyResp({})
         raise AssertionError((method, url))
 
@@ -92,3 +94,32 @@ def test_existing_page_no_duplicate_body_heading(monkeypatch, tmp_path):
     monkeypatch.setattr(mod, "append_body_blocks", lambda page_id, text, title='': called.__setitem__("append", called["append"] + 1))
     mod.main()
     assert called["append"] == 0
+
+
+
+def test_summary_not_filled_from_body_when_no_summary_field(monkeypatch, tmp_path):
+    monkeypatch.setattr(mod, "INPUT_JSON", tmp_path / "articles.json")
+    monkeypatch.setattr(mod, "FAILED_LOG_JSON", tmp_path / "failed.json")
+    monkeypatch.setattr(mod, "SAVE_RESULTS_JSON", tmp_path / "save_results.json")
+    long_text = "x" * 2000
+    mod.INPUT_JSON.write_text(json.dumps([{"url": "https://example.com/u", "text": long_text, "page_title": "t"}]), encoding="utf-8")
+
+    payloads = []
+
+    def fake_req(method, url, **kwargs):
+        if method == "GET" and "/databases/" in url:
+            return DummyResp({"properties": {"Name": {"type": "title"}, "URL": {"type": "url"}, "Summary": {"type": "rich_text"}, "Body": {"type": "rich_text"}}})
+        if method == "POST" and url.endswith("/query"):
+            return DummyResp({"results": [], "has_more": False})
+        if method == "POST" and url.endswith("/pages"):
+            payloads.append(kwargs["json"])
+            return DummyResp({"id": "p"})
+        if method == "PATCH" and "/blocks/p/children" in url:
+            return DummyResp({})
+        raise AssertionError((method, url))
+
+    monkeypatch.setattr(mod, "req", fake_req)
+    mod.main()
+    props = payloads[0]["properties"]
+    assert "Summary" not in props
+    assert props["Body"]["rich_text"][0]["text"]["content"] == long_text[:1900]

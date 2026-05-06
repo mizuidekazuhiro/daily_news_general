@@ -35,6 +35,7 @@ def test_renderer_shows_all_articles_and_hides_ref_markers():
     assert "取得記事一覧（全件）" in html and "全2件" in html
     assert "(no title)" in html
     assert "一致ルール: Japan, Steel" in html
+    assert "1. 1." not in html
 
 
 def test_load_notion_map_and_merge_fields(tmp_path):

@@ -83,10 +83,10 @@ def render_final_report_html(
 
     all_items = []
     articles = all_articles or []
-    for idx, article in enumerate(articles, 1):
+    for article in articles:
         all_items.append(
             "<li>"
-            f"{idx}. {_title_link(article)}{_notion_link(article)}"
+            f"{_title_link(article)}{_notion_link(article)}"
             f"<div style=\"color:#666;font-size:12px;\">{_article_meta(article)}</div>"
             f"{_matched_rules(article)}"
             "</li>"
