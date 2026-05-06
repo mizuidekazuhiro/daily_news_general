@@ -12,7 +12,12 @@ PIPELINE_SKIP_JSON = LOGS / "nikkei_paper_pipeline_skip.json"
 def run(cmd: list[str]) -> float:
     print("run_start:", " ".join(cmd))
     start = time.monotonic()
-    subprocess.run(cmd, check=True)
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as e:
+        print('run_failed_cmd:', ' '.join(cmd))
+        print('run_failed_returncode:', e.returncode)
+        raise
     sec = time.monotonic() - start
     print("run_end_seconds:", round(sec, 1))
     return sec
