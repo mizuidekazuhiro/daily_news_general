@@ -76,3 +76,47 @@ def test_mail_subject_format_morning_evening():
     assert e == "日経新聞夕刊要約｜2026-05-06"
     for ng in ["重要5件", "ブリーフ", "[fallback]"]:
         assert ng not in m and ng not in e
+
+
+def test_merge_notion_fields_overrides_invalid_gpt_notion_and_renderer_uses_merged_url(tmp_path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("run_final", Path("scripts/run_nikkei_final_report.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    gpt_sections = [{"title": "t", "url": "https://n/1", "notion_url": "https://evil.invalid/page", "summary_and_implications": "body"}]
+    merged = mod._merge_notion_fields(gpt_sections, {"https://n/1": {"notion_url": "https://www.notion.so/correct1", "page_id": ""}})
+    assert merged[0]["notion_url"] == "https://www.notion.so/correct1"
+
+    rep = {"today_key_message": "k", "executive_summary": "e", "cross_article_implications": "c", "article_sections": merged}
+    html = render_final_report_html(Path("templates/nikkei_final_report_email.html"), rep, "2026-05-06", all_articles=[])
+    assert "https://www.notion.so/correct1" in html
+    assert "https://evil.invalid/page" not in html
+
+
+def test_renderer_shows_notion_link_when_gpt_output_has_no_notion_fields_but_page_id_exists():
+    rep = {
+        "today_key_message": "k",
+        "executive_summary": "e",
+        "cross_article_implications": "c",
+        "article_sections": [{"title": "t", "url": "https://nikkei.example/x", "page_id": "abcd-ef", "summary_and_implications": "body"}],
+    }
+    html = render_final_report_html(Path("templates/nikkei_final_report_email.html"), rep, "2026-05-06", all_articles=[])
+    assert "Notionで開く" in html
+    assert "https://www.notion.so/abcdef" in html
+
+
+def test_renderer_shows_notion_link_from_url_map_even_without_gpt_notion_fields():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("run_final", Path("scripts/run_nikkei_final_report.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    gpt_sections = [{"title": "t", "url": "https://n/2", "summary_and_implications": "body"}]
+    merged = mod._merge_notion_fields(gpt_sections, {"https://n/2": {"notion_url": "https://www.notion.so/fromlog", "page_id": ""}})
+    rep = {"today_key_message": "k", "executive_summary": "e", "cross_article_implications": "c", "article_sections": merged}
+    html = render_final_report_html(Path("templates/nikkei_final_report_email.html"), rep, "2026-05-06", all_articles=[])
+    assert "Notionで開く" in html
+    assert "https://www.notion.so/fromlog" in html

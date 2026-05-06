@@ -112,7 +112,7 @@ def _generate_report(client,input_payload,retry=False):
         "必須キー: report_title,today_key_message,executive_summary,cross_article_implications,integrated_insights,article_sections。"
         "article_sectionsは入力articlesと同じ件数。"
         "ref_idはA1,A2...の順。url/title/importance_scoreは入力値をそのまま保持。"
-        "article_sectionsの各要素キー: ref_id,title,url,importance_score,summary_and_implications,one_line_summary,why_it_matters,business_action_hint,notion_url,page_id。"
+        "article_sectionsの各要素キー: ref_id,title,url,importance_score,summary_and_implications,one_line_summary,why_it_matters,business_action_hint。"
         "summary_and_implicationsは2〜4文で、先に記事内容の事実、その後に示唆・必要なら今後アクションを具体的に書く。抽象定型文は禁止。適宜改行。"
         "integrated_insightsはlist[str]で、固定分類に依存せず重要示唆を箇条書き化する。"
     )
