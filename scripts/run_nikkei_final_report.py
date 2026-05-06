@@ -91,15 +91,28 @@ def _display_target_date(selected,in_articles):
 def _build_article_sections_from_input(in_articles:list[dict])->list[dict]:
     out=[]
     for i,a in enumerate(in_articles,1):
+        summary = (a.get("summary") or "").strip()
+        excerpt = (a.get("text_excerpt","") or "").strip()
+        reason = (a.get("reason_to_read") or "").strip()
+        implications = (a.get("business_implications") or "").strip()
+        one_line = summary or (excerpt[:160] if excerpt else "記事要点を整理中です。")
+        why = reason or "記事本文の事実関係と業界への影響を確認します。"
+        action = implications or "関連案件の前提条件と収益・コスト影響を点検します。"
+        fact_sentence = summary or excerpt or "記事本文の要点を整理しています。"
+        implication_sentence = reason or implications or "商社としては、対象分野の需要見通しや案件前提を具体的に確認する必要があります。"
+        outlook_sentence = implications or reason or "取引先・投資先・調達先への影響範囲を洗い出し、優先度順に判断材料をそろえることが重要です。"
         out.append({
             "ref_id": f"A{i}",
             "title": a.get("title",""),
             "url": a.get("url",""),
             "importance_score": a.get("importance_score",0),
-            "one_line_summary": a.get("summary") or (a.get("text_excerpt","")[:160] or "本文確認対象"),
-            "why_it_matters": a.get("reason_to_read") or "確認対象です。",
-            "business_action_hint": a.get("business_implications") or "事業・投資・リスク観点で追加確認。",
-            "summary_and_implications": "\n\n".join([x for x in [a.get("summary") or (a.get("text_excerpt","")[:160] or "本文確認対象"), a.get("reason_to_read") or "事業・投資判断への影響を確認。", a.get("business_implications") or "必要に応じて関係部署で追加確認。"] if str(x).strip()]),
+            "one_line_summary": one_line,
+            "why_it_matters": why,
+            "business_action_hint": action,
+            "summary_and_implications": (
+                f"{fact_sentence} {implication_sentence}\n\n"
+                f"{outlook_sentence}"
+            ),
             "notion_url": a.get("notion_url", ""),
             "page_id": a.get("page_id", ""),
         })
@@ -113,8 +126,17 @@ def _generate_report(client,input_payload,retry=False):
         "article_sectionsは入力articlesと同じ件数。"
         "ref_idはA1,A2...の順。url/title/importance_scoreは入力値をそのまま保持。"
         "article_sectionsの各要素キー: ref_id,title,url,importance_score,summary_and_implications,one_line_summary,why_it_matters,business_action_hint。"
-        "summary_and_implicationsは2〜4文で、先に記事内容の事実、その後に示唆・必要なら今後アクションを具体的に書く。抽象定型文は禁止。適宜改行。"
-        "integrated_insightsはlist[str]で、固定分類に依存せず重要示唆を箇条書き化する。"
+        "today_key_messageは自然な2〜3文とし、見出し語や命令調を避ける。"
+        "today_key_messageの1文目は今日目立った具体テーマ、2文目は共通の流れ、必要なら3文目で商社の確認観点を書く。"
+        "integrated_insightsはlist[str]で3〜5個。各項目は最大2文で、1文目に何が起きたか、2文目になぜ重要か/何を確認するかを書く。"
+        "integrated_insightsは記事本文に基づく具体表現を使い、同じ示唆の重複を避ける。"
+        "summary_and_implicationsは250〜450字程度。第1段落で記事内容を2〜3文、第2段落で商社・事業・投資・リスク管理上の示唆を1〜2文で書く。"
+        "summary_and_implicationsでは記事にない断定を避け、抽象定型文を使わない。"
+        "禁止表現: 『確認対象』『追加確認』『備えよ』『攻勢』『再配分』『経済安全保障化』。"
+        "固定分類に無理に当てはめず、記事群に即した自然なビジネスブリーフ文体で書く。"
+        "出力前に自己チェック: today_key_messageが2〜3文か、integrated_insightsが3〜5個か、各項目が2文以内か、"
+        "具体性があるか、一般論だけで終わっていないか、禁止表現がないか、示唆重複がないか、"
+        "article_sections[].summary_and_implicationsが250〜450字程度で記事内容と示唆の両方を含むか確認する。"
     )
     if retry:
         prompt += " 前回はarticle_sections欠落のため失敗。必ずarticle_sectionsを含めること。"
