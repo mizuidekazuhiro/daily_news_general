@@ -60,6 +60,21 @@ def _load_notion_map(path: Path) -> dict[str, dict[str, str]]:
         out[url] = {"notion_url": notion_url, "page_id": page_id}
     return out
 
+
+
+def _merge_notion_fields(articles: list[dict], url_map: dict[str, dict[str, str]]) -> list[dict]:
+    out = []
+    for article in articles:
+        url = str(article.get("url") or "").strip()
+        merged = {**article, **url_map.get(url, {})}
+        notion_url = str(merged.get("notion_url") or "").strip()
+        page_id = str(merged.get("page_id") or "").strip()
+        if not notion_url and page_id:
+            notion_url = f"https://www.notion.so/{page_id.replace('-', '')}"
+            merged["notion_url"] = notion_url
+        out.append(merged)
+    return out
+
 def _display_target_date(selected,in_articles):
     for a in selected:
         if a.get("issue_date"): return _format_date(str(a.get("issue_date")))
@@ -78,6 +93,8 @@ def _build_article_sections_from_input(in_articles:list[dict])->list[dict]:
             "one_line_summary": a.get("summary") or (a.get("text_excerpt","")[:160] or "本文確認対象"),
             "why_it_matters": a.get("reason_to_read") or "需給・投資・政策影響の確認対象。",
             "business_action_hint": a.get("business_implications") or "価格・需給・政策・投資判断への影響を確認。",
+            "notion_url": a.get("notion_url", ""),
+            "page_id": a.get("page_id", ""),
         })
     return out
 
@@ -130,7 +147,7 @@ def main()->int:
     data=json.loads(scored_path.read_text(encoding="utf-8"))
     norm=[_normalize_article(a) for a in data]
     notion_map = _load_notion_map(Path("logs/nikkei_save_results.json"))
-    norm=[{**a, **notion_map.get(str(a.get("url") or "").strip(), {})} for a in norm]
+    norm=_merge_notion_fields(norm, notion_map)
     sel,log=select_articles(norm, SelectionConfig(mode="top_importance_rank", top_rank=5, include_ties=False, min_importance_score=0))
     sel=sel[:5]
     log["report_selected_count"]=len(sel); log["selected_article_titles"]= [x.get("title","") for x in sel]; log["selected_article_scores"]= [x.get("importance_score",0) for x in sel]
@@ -166,6 +183,7 @@ def main()->int:
     display_date=_display_target_date(sel,in_articles)
     fallback=not success
     report=parsed if success else {"report_title":f"日経事業ブリーフ {display_date}","today_key_message":"最終GPT生成に失敗したため、重要記事の簡易一覧を表示します。記事本文・重要度・一致ルールをもとに確認してください。","executive_summary":"最終GPT生成に失敗したため、重要記事の簡易一覧を表示します。記事本文・重要度・一致ルールをもとに確認してください。","cross_article_implications":"重要記事の横断確認を実施してください。","priority_watch_items":["価格","需給","政策"],"article_sections":_build_article_sections_from_input(in_articles)}
+    report["article_sections"] = _merge_notion_fields(report.get("article_sections", []), {str(a.get("url") or "").strip(): {"notion_url": a.get("notion_url", ""), "page_id": a.get("page_id", "")} for a in norm})
 
     raw_log={"model":_env_str("NIKKEI_FINAL_REPORT_MODEL",DEFAULTS["NIKKEI_FINAL_REPORT_MODEL"]),"finish_reason":finish,"raw_response_text":raw,"parsed_json":parsed,"parsed_top_level_keys":list(parsed.keys()) if isinstance(parsed,dict) else [],"validation_errors":errs,"retry_used":retry_used,"retry_raw_response_text":retry_raw,"retry_parsed_json":retry_parsed,"retry_validation_errors":retry_errs,"retry_parsed_top_level_keys":list(retry_parsed.keys()) if isinstance(retry_parsed,dict) else [],"recovered_missing_article_sections":recovered_missing_article_sections,"final_validation_errors_after_recovery":(errs if success else (retry_errs or errs))}
     Path("logs/nikkei_final_report_gpt_raw.json").write_text(json.dumps(raw_log,ensure_ascii=False,indent=2),encoding="utf-8")

@@ -27,6 +27,10 @@ def _title_link(article: dict[str, Any]) -> str:
 def _notion_link(article: dict[str, Any]) -> str:
     notion_url = str(article.get("notion_url") or "").strip()
     if not notion_url:
+        page_id = str(article.get("page_id") or "").strip()
+        if page_id:
+            notion_url = f"https://www.notion.so/{page_id.replace('-', '')}"
+    if not notion_url:
         return ""
     return (
         '<span style="color:#999;">｜</span>'
