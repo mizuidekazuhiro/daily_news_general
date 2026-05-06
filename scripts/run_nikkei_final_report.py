@@ -37,6 +37,29 @@ def _normalize_article(a:dict)->dict:
 def _format_date(s:str)->str:
     return f"{s[0:4]}-{s[4:6]}-{s[6:8]}" if s and len(s)==8 and s.isdigit() else s
 
+
+
+def _load_notion_map(path: Path) -> dict[str, dict[str, str]]:
+    if not path.exists():
+        return {}
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    out: dict[str, dict[str, str]] = {}
+    for row in rows if isinstance(rows, list) else []:
+        if not isinstance(row, dict):
+            continue
+        url = str(row.get("url") or "").strip()
+        if not url:
+            continue
+        notion_url = str(row.get("notion_url") or "").strip()
+        page_id = str(row.get("page_id") or "").strip()
+        if not notion_url and page_id:
+            notion_url = f"https://www.notion.so/{page_id.replace('-', '')}"
+        out[url] = {"notion_url": notion_url, "page_id": page_id}
+    return out
+
 def _display_target_date(selected,in_articles):
     for a in selected:
         if a.get("issue_date"): return _format_date(str(a.get("issue_date")))
@@ -106,6 +129,8 @@ def main()->int:
         return 0
     data=json.loads(scored_path.read_text(encoding="utf-8"))
     norm=[_normalize_article(a) for a in data]
+    notion_map = _load_notion_map(Path("logs/nikkei_save_results.json"))
+    norm=[{**a, **notion_map.get(str(a.get("url") or "").strip(), {})} for a in norm]
     sel,log=select_articles(norm, SelectionConfig(mode="top_importance_rank", top_rank=5, include_ties=False, min_importance_score=0))
     sel=sel[:5]
     log["report_selected_count"]=len(sel); log["selected_article_titles"]= [x.get("title","") for x in sel]; log["selected_article_scores"]= [x.get("importance_score",0) for x in sel]
@@ -145,7 +170,8 @@ def main()->int:
     raw_log={"model":_env_str("NIKKEI_FINAL_REPORT_MODEL",DEFAULTS["NIKKEI_FINAL_REPORT_MODEL"]),"finish_reason":finish,"raw_response_text":raw,"parsed_json":parsed,"parsed_top_level_keys":list(parsed.keys()) if isinstance(parsed,dict) else [],"validation_errors":errs,"retry_used":retry_used,"retry_raw_response_text":retry_raw,"retry_parsed_json":retry_parsed,"retry_validation_errors":retry_errs,"retry_parsed_top_level_keys":list(retry_parsed.keys()) if isinstance(retry_parsed,dict) else [],"recovered_missing_article_sections":recovered_missing_article_sections,"final_validation_errors_after_recovery":(errs if success else (retry_errs or errs))}
     Path("logs/nikkei_final_report_gpt_raw.json").write_text(json.dumps(raw_log,ensure_ascii=False,indent=2),encoding="utf-8")
 
-    html=render_final_report_html(Path("templates/nikkei_final_report_email.html"), report, display_date)
+    all_articles = [{**a, "summary": a.get("Summary") or a.get("summary") or "", "reason_to_read": a.get("Reason to Read") or a.get("reason_to_read") or "", "business_implications": a.get("Business Implications") or a.get("business_implications") or ""} for a in norm]
+    html=render_final_report_html(Path("templates/nikkei_final_report_email.html"), report, display_date, all_articles=all_articles)
     Path("logs/nikkei_final_report.html").write_text(html,encoding="utf-8")
     recipients=[x.strip() for x in re.split(r"[,;\n]",os.getenv("MAIL_TO","")) if x.strip()]
     mail_enabled=_env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL",True); fallback_allowed=_env_bool("NIKKEI_ALLOW_FALLBACK_FINAL_REPORT_MAIL",True)

@@ -1,4 +1,4 @@
-<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:'Meiryo UI','Meiryo',sans-serif;max-width:860px;margin:0 auto;padding:16px;line-height:1.6;}section{margin:14px 0;}ul{padding-left:20px;}</style></head><body>
+<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:'Meiryo UI','Meiryo',sans-serif;max-width:860px;margin:0 auto;padding:16px;line-height:1.6;}section{margin:14px 0;}ul,ol{padding-left:20px;}</style></head><body>
 <h2>${report_title}</h2>
 <div>生成日時: ${generated_at} / 対象日: ${target_date} / 対象記事数: ${article_count}</div>
 <section><h3>本日の要点</h3><p>${today_key_message}</p></section>
@@ -6,5 +6,9 @@
 <section><h3>横断的な業務示唆</h3><p>${cross_article_implications}</p></section>
 <section><h3>優先確認事項</h3><ul>${priority_watch_items}</ul></section>
 <section><h3>重要記事一覧</h3><ul>${article_items}</ul></section>
-<section><h3>参考リンク</h3><ul>${reference_links}</ul></section>
+<section>
+  <h3>取得記事一覧（全件）</h3>
+  <div style="color:#666;font-size:12px;">全${all_article_count}件</div>
+  <ol>${all_article_items}</ol>
+</section>
 </body></html>
