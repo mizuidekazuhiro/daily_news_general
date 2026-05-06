@@ -5,7 +5,7 @@ import requests
 from dotenv import load_dotenv
 load_dotenv()
 NOTION_TOKEN=os.getenv('NOTION_TOKEN','').strip(); DATABASE_ID=(os.getenv('NIKKEI_ARTICLES_DB_ID','') or os.getenv('NOTION_ARTICLE_DB_ID','')).strip()
-INPUT_JSON=Path('logs/nikkei_articles_full.json'); FAILED_LOG_JSON=Path('logs/nikkei_save_failed.json'); NOTION_VERSION='2022-06-28'
+INPUT_JSON=Path('logs/nikkei_articles_full.json'); FAILED_LOG_JSON=Path('logs/nikkei_save_failed.json'); SAVE_RESULTS_JSON=Path('logs/nikkei_save_results.json'); NOTION_VERSION='2022-06-28'
 SUMMARY_SOURCE_FIELDS=['summary','description','meta_description','body_summary']
 PROP_CANDS={
 'title':['Name','Title','記事名','記事タイトル'],
@@ -243,7 +243,7 @@ def main():
  else:
   keys,pages=set(),{}
  print('skip_existing_notion_urls:', skip_existing)
- print('existing_url_count:',len(keys)); fails=[]; stats={k:0 for k in ['metadata_written_count','source_written','fetch_status_written','full_text_status_written','text_length_written','image_count_written','has_image_written','has_chart_written']}; missing=[]; skipped=[]
+ print('existing_url_count:',len(keys)); fails=[]; save_results=[]; stats={k:0 for k in ['metadata_written_count','source_written','fetch_status_written','full_text_status_written','text_length_written','image_count_written','has_image_written','has_chart_written']}; missing=[]; skipped=[]
  mapn={k:find_prop(props,v) for k,v in PROP_CANDS.items()}
  for a in arts:
   u=a.get('url','').strip(); title=ensure_nikkei_title(a); text=clean_nikkei_body_text(a.get('text','')); extraction=a.get('extraction_status','success')
@@ -261,15 +261,26 @@ def main():
    payload[pn]=patch
   try:
    if pid:
-    req('PATCH',f'https://api.notion.com/v1/pages/{pid}',json={'properties':payload})
+    updated=req('PATCH',f'https://api.notion.com/v1/pages/{pid}',json={'properties':payload}).json()
+    notion_url = updated.get('url','') if isinstance(updated,dict) else ''
+    if not notion_url and pid: notion_url=f"https://www.notion.so/{str(pid).replace('-', '')}"
     if clean:
         if has_body_heading(pid):
             delete_existing_body_blocks(pid)
         append_body_blocks(pid,clean,title)
+    save_results.append({'url':u,'title':title,'page_id':pid,'notion_url':notion_url,'action':'updated','ok':True,'error':''})
    else:
     created=req('POST','https://api.notion.com/v1/pages',json={'parent':{'database_id':DATABASE_ID},'properties':payload}).json()
-    if clean and created.get('id'): append_body_blocks(created['id'],clean,title)
-  except Exception as e: fails.append({'url':u,'error':str(e)})
+    created_id=created.get('id','')
+    notion_url = created.get('url','')
+    if not notion_url and created_id: notion_url=f"https://www.notion.so/{str(created_id).replace('-', '')}"
+    if clean and created_id: append_body_blocks(created_id,clean,title)
+    save_results.append({'url':u,'title':title,'page_id':created_id,'notion_url':notion_url,'action':'created','ok':True,'error':''})
+  except Exception as e:
+   fails.append({'url':u,'error':str(e)})
+   save_results.append({'url':u,'title':title,'page_id':pid or '', 'notion_url':'','action':'failed','ok':False,'error':str(e)})
  FAILED_LOG_JSON.write_text(json.dumps(fails,ensure_ascii=False,indent=2),encoding='utf-8') if fails else None
+ SAVE_RESULTS_JSON.parent.mkdir(parents=True, exist_ok=True)
+ SAVE_RESULTS_JSON.write_text(json.dumps(save_results,ensure_ascii=False,indent=2),encoding='utf-8')
  print('metadata_written_count:',len(arts)); print('source_written:',len(arts)); print('fetch_status_written:',len(arts)); print('full_text_status_written:',len(arts)); print('text_length_written:',len(arts)); print('image_count_written:',len(arts)); print('has_image_written:',len(arts)); print('has_chart_written:',len(arts)); print('missing_metadata_properties:',sorted(set(missing))); print('skipped_type_mismatch_properties:',sorted(set(skipped)))
 if __name__=='__main__': main()

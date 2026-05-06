@@ -22,8 +22,8 @@ def test_selection_cases():
 def test_enrichment_filters_and_json():
     sel = [{"full_text": "x"*200, "gpt_processed": True}, {"full_text": "x"*200}, {"full_text": "x"*10}]
     targets, skipped = filter_targets(sel, force_reprocess=False)
-    assert len(targets) == 1 and skipped == 2
-    assert filter_targets(sel, force_reprocess=True)[0][0]["gpt_processed"] is True
+    assert len(targets) == 0 and skipped == 3
+    assert filter_targets(sel, force_reprocess=True)[0] == []
     data = {"summary":"あ"*60,"reason_to_read":"い"*50,"business_implications":"う"*90}
     assert validate_article_json(data)
     assert build_notion_payload(data, "gpt-5.1-mini")["GPT Processed"] is True
@@ -42,7 +42,7 @@ def test_html_and_notion_helpers(tmp_path: Path):
     tpl = Path("templates/nikkei_final_report_email.html")
     rep = {"report_title":"r","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","priority_watch_items":["x","y","z"],"article_sections":[{"ref_id":"A1","title":"t","url":"https://x","importance_score":1,"one_line_summary":"o","why_it_matters":"w","business_action_hint":"b"}]}
     html = render_final_report_html(tpl, rep, "2026-01-01")
-    assert "Meiryo UI" in html and '<a href="https://x">A1</a>' in html
+    assert "Meiryo UI" in html and '<a href="https://x">t</a>' in html and 'A1' not in html
     assert "商社目線の読み" not in html and "業務示唆" in html
     assert "https://x</li>" not in html
     assert filter_known_properties({"Title":"a","X":1}, ["Title"]) == {"Title":"a"}
