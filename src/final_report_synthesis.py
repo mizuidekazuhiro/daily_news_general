@@ -35,6 +35,10 @@ def validate_final_report_errors(data: Dict[str, Any], expected_count: int) -> l
     for key in ["report_title", "executive_summary", "today_key_message", "cross_article_implications"]:
         if not data.get(key):
             errors.append(f"missing_{key}")
+    if "integrated_insights" not in data:
+        errors.append("missing_integrated_insights")
+    if "watchlist" not in data:
+        errors.append("missing_watchlist")
     if "priority_watch_items" in data and not isinstance(data.get("priority_watch_items"), list):
         errors.append("priority_watch_items_not_list")
     sections = data.get("article_sections")

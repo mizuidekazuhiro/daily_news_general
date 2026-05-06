@@ -32,9 +32,11 @@ def test_renderer_new_layout_and_hides_legacy_blocks():
     html = render_final_report_html(Path("templates/nikkei_final_report_email.html"), rep, "2026-05-06", all_articles=all_articles)
     for ng in ["生成日時", "対象日", "対象記事数", "朝刊ダイジェスト", "夕刊ダイジェスト", "優先確認事項", "Importance Score", "1行要約", "なぜ読むべきか", "業務への示唆", "A1", "ref_id", "一致ルール", "issue_date", "edition", "source", "重要度"]:
         assert ng not in html
-    assert "本日のブリーフ" in html
+    assert "今日の結論" in html
+    assert "今日の重要シグナル" in html
+    assert "重要記事" in html
     assert "<li>示唆1</li>" in html and "<li>示唆2</li>" in html
-    assert "要約と示唆" in html and "1行目\n2行目" in html
+    assert "何が起きたか" in html and "なぜ重要か" in html and "見るべき点" in html
     assert "white-space:pre-line" in html
     assert '<a href="https://nikkei.example/a?x=1&amp;y=2">&lt;危険&gt;</a>' in html
     assert "https://www.notion.so/abcdef" in html
@@ -120,3 +122,14 @@ def test_renderer_shows_notion_link_from_url_map_even_without_gpt_notion_fields(
     html = render_final_report_html(Path("templates/nikkei_final_report_email.html"), rep, "2026-05-06", all_articles=[])
     assert "Notionで開く" in html
     assert "https://www.notion.so/fromlog" in html
+
+
+def test_watchlist_section_visibility():
+    rep = {"today_key_message": "k", "integrated_insights": ["i"], "watchlist": [], "article_sections": []}
+    html = render_final_report_html(Path("templates/nikkei_final_report_email.html"), rep, "2026-05-06", all_articles=[])
+    assert "要注意・継続ウォッチ" not in html
+
+    rep_with_watch = {"today_key_message": "k", "integrated_insights": ["i"], "watchlist": ["北米EV需要の鈍化"], "article_sections": []}
+    html2 = render_final_report_html(Path("templates/nikkei_final_report_email.html"), rep_with_watch, "2026-05-06", all_articles=[])
+    assert "要注意・継続ウォッチ" in html2
+    assert "北米EV需要の鈍化" in html2
