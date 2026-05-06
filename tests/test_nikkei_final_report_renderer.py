@@ -36,7 +36,7 @@ def test_renderer_new_layout_and_hides_legacy_blocks():
     assert "今日の重要シグナル" in html
     assert "重要記事" in html
     assert "<li>示唆1</li>" in html and "<li>示唆2</li>" in html
-    assert "何が起きたか" in html and "なぜ重要か" in html and "見るべき点" in html
+    assert "なぜ重要か" in html
     assert "white-space:pre-line" in html
     assert '<a href="https://nikkei.example/a?x=1&amp;y=2">&lt;危険&gt;</a>' in html
     assert "https://www.notion.so/abcdef" in html
@@ -133,3 +133,54 @@ def test_watchlist_section_visibility():
     html2 = render_final_report_html(Path("templates/nikkei_final_report_email.html"), rep_with_watch, "2026-05-06", all_articles=[])
     assert "要注意・継続ウォッチ" in html2
     assert "北米EV需要の鈍化" in html2
+
+
+def test_article_structured_blocks_and_summary_fallback_mode():
+    rep = {
+        "today_key_message": "k",
+        "integrated_insights": ["i"],
+        "article_sections": [
+            {
+                "title": "structured",
+                "url": "https://example.com/1",
+                "what_happened": "設備投資を延期した。",
+                "why_it_matters": "需要前提に影響する。",
+                "watch_points": ["対象市場の販売動向", "部材調達価格"],
+            },
+            {
+                "title": "summary_only",
+                "url": "https://example.com/2",
+                "summary_and_implications": "本文要約です。\n\n示唆です。",
+            },
+        ],
+    }
+    html = render_final_report_html(Path("templates/nikkei_final_report_email.html"), rep, "2026-05-06", all_articles=[])
+    assert "何が起きたか" in html
+    assert "なぜ重要か" in html
+    assert "見るべき点" in html
+    assert "要約と示唆" in html
+    assert "summary_only" in html
+    assert "本文要約です。" in html
+    # summary_only記事で「見るべき点」に本文を入れない
+    assert "見るべき点</div><div>本文要約です。" not in html
+
+
+def test_empty_structured_fields_do_not_render_empty_labels():
+    rep = {
+        "today_key_message": "k",
+        "integrated_insights": ["i"],
+        "article_sections": [
+            {
+                "title": "empty",
+                "url": "https://example.com/e",
+                "what_happened": "",
+                "why_it_matters": "",
+                "watch_points": [],
+                "summary_and_implications": "要約のみ",
+            }
+        ],
+    }
+    html = render_final_report_html(Path("templates/nikkei_final_report_email.html"), rep, "2026-05-06", all_articles=[])
+    assert "何が起きたか</div><div></div>" not in html
+    assert "なぜ重要か</div><div></div>" not in html
+    assert "要約と示唆" in html
