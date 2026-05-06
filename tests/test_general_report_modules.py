@@ -33,17 +33,17 @@ def test_final_synthesis_and_hash():
     arts = [{"title":"a","url":"u","summary":"s","reason_to_read":"r","business_implications":"b"}]
     inp = build_synthesis_input(arts)
     assert "full_text" not in inp[0]
-    rep = {"report_title":"x","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","priority_watch_items":["1","2","3"],"article_sections":[{"ref_id":"A1","url":"u"}]}
+    rep = {"report_title":"x","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","integrated_insights":["i1"],"article_sections":[{"ref_id":"A1","url":"u"}]}
     assert validate_final_report(rep, 1)
     assert len(build_input_hash("2026-01-01", arts, rep)) == 64
 
 
 def test_html_and_notion_helpers(tmp_path: Path):
     tpl = Path("templates/nikkei_final_report_email.html")
-    rep = {"report_title":"r","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","priority_watch_items":["x","y","z"],"article_sections":[{"ref_id":"A1","title":"t","url":"https://x","importance_score":1,"one_line_summary":"o","why_it_matters":"w","business_action_hint":"b"}]}
+    rep = {"report_title":"r","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","integrated_insights":["x"],"article_sections":[{"ref_id":"A1","title":"t","url":"https://x","importance_score":1,"summary_and_implications":"o\n\nw"}]}
     html = render_final_report_html(tpl, rep, "2026-01-01")
     assert "Meiryo UI" in html and '<a href="https://x">t</a>' in html and 'A1' not in html
-    assert "商社目線の読み" not in html and "業務示唆" in html
+    assert "本日のブリーフ" in html and "業務示唆" not in html
     assert "https://x</li>" not in html
     assert filter_known_properties({"Title":"a","X":1}, ["Title"]) == {"Title":"a"}
     try:
