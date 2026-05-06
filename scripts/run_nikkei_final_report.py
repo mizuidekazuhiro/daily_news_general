@@ -75,6 +75,12 @@ def _merge_notion_fields(articles: list[dict], url_map: dict[str, dict[str, str]
         out.append(merged)
     return out
 
+
+
+def _build_mail_subject(display_date:str, edition:str)->str:
+    edition_label="朝刊" if edition=="morning" else "夕刊"
+    return f"日経新聞{edition_label}要約｜{display_date}"
+
 def _display_target_date(selected,in_articles):
     for a in selected:
         if a.get("issue_date"): return _format_date(str(a.get("issue_date")))
@@ -91,8 +97,9 @@ def _build_article_sections_from_input(in_articles:list[dict])->list[dict]:
             "url": a.get("url",""),
             "importance_score": a.get("importance_score",0),
             "one_line_summary": a.get("summary") or (a.get("text_excerpt","")[:160] or "本文確認対象"),
-            "why_it_matters": a.get("reason_to_read") or "需給・投資・政策影響の確認対象。",
-            "business_action_hint": a.get("business_implications") or "価格・需給・政策・投資判断への影響を確認。",
+            "why_it_matters": a.get("reason_to_read") or "確認対象です。",
+            "business_action_hint": a.get("business_implications") or "事業・投資・リスク観点で追加確認。",
+            "summary_and_implications": "\n\n".join([x for x in [a.get("summary") or (a.get("text_excerpt","")[:160] or "本文確認対象"), a.get("reason_to_read") or "事業・投資判断への影響を確認。", a.get("business_implications") or "必要に応じて関係部署で追加確認。"] if str(x).strip()]),
             "notion_url": a.get("notion_url", ""),
             "page_id": a.get("page_id", ""),
         })
@@ -102,10 +109,12 @@ def _generate_report(client,input_payload,retry=False):
     model=_env_str("NIKKEI_FINAL_REPORT_MODEL",DEFAULTS["NIKKEI_FINAL_REPORT_MODEL"])
     prompt=(
         "JSONのみ。Markdown禁止。説明文禁止。"
-        "必須キー: report_title,today_key_message,executive_summary,cross_article_implications,article_sections。"
+        "必須キー: report_title,today_key_message,executive_summary,cross_article_implications,integrated_insights,article_sections。"
         "article_sectionsは入力articlesと同じ件数。"
         "ref_idはA1,A2...の順。url/title/importance_scoreは入力値をそのまま保持。"
-        "article_sectionsの各要素キー: ref_id,title,url,importance_score,one_line_summary,why_it_matters,business_action_hint。"
+        "article_sectionsの各要素キー: ref_id,title,url,importance_score,summary_and_implications,one_line_summary,why_it_matters,business_action_hint,notion_url,page_id。"
+        "summary_and_implicationsは2〜4文で、先に記事内容の事実、その後に示唆・必要なら今後アクションを具体的に書く。抽象定型文は禁止。適宜改行。"
+        "integrated_insightsはlist[str]で、固定分類に依存せず重要示唆を箇条書き化する。"
     )
     if retry:
         prompt += " 前回はarticle_sections欠落のため失敗。必ずarticle_sectionsを含めること。"
@@ -182,7 +191,7 @@ def main()->int:
 
     display_date=_display_target_date(sel,in_articles)
     fallback=not success
-    report=parsed if success else {"report_title":f"日経事業ブリーフ {display_date}","today_key_message":"最終GPT生成に失敗したため、重要記事の簡易一覧を表示します。記事本文・重要度・一致ルールをもとに確認してください。","executive_summary":"最終GPT生成に失敗したため、重要記事の簡易一覧を表示します。記事本文・重要度・一致ルールをもとに確認してください。","cross_article_implications":"重要記事の横断確認を実施してください。","priority_watch_items":["価格","需給","政策"],"article_sections":_build_article_sections_from_input(in_articles)}
+    report=parsed if success else {"report_title":f"日経事業ブリーフ {display_date}","today_key_message":"最終GPT生成に失敗したため、重要記事の要点を整理して表示します。","executive_summary":"重要記事の変化点を確認し、影響範囲を見直してください。","cross_article_implications":"必要に応じて投資・事業・リスク観点で追加確認してください。","integrated_insights":["最終GPT生成に失敗したため、重要記事の要点を暫定表示しています。","記事本文とリンク先を確認し、判断に必要な追加情報を補完してください。"],"article_sections":_build_article_sections_from_input(in_articles)}
     report["article_sections"] = _merge_notion_fields(report.get("article_sections", []), {str(a.get("url") or "").strip(): {"notion_url": a.get("notion_url", ""), "page_id": a.get("page_id", "")} for a in norm})
 
     raw_log={"model":_env_str("NIKKEI_FINAL_REPORT_MODEL",DEFAULTS["NIKKEI_FINAL_REPORT_MODEL"]),"finish_reason":finish,"raw_response_text":raw,"parsed_json":parsed,"parsed_top_level_keys":list(parsed.keys()) if isinstance(parsed,dict) else [],"validation_errors":errs,"retry_used":retry_used,"retry_raw_response_text":retry_raw,"retry_parsed_json":retry_parsed,"retry_validation_errors":retry_errs,"retry_parsed_top_level_keys":list(retry_parsed.keys()) if isinstance(retry_parsed,dict) else [],"recovered_missing_article_sections":recovered_missing_article_sections,"final_validation_errors_after_recovery":(errs if success else (retry_errs or errs))}
@@ -195,8 +204,7 @@ def main()->int:
     mail_enabled=_env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL",True); fallback_allowed=_env_bool("NIKKEI_ALLOW_FALLBACK_FINAL_REPORT_MAIL",True)
     can_send=mail_enabled and bool(recipients) and (not fallback or fallback_allowed)
     reason="" if can_send else ("no_mail_recipients" if not recipients else "fallback_mail_blocked_by_NIKKEI_ALLOW_FALLBACK_FINAL_REPORT_MAIL_false" if fallback and not fallback_allowed else "mail_disabled_by_NIKKEI_SEND_FINAL_REPORT_MAIL_false")
-    prefix="【日経朝刊ブリーフ】" if _env_str("NIKKEI_EDITION","")=="morning" else "【日経夕刊ブリーフ】"
-    subj=f"{prefix}{display_date}｜重要{len(sel)}件"; subj=("[fallback] "+subj) if fallback else subj
+    subj=_build_mail_subject(display_date, _env_str("NIKKEI_EDITION",""))
     sent=False
     if can_send:
         try:

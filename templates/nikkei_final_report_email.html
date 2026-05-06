@@ -1,14 +1,35 @@
-<!doctype html><html><head><meta charset="utf-8"><style>body{font-family:'Meiryo UI','Meiryo',sans-serif;max-width:860px;margin:0 auto;padding:16px;line-height:1.6;}section{margin:14px 0;}ul,ol{padding-left:20px;}</style></head><body>
-<h2>${report_title}</h2>
-<div>生成日時: ${generated_at} / 対象日: ${target_date} / 対象記事数: ${article_count}</div>
-<section><h3>本日の要点</h3><p>${today_key_message}</p></section>
-<section><h3>全体ブリーフ</h3><p>${executive_summary}</p></section>
-<section><h3>横断的な業務示唆</h3><p>${cross_article_implications}</p></section>
-<section><h3>優先確認事項</h3><ul>${priority_watch_items}</ul></section>
-<section><h3>重要記事一覧</h3><ul>${article_items}</ul></section>
-<section>
-  <h3>取得記事一覧（全件）</h3>
-  <div style="color:#666;font-size:12px;">全${all_article_count}件</div>
-  <ol>${all_article_items}</ol>
-</section>
-</body></html>
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { margin:0; background:#f6f7f9; font-family:'Meiryo UI','Meiryo',sans-serif; line-height:1.75; color:#222; padding:18px 10px; }
+    .container { max-width:860px; margin:0 auto; background:#fff; border:1px solid #e8ebf0; border-radius:14px; padding:22px; }
+    section { margin:26px 0; }
+    h3 { margin:0 0 12px; font-size:18px; }
+    ul,ol { padding-left:20px; margin:0; }
+    li { margin:8px 0; }
+    .lead { margin:0; }
+    .article-card { padding:16px; border:1px solid #e5e7eb; border-radius:10px; margin:14px 0; background:#fff; }
+    .article-title { font-size:16px; font-weight:700; }
+    .notion-link { font-size:12px; color:#666; }
+    .article-body { margin-top:10px; white-space:pre-line; }
+    .article-label { font-size:13px; font-weight:700; color:#444; margin-bottom:6px; }
+    .all-list { color:#444; font-size:14px; }
+    .muted { color:#666; font-size:12px; }
+    @media (max-width:640px) { .container { padding:16px; border-radius:10px; } body { padding:8px; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <section><h3>本日の要点</h3><p class="lead">${today_key_message}</p></section>
+    <section><h3>本日のブリーフ</h3><ul>${brief_items}</ul></section>
+    <section><h3>重要記事</h3>${article_items}</section>
+    <section>
+      <h3>取得記事一覧（全件）</h3>
+      <div class="muted">全${all_article_count}件</div>
+      <ol class="all-list">${all_article_items}</ol>
+    </section>
+  </div>
+</body>
+</html>
