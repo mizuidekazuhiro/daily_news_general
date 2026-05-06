@@ -130,7 +130,7 @@ jobs:
       NIKKEI_REPORT_TOP_IMPORTANCE_RANK: ${{ github.event_name == 'workflow_dispatch' && inputs.report_top_rank || '5' }}
       NIKKEI_REPORT_INCLUDE_TIES: "false"
       NIKKEI_ARTICLE_GPT_MIN_IMPORTANCE_SCORE: ${{ github.event_name == 'workflow_dispatch' && inputs.article_gpt_min_importance_score || '3' }}
-      NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS: ${{ github.event_name == 'workflow_dispatch' && inputs.final_report_article_text_chars || '1800' }}
+      NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS: ${{ github.event_name == 'workflow_dispatch' && inputs.final_report_article_text_chars || '0' }}
       NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS: "8000"
       NIKKEI_SEND_FINAL_REPORT_MAIL: ${{ github.event_name == 'workflow_dispatch' && inputs.send_final_report_mail || 'true' }}
       NIKKEI_ALLOW_FALLBACK_FINAL_REPORT_MAIL: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_fallback_final_report_mail || 'true' }}

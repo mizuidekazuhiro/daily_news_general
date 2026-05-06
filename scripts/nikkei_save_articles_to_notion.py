@@ -32,59 +32,34 @@ def ensure_nikkei_title(a):
     return f"Untitled Nikkei Article - {nid or 'unknown'}"
 
 def clean_nikkei_body_text(text):
-    text = text or ''
+    text = (text or '').replace('<br>', '\n')
     before = len(text)
-    text = text.replace('<br>', '\n')
-
-    drop_exact = {
-        '共有',
-        '文字サイズ',
-        '小',
-        '中',
-        '大',
-        '自動翻訳',
-        '英文（システムによる自動翻訳）を表示する',
-        '日経の記事利用サービス',
-        '保存',
-        '印刷 翻訳',
-        '検索する',
-        'その他',
-        '［有料会員限定］',
-        '[有料会員限定]',
-    }
-
-    drop_patterns = [
-        r'朝夕刊や電子版ではお伝えしきれない情報をお届けします。?.*',
-        r'企業での記事共有や会議資料への転載・複製.*',
-        r'.*注文印刷.*',
-        r'.*詳しくはこちら.*',
-        r'^\d+文字$',
-        r'.*javascript:void\(0\).*',
-        r'^その他javascript:void\(0\).*$',
-    ]
-
     removed = 0
-    kept_lines = []
-
-    for line in text.splitlines():
-        line = line.strip()
+    samples = []
+    subs = [r'企業での記事共有や会議資料への転載・複製[^【\n]*', r'朝夕刊や電子版ではお伝えしきれない情報をお届けします。?[^【\n]*', r'日経の記事利用サービス', r'javascript:void\\(0\\)', r'詳しくはこちら']
+    lines=[]
+    for raw in text.splitlines():
+        line=raw.strip()
         if not line:
             continue
-        if line in drop_exact:
+        original=line
+        for pat in subs:
+            line2=re.sub(pat,'',line).strip()
+            if line2!=line:
+                removed += 1
+                if len(samples)<5: samples.append(pat)
+            line=line2
+        if line in {'共有','文字サイズ','小','中','大','保存','印刷 翻訳','検索する','その他','［有料会員限定］','[有料会員限定]'}:
             removed += 1
             continue
-        if any(re.search(pattern, line) for pattern in drop_patterns):
-            removed += 1
-            continue
-        kept_lines.append(line)
-
-    text = '\n'.join(kept_lines)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-
+        lines.append(line)
+    text='\n'.join(lines)
+    text=re.sub(r'\n{3,}','\n\n',text).strip()
     print(f"text_length_before_clean: {before}")
     print(f"text_length_after_clean: {len(text)}")
     print(f"removed_boilerplate_count: {removed}")
-    return text.strip()
+    print(f"removed_boilerplate_samples: {samples}")
+    return text
 
 def is_nav(t):
  x=clean_text(t); kws=['速報','アクセスランキング','トピック一覧','人事','おくやみ','プレスリリース','メディア一覧','ビューアーで読む']
