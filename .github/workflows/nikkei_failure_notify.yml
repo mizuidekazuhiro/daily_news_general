@@ -1,0 +1,33 @@
+name: Nikkei Failure Notification
+
+on:
+  workflow_run:
+    workflows:
+      - Nikkei Morning Paper
+      - Nikkei Evening Paper
+    types:
+      - completed
+
+jobs:
+  notify-failure:
+    if: ${{ github.event.workflow_run.conclusion != 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      FAILED_WORKFLOW_NAME: ${{ github.event.workflow_run.name }}
+      FAILED_RUN_ID: ${{ github.event.workflow_run.id }}
+      FAILED_RUN_URL: ${{ github.event.workflow_run.html_url }}
+      FAILED_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+      FAILED_HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      FAILED_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      MAIL_FROM: ${{ secrets.MAIL_FROM }}
+      MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+      MAIL_TO: ${{ secrets.MAIL_TO }}
+      MAIL_CC: ${{ secrets.MAIL_CC }}
+      MAIL_BCC: ${{ secrets.MAIL_BCC }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Send failure notification mail
+        run: python scripts/send_workflow_failure_mail.py

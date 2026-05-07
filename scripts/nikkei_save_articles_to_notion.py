@@ -1,27 +1,119 @@
 import json, os, time, re
+from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import requests
+from requests.exceptions import ConnectionError, ReadTimeout, Timeout
 from dotenv import load_dotenv
+
 load_dotenv()
-NOTION_TOKEN=os.getenv('NOTION_TOKEN','').strip(); DATABASE_ID=(os.getenv('NIKKEI_ARTICLES_DB_ID','') or os.getenv('NOTION_ARTICLE_DB_ID','')).strip()
-INPUT_JSON=Path('logs/nikkei_articles_full.json'); FAILED_LOG_JSON=Path('logs/nikkei_save_failed.json'); SAVE_RESULTS_JSON=Path('logs/nikkei_save_results.json'); NOTION_VERSION='2022-06-28'
-SUMMARY_SOURCE_FIELDS=['summary','description','meta_description','body_summary']
-PROP_CANDS={
-'title':['Name','Title','記事名','記事タイトル'],
-'url':['URL','Url','url','Link','Article URL','Source URL'],'issue':['Issue Date','Issued Date','Published Date'],'edition':['Edition'],
-'source':['Source','Media','媒体'],'fetch':['Fetch Status'],'full':['Full Text Status','FullText Status','Body Status','Extraction Status'],
-'text_len':['Text Length'],'img_count':['Image Count'],'gpt':['GPT Processed'],'has_image':['Has Image'],'has_chart':['Has Chart'],
-'img_url':['Image URL'],'img_cap':['Image Caption'],'body':['Body','Article Body','Article Text','Text','Content','本文','記事本文'],'summary':['Summary','要約','AI Summary']}
+NOTION_TOKEN = os.getenv('NOTION_TOKEN', '').strip()
+DATABASE_ID = (os.getenv('NIKKEI_ARTICLES_DB_ID', '') or os.getenv('NOTION_ARTICLE_DB_ID', '')).strip()
+INPUT_JSON = Path('logs/nikkei_articles_full.json')
+FAILED_LOG_JSON = Path('logs/nikkei_save_failed.json')
+SAVE_RESULTS_JSON = Path('logs/nikkei_save_results.json')
+NOTION_VERSION = '2022-06-28'
+SUMMARY_SOURCE_FIELDS = ['summary', 'description', 'meta_description', 'body_summary']
+PROP_CANDS = {
+    'title': ['Name', 'Title', '記事名', '記事タイトル'],
+    'url': ['URL', 'Url', 'url', 'Link', 'Article URL', 'Source URL'],
+    'issue': ['Issue Date', 'Issued Date', 'Published Date'],
+    'edition': ['Edition'],
+    'source': ['Source', 'Media', '媒体'],
+    'fetch': ['Fetch Status'],
+    'full': ['Full Text Status', 'FullText Status', 'Body Status', 'Extraction Status'],
+    'text_len': ['Text Length'],
+    'img_count': ['Image Count'],
+    'gpt': ['GPT Processed'],
+    'has_image': ['Has Image'],
+    'has_chart': ['Has Chart'],
+    'img_url': ['Image URL'],
+    'img_cap': ['Image Caption'],
+    'body': ['Body', 'Article Body', 'Article Text', 'Text', 'Content', '本文', '記事本文'],
+    'summary': ['Summary', '要約', 'AI Summary'],
+}
 
-def headers(): return {'Authorization':f'Bearer {NOTION_TOKEN}','Notion-Version':NOTION_VERSION,'Content-Type':'application/json'}
-def req(method,url,**kwargs):
- r=requests.request(method,url,headers=headers(),timeout=60,**kwargs); 
- if r.status_code==429: time.sleep(int(r.headers.get('Retry-After','2'))); return req(method,url,**kwargs)
- r.raise_for_status(); return r
 
-def ng(url): return (parse_qs(urlparse(url).query).get('ng') or [''])[0]
-def clean_text(t): return (t or '').strip()
+def env_int(name, default):
+    try:
+        return int(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+
+def env_float(name, default):
+    try:
+        return float(os.getenv(name, str(default)))
+    except Exception:
+        return default
+
+
+NOTION_CONNECT_TIMEOUT_SECONDS = env_float('NOTION_CONNECT_TIMEOUT_SECONDS', 10)
+NOTION_READ_TIMEOUT_SECONDS = env_float('NOTION_READ_TIMEOUT_SECONDS', 180)
+NOTION_HTTP_RETRIES = max(1, env_int('NOTION_HTTP_RETRIES', 5))
+NOTION_HTTP_BACKOFF_SECONDS = env_float('NOTION_HTTP_BACKOFF_SECONDS', 2)
+NOTION_HTTP_MAX_BACKOFF_SECONDS = env_float('NOTION_HTTP_MAX_BACKOFF_SECONDS', 60)
+
+
+def headers():
+    return {
+        'Authorization': f'Bearer {NOTION_TOKEN}',
+        'Notion-Version': NOTION_VERSION,
+        'Content-Type': 'application/json',
+    }
+
+
+def _retry_sleep_seconds(attempt, response=None):
+    if response is not None:
+        retry_after = response.headers.get('Retry-After')
+        if retry_after:
+            try:
+                return min(NOTION_HTTP_MAX_BACKOFF_SECONDS, max(1.0, float(retry_after)))
+            except Exception:
+                pass
+    return min(NOTION_HTTP_MAX_BACKOFF_SECONDS, NOTION_HTTP_BACKOFF_SECONDS * (2 ** max(0, attempt - 1)))
+
+
+def req(method, url, **kwargs):
+    timeout = kwargs.pop('timeout', (NOTION_CONNECT_TIMEOUT_SECONDS, NOTION_READ_TIMEOUT_SECONDS))
+    retryable_statuses = {429, 500, 502, 503, 504}
+    last_error = None
+
+    for attempt in range(1, NOTION_HTTP_RETRIES + 1):
+        try:
+            r = requests.request(method, url, headers=headers(), timeout=timeout, **kwargs)
+            if r.status_code in retryable_statuses:
+                if attempt >= NOTION_HTTP_RETRIES:
+                    r.raise_for_status()
+                wait = _retry_sleep_seconds(attempt, r)
+                print(
+                    f"notion_request_retry: method={method} status={r.status_code} "
+                    f"attempt={attempt}/{NOTION_HTTP_RETRIES} sleep={round(wait, 1)}s url={url}"
+                )
+                time.sleep(wait)
+                continue
+            r.raise_for_status()
+            return r
+        except (ReadTimeout, Timeout, ConnectionError) as e:
+            last_error = e
+            if attempt >= NOTION_HTTP_RETRIES:
+                raise
+            wait = _retry_sleep_seconds(attempt)
+            print(
+                f"notion_request_retry: method={method} error={type(e).__name__} "
+                f"attempt={attempt}/{NOTION_HTTP_RETRIES} sleep={round(wait, 1)}s url={url}"
+            )
+            time.sleep(wait)
+    raise last_error
+
+
+def ng(url):
+    return (parse_qs(urlparse(url).query).get('ng') or [''])[0]
+
+
+def clean_text(t):
+    return (t or '').strip()
+
 
 def ensure_nikkei_title(a):
     title = clean_text(a.get('title') or a.get('headline') or a.get('source_title') or a.get('page_title') or a.get('h1_text'))
@@ -30,6 +122,7 @@ def ensure_nikkei_title(a):
     u = clean_text(a.get('url'))
     nid = ng(u)
     return f"Untitled Nikkei Article - {nid or 'unknown'}"
+
 
 def clean_nikkei_body_text(text):
     text = text or ''
@@ -86,201 +179,343 @@ def clean_nikkei_body_text(text):
     print(f"removed_boilerplate_count: {removed}")
     return text.strip()
 
+
 def is_nav(t):
- x=clean_text(t); kws=['速報','アクセスランキング','トピック一覧','人事','おくやみ','プレスリリース','メディア一覧','ビューアーで読む']
- return sum(x.count(k) for k in kws)>=3
+    x = clean_text(t)
+    kws = ['速報', 'アクセスランキング', 'トピック一覧', '人事', 'おくやみ', 'プレスリリース', 'メディア一覧', 'ビューアーで読む']
+    return sum(x.count(k) for k in kws) >= 3
 
-def load_existing():
- keys=set(); pages={}; cur=None
- while True:
-  p={'page_size':100};
-  if cur: p['start_cursor']=cur
-  d=req('POST',f'https://api.notion.com/v1/databases/{DATABASE_ID}/query',json=p).json()
-  for it in d.get('results',[]):
-   props=it.get('properties',{}); pid=it.get('id','')
-   for n,v in props.items():
-    if v.get('type') not in {'url','rich_text'}: continue
-    u=(v.get('url') or '') if v.get('type')=='url' else ''.join(x.get('plain_text','') for x in v.get('rich_text',[]))
-    if u:
-      keys.add(u); pages[u]=pid; nid=ng(u)
-      if nid: keys.add(nid); keys.add(f'ng:{nid}'); pages[nid]=pid; pages[f'ng:{nid}']=pid
-  if not d.get('has_more'): break
-  cur=d.get('next_cursor')
- return keys,pages
 
-def find_prop(props,cands):
- for n in cands:
-  if n in props: return n
- return None
+def normalize_issue_date(value):
+    s = str(value or '').strip()
+    if len(s) == 8 and s.isdigit():
+        return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+    if re.match(r'^\d{4}-\d{2}-\d{2}', s):
+        return s[:10]
+    return ''
 
-def set_prop(meta,val):
- t=meta.get('type')
- if val is None: return None
- if t=='title': return {'title':[{'type':'text','text':{'content':str(val)[:1900]}}]}
- if t=='rich_text': return {'rich_text':[{'type':'text','text':{'content':str(val)[:1900]}}]}
- if t=='select': return {'select':{'name':str(val)[:100]}}
- if t=='multi_select': return {'multi_select':[{'name':str(x)[:100]} for x in (val if isinstance(val,list) else [val]) if str(x).strip()]}
- if t=='number': return {'number':float(val)}
- if t=='checkbox': return {'checkbox':bool(val)}
- if t=='date': return {'date':{'start':str(val)}}
- if t=='url': return {'url':str(val)}
- return None
+
+def build_existing_query_filter(props, mapn, arts):
+    if os.getenv('NIKKEI_SCOPE_EXISTING_QUERY_BY_ISSUE_DATE', 'true').strip().lower() not in {'1', 'true', 'yes', 'on'}:
+        return None
+
+    issue_prop = mapn.get('issue')
+    if not issue_prop or issue_prop not in props or props[issue_prop].get('type') != 'date':
+        print('notion_existing_query_scope: unscoped reason=missing_date_issue_property')
+        return None
+
+    dates = []
+    for a in arts:
+        d = normalize_issue_date(a.get('issue_date'))
+        if d:
+            dates.append(d)
+    target = normalize_issue_date(os.getenv('NIKKEI_TARGET_DATE', ''))
+    if target:
+        dates.append(target)
+    if not dates:
+        print('notion_existing_query_scope: unscoped reason=no_issue_dates')
+        return None
+
+    parsed = [datetime.strptime(d, '%Y-%m-%d').date() for d in sorted(set(dates))]
+    buffer_days = max(0, env_int('NIKKEI_EXISTING_QUERY_DATE_BUFFER_DAYS', 1))
+    start = (min(parsed) - timedelta(days=buffer_days)).isoformat()
+    end = (max(parsed) + timedelta(days=buffer_days)).isoformat()
+    print(f"notion_existing_query_scope: issue_date_range {start}..{end} property={issue_prop}")
+    return {
+        'and': [
+            {'property': issue_prop, 'date': {'on_or_after': start}},
+            {'property': issue_prop, 'date': {'on_or_before': end}},
+        ]
+    }
+
+
+def load_existing(query_filter=None):
+    keys = set()
+    pages = {}
+    cur = None
+    page_count = 0
+    while True:
+        p = {'page_size': 100}
+        if query_filter:
+            p['filter'] = query_filter
+        if cur:
+            p['start_cursor'] = cur
+        d = req('POST', f'https://api.notion.com/v1/databases/{DATABASE_ID}/query', json=p).json()
+        page_count += 1
+        for it in d.get('results', []):
+            props = it.get('properties', {})
+            pid = it.get('id', '')
+            for _n, v in props.items():
+                if v.get('type') not in {'url', 'rich_text'}:
+                    continue
+                u = (v.get('url') or '') if v.get('type') == 'url' else ''.join(x.get('plain_text', '') for x in v.get('rich_text', []))
+                if u:
+                    keys.add(u)
+                    pages[u] = pid
+                    nid = ng(u)
+                    if nid:
+                        keys.add(nid)
+                        keys.add(f'ng:{nid}')
+                        pages[nid] = pid
+                        pages[f'ng:{nid}'] = pid
+        if not d.get('has_more'):
+            break
+        cur = d.get('next_cursor')
+    print(f"notion_existing_query_pages: {page_count}")
+    return keys, pages
+
+
+def find_prop(props, cands):
+    for n in cands:
+        if n in props:
+            return n
+    return None
+
+
+def set_prop(meta, val):
+    t = meta.get('type')
+    if val is None:
+        return None
+    if t == 'title':
+        return {'title': [{'type': 'text', 'text': {'content': str(val)[:1900]}}]}
+    if t == 'rich_text':
+        return {'rich_text': [{'type': 'text', 'text': {'content': str(val)[:1900]}}]}
+    if t == 'select':
+        return {'select': {'name': str(val)[:100]}}
+    if t == 'multi_select':
+        return {'multi_select': [{'name': str(x)[:100]} for x in (val if isinstance(val, list) else [val]) if str(x).strip()]}
+    if t == 'number':
+        return {'number': float(val)}
+    if t == 'checkbox':
+        return {'checkbox': bool(val)}
+    if t == 'date':
+        start = normalize_issue_date(val) or str(val)
+        return {'date': {'start': start}}
+    if t == 'url':
+        return {'url': str(val)}
+    return None
+
 
 def get_summary_text(a):
- for k in SUMMARY_SOURCE_FIELDS:
-  v=clean_text(a.get(k,''));
-  if v: return v
- return ''
-
+    for k in SUMMARY_SOURCE_FIELDS:
+        v = clean_text(a.get(k, ''))
+        if v:
+            return v
+    return ''
 
 
 def split_blocks(text, limit=1800):
-    out=[]; cur=''
+    out = []
+    cur = ''
     for ln in [x.strip() for x in (text or '').splitlines() if x.strip()]:
-        if cur and len(cur)+len(ln)+1>limit: out.append(cur); cur=ln
-        else: cur=(cur+'\n'+ln).strip()
-    if cur: out.append(cur)
+        if cur and len(cur) + len(ln) + 1 > limit:
+            out.append(cur)
+            cur = ln
+        else:
+            cur = (cur + '\n' + ln).strip()
+    if cur:
+        out.append(cur)
     return out
 
-def append_body_blocks(page_id,text,title=''):
-    chunks=split_blocks(text)
-    if not chunks: return 0
 
-    children=[
+def append_body_blocks(page_id, text, title=''):
+    chunks = split_blocks(text)
+    if not chunks:
+        return 0
+
+    children = [
         {
-            "object":"block",
-            "type":"heading_2",
-            "heading_2":{
-                "rich_text":[{"type":"text","text":{"content":"タイトル"}}]
-            }
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {
+                "rich_text": [{"type": "text", "text": {"content": "タイトル"}}]
+            },
         }
     ]
 
     if title:
-        children.append({
-            "object":"block",
-            "type":"heading_3",
-            "heading_3":{
-                "rich_text":[{"type":"text","text":{"content":str(title)[:1900]}}]
+        children.append(
+            {
+                "object": "block",
+                "type": "heading_3",
+                "heading_3": {
+                    "rich_text": [{"type": "text", "text": {"content": str(title)[:1900]}}]
+                },
             }
-        })
+        )
 
-    children.append({
-        "object":"block",
-        "type":"heading_2",
-        "heading_2":{
-            "rich_text":[{"type":"text","text":{"content":"本文"}}]
+    children.append(
+        {
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {
+                "rich_text": [{"type": "text", "text": {"content": "本文"}}]
+            },
         }
-    })
+    )
 
     children += [
         {
-            "object":"block",
-            "type":"paragraph",
-            "paragraph":{
-                "rich_text":[{"type":"text","text":{"content":c[:1900]}}]
-            }
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [{"type": "text", "text": {"content": c[:1900]}}]
+            },
         }
         for c in chunks
     ]
 
-    req('PATCH',f'https://api.notion.com/v1/blocks/{page_id}/children',json={'children':children[:100]})
+    req('PATCH', f'https://api.notion.com/v1/blocks/{page_id}/children', json={'children': children[:100]})
     return len(children)
 
+
 def list_page_children(page_id):
-    out=[]; cur=None
+    out = []
+    cur = None
     while True:
-        url=f'https://api.notion.com/v1/blocks/{page_id}/children?page_size=100'
+        url = f'https://api.notion.com/v1/blocks/{page_id}/children?page_size=100'
         if cur:
             url += f'&start_cursor={cur}'
-        data=req('GET',url).json()
-        out.extend(data.get('results',[]))
+        data = req('GET', url).json()
+        out.extend(data.get('results', []))
         if not data.get('has_more'):
             break
-        cur=data.get('next_cursor')
+        cur = data.get('next_cursor')
     return out
 
+
 def _heading_text(block):
-    btype=block.get('type')
-    if btype not in {'heading_1','heading_2','heading_3'}:
+    btype = block.get('type')
+    if btype not in {'heading_1', 'heading_2', 'heading_3'}:
         return ''
-    return ''.join(x.get('plain_text','') for x in block.get(btype,{}).get('rich_text',[])).strip()
+    return ''.join(x.get('plain_text', '') for x in block.get(btype, {}).get('rich_text', [])).strip()
+
 
 def has_body_heading(page_id):
     for b in list_page_children(page_id):
-        if _heading_text(b) in {'記事本文','タイトル','本文'}:
+        if _heading_text(b) in {'記事本文', 'タイトル', '本文'}:
             return True
     return False
 
+
 def delete_existing_body_blocks(page_id):
-    children=list_page_children(page_id)
-    deleting=False
-    deleted=0
-    start_headings={'記事本文','タイトル','本文'}
-    stop_headings={'メタデータ'}
+    children = list_page_children(page_id)
+    deleting = False
+    deleted = 0
+    start_headings = {'記事本文', 'タイトル', '本文'}
+    stop_headings = {'メタデータ'}
 
     for b in children:
-        t=_heading_text(b)
+        t = _heading_text(b)
 
         if t in start_headings and not deleting:
-            deleting=True
+            deleting = True
         elif deleting and t in stop_headings:
             break
 
         if deleting:
-            req('PATCH',f"https://api.notion.com/v1/blocks/{b['id']}",json={'archived':True})
+            req('PATCH', f"https://api.notion.com/v1/blocks/{b['id']}", json={'archived': True})
             deleted += 1
 
     print(f"deleted_existing_body_blocks: {deleted}")
     return deleted
 
+
 def main():
- arts=json.loads(INPUT_JSON.read_text()) if INPUT_JSON.exists() else []
- props=req('GET',f'https://api.notion.com/v1/databases/{DATABASE_ID}').json().get('properties',{})
- skip_existing = os.getenv("NIKKEI_SKIP_EXISTING_NOTION_URLS", "true").strip().lower() in {"1", "true", "yes", "on"}
- if skip_existing:
-  keys,pages=load_existing()
- else:
-  keys,pages=set(),{}
- print('skip_existing_notion_urls:', skip_existing)
- print('existing_url_count:',len(keys)); fails=[]; save_results=[]; stats={k:0 for k in ['metadata_written_count','source_written','fetch_status_written','full_text_status_written','text_length_written','image_count_written','has_image_written','has_chart_written']}; missing=[]; skipped=[]
- mapn={k:find_prop(props,v) for k,v in PROP_CANDS.items()}
- for a in arts:
-  u=a.get('url','').strip(); title=ensure_nikkei_title(a); text=clean_nikkei_body_text(a.get('text','')); extraction=a.get('extraction_status','success')
-  rejected=is_nav(text) or extraction=='failed'; full='saved' if text and not rejected else ('failed' if extraction=='failed' else 'rejected_navigation_text')
-  clean='' if rejected else text; summary=get_summary_text(a); pid=a.get('page_id') or pages.get(u) or pages.get(ng(u)) or pages.get(f"ng:{ng(u)}")
-  payload={}; fields={'title':title,'url':u,'issue':a.get('issue_date'),'edition':a.get('edition'),'source':'Nikkei','fetch':a.get('status') or extraction or 'success','full':full,'text_len':len(clean) if clean else 0,'img_count':a.get('image_count',0) or 0,'gpt':False,'has_image':bool((a.get('image_count',0) or 0)>0 or a.get('image_url')),'has_chart':bool(a.get('has_chart',False)),'img_url':a.get('image_url',''),'img_cap':a.get('image_caption','')}
-  print(f"title_saved_to_notion: {title}")
-  if clean and mapn['body']: fields['body']=clean
-  if summary and mapn['summary']: fields['summary']=summary
-  for key,val in fields.items():
-   pn=mapn.get(key)
-   if not pn: missing.append(key); continue
-   patch=set_prop(props[pn],val)
-   if patch is None: skipped.append(pn); continue
-   payload[pn]=patch
-  try:
-   if pid:
-    updated=req('PATCH',f'https://api.notion.com/v1/pages/{pid}',json={'properties':payload}).json()
-    notion_url = updated.get('url','') if isinstance(updated,dict) else ''
-    if not notion_url and pid: notion_url=f"https://www.notion.so/{str(pid).replace('-', '')}"
-    if clean:
-        if has_body_heading(pid):
-            delete_existing_body_blocks(pid)
-        append_body_blocks(pid,clean,title)
-    save_results.append({'url':u,'title':title,'page_id':pid,'notion_url':notion_url,'action':'updated','ok':True,'error':''})
-   else:
-    created=req('POST','https://api.notion.com/v1/pages',json={'parent':{'database_id':DATABASE_ID},'properties':payload}).json()
-    created_id=created.get('id','')
-    notion_url = created.get('url','')
-    if not notion_url and created_id: notion_url=f"https://www.notion.so/{str(created_id).replace('-', '')}"
-    if clean and created_id: append_body_blocks(created_id,clean,title)
-    save_results.append({'url':u,'title':title,'page_id':created_id,'notion_url':notion_url,'action':'created','ok':True,'error':''})
-  except Exception as e:
-   fails.append({'url':u,'error':str(e)})
-   save_results.append({'url':u,'title':title,'page_id':pid or '', 'notion_url':'','action':'failed','ok':False,'error':str(e)})
- FAILED_LOG_JSON.write_text(json.dumps(fails,ensure_ascii=False,indent=2),encoding='utf-8') if fails else None
- SAVE_RESULTS_JSON.parent.mkdir(parents=True, exist_ok=True)
- SAVE_RESULTS_JSON.write_text(json.dumps(save_results,ensure_ascii=False,indent=2),encoding='utf-8')
- print('metadata_written_count:',len(arts)); print('source_written:',len(arts)); print('fetch_status_written:',len(arts)); print('full_text_status_written:',len(arts)); print('text_length_written:',len(arts)); print('image_count_written:',len(arts)); print('has_image_written:',len(arts)); print('has_chart_written:',len(arts)); print('missing_metadata_properties:',sorted(set(missing))); print('skipped_type_mismatch_properties:',sorted(set(skipped)))
-if __name__=='__main__': main()
+    arts = json.loads(INPUT_JSON.read_text()) if INPUT_JSON.exists() else []
+    props = req('GET', f'https://api.notion.com/v1/databases/{DATABASE_ID}').json().get('properties', {})
+    mapn = {k: find_prop(props, v) for k, v in PROP_CANDS.items()}
+    skip_existing = os.getenv("NIKKEI_SKIP_EXISTING_NOTION_URLS", "true").strip().lower() in {"1", "true", "yes", "on"}
+    if skip_existing:
+        keys, pages = load_existing(build_existing_query_filter(props, mapn, arts))
+    else:
+        keys, pages = set(), {}
+    print('skip_existing_notion_urls:', skip_existing)
+    print('existing_url_count:', len(keys))
+    fails = []
+    save_results = []
+    stats = {k: 0 for k in ['metadata_written_count', 'source_written', 'fetch_status_written', 'full_text_status_written', 'text_length_written', 'image_count_written', 'has_image_written', 'has_chart_written']}
+    missing = []
+    skipped = []
+    for a in arts:
+        u = a.get('url', '').strip()
+        title = ensure_nikkei_title(a)
+        text = clean_nikkei_body_text(a.get('text', ''))
+        extraction = a.get('extraction_status', 'success')
+        rejected = is_nav(text) or extraction == 'failed'
+        full = 'saved' if text and not rejected else ('failed' if extraction == 'failed' else 'rejected_navigation_text')
+        clean = '' if rejected else text
+        summary = get_summary_text(a)
+        pid = a.get('page_id') or pages.get(u) or pages.get(ng(u)) or pages.get(f"ng:{ng(u)}")
+        payload = {}
+        fields = {
+            'title': title,
+            'url': u,
+            'issue': a.get('issue_date'),
+            'edition': a.get('edition'),
+            'source': 'Nikkei',
+            'fetch': a.get('status') or extraction or 'success',
+            'full': full,
+            'text_len': len(clean) if clean else 0,
+            'img_count': a.get('image_count', 0) or 0,
+            'gpt': False,
+            'has_image': bool((a.get('image_count', 0) or 0) > 0 or a.get('image_url')),
+            'has_chart': bool(a.get('has_chart', False)),
+            'img_url': a.get('image_url', ''),
+            'img_cap': a.get('image_caption', ''),
+        }
+        print(f"title_saved_to_notion: {title}")
+        if clean and mapn['body']:
+            fields['body'] = clean
+        if summary and mapn['summary']:
+            fields['summary'] = summary
+        for key, val in fields.items():
+            pn = mapn.get(key)
+            if not pn:
+                missing.append(key)
+                continue
+            patch = set_prop(props[pn], val)
+            if patch is None:
+                skipped.append(pn)
+                continue
+            payload[pn] = patch
+        try:
+            if pid:
+                updated = req('PATCH', f'https://api.notion.com/v1/pages/{pid}', json={'properties': payload}).json()
+                notion_url = updated.get('url', '') if isinstance(updated, dict) else ''
+                if not notion_url and pid:
+                    notion_url = f"https://www.notion.so/{str(pid).replace('-', '')}"
+                if clean:
+                    if has_body_heading(pid):
+                        delete_existing_body_blocks(pid)
+                    append_body_blocks(pid, clean, title)
+                save_results.append({'url': u, 'title': title, 'page_id': pid, 'notion_url': notion_url, 'action': 'updated', 'ok': True, 'error': ''})
+            else:
+                created = req('POST', 'https://api.notion.com/v1/pages', json={'parent': {'database_id': DATABASE_ID}, 'properties': payload}).json()
+                created_id = created.get('id', '')
+                notion_url = created.get('url', '')
+                if not notion_url and created_id:
+                    notion_url = f"https://www.notion.so/{str(created_id).replace('-', '')}"
+                if clean and created_id:
+                    append_body_blocks(created_id, clean, title)
+                save_results.append({'url': u, 'title': title, 'page_id': created_id, 'notion_url': notion_url, 'action': 'created', 'ok': True, 'error': ''})
+        except Exception as e:
+            fails.append({'url': u, 'error': str(e)})
+            save_results.append({'url': u, 'title': title, 'page_id': pid or '', 'notion_url': '', 'action': 'failed', 'ok': False, 'error': str(e)})
+    FAILED_LOG_JSON.write_text(json.dumps(fails, ensure_ascii=False, indent=2), encoding='utf-8') if fails else None
+    SAVE_RESULTS_JSON.parent.mkdir(parents=True, exist_ok=True)
+    SAVE_RESULTS_JSON.write_text(json.dumps(save_results, ensure_ascii=False, indent=2), encoding='utf-8')
+    print('metadata_written_count:', len(arts))
+    print('source_written:', len(arts))
+    print('fetch_status_written:', len(arts))
+    print('full_text_status_written:', len(arts))
+    print('text_length_written:', len(arts))
+    print('image_count_written:', len(arts))
+    print('has_image_written:', len(arts))
+    print('has_chart_written:', len(arts))
+    print('missing_metadata_properties:', sorted(set(missing)))
+    print('skipped_type_mismatch_properties:', sorted(set(skipped)))
+
+
+if __name__ == '__main__':
+    main()
