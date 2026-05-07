@@ -33,7 +33,7 @@ def test_final_synthesis_and_hash():
     arts = [{"title":"a","url":"u","summary":"s","reason_to_read":"r","business_implications":"b"}]
     inp = build_synthesis_input(arts)
     assert "full_text" not in inp[0]
-    rep = {"report_title":"x","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","integrated_insights":["i1"],"article_sections":[{"ref_id":"A1","url":"u"}]}
+    rep = {"report_title":"x","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","integrated_insights":["i1"],"watchlist":[],"article_sections":[{"ref_id":"A1","url":"u"}]}
     assert validate_final_report(rep, 1)
     assert len(build_input_hash("2026-01-01", arts, rep)) == 64
 
@@ -43,7 +43,7 @@ def test_html_and_notion_helpers(tmp_path: Path):
     rep = {"report_title":"r","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","integrated_insights":["x"],"article_sections":[{"ref_id":"A1","title":"t","url":"https://x","importance_score":1,"summary_and_implications":"o\n\nw"}]}
     html = render_final_report_html(tpl, rep, "2026-01-01")
     assert "Meiryo UI" in html and '<a href="https://x">t</a>' in html and 'A1' not in html
-    assert "本日のブリーフ" in html and "業務示唆" not in html
+    assert "今日の重要シグナル" in html and "業務示唆" not in html
     assert "https://x</li>" not in html
     assert filter_known_properties({"Title":"a","X":1}, ["Title"]) == {"Title":"a"}
     try:
@@ -51,3 +51,64 @@ def test_html_and_notion_helpers(tmp_path: Path):
         assert False
     except ValueError:
         assert True
+
+
+def test_final_report_prompt_includes_quality_requirements():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("run_final", Path("scripts/run_nikkei_final_report.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    class DummyClient:
+        def __init__(self):
+            self.captured_input = None
+            self.client = self
+            self.responses = self
+
+        def create(self, **kwargs):
+            self.captured_input = kwargs.get("input")
+            class Resp:
+                output_text = "{}"
+                status = "completed"
+            return Resp()
+
+    cli = DummyClient()
+    payload = {"articles": [{"ref_id": "A1"}]}
+    mod._generate_report(cli, payload, retry=False)
+    system_prompt = cli.captured_input[0]["content"]
+
+    assert "today_key_messageは自然な2〜3文" in system_prompt
+    assert "毎朝3分で読む意思決定メモ" in system_prompt
+    assert "integrated_insightsはlist[str]で3〜5個" in system_prompt
+    assert "各項目は最大2文" in system_prompt
+    assert "禁止表現" in system_prompt
+    assert "確認対象" in system_prompt
+    assert "備えよ" in system_prompt
+
+
+def test_fallback_summary_and_implications_not_thin():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("run_final", Path("scripts/run_nikkei_final_report.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    sections = mod._build_article_sections_from_input([
+        {
+            "title": "t",
+            "url": "https://example.com",
+            "summary": "",
+            "text_excerpt": "本文抜粋です。",
+            "reason_to_read": "",
+            "business_implications": "",
+        }
+    ])
+    text = sections[0]["summary_and_implications"]
+    assert "確認対象です。" not in text
+    assert "追加確認" not in text
+    assert "確認します" not in text
+    assert "確認する必要があります" not in text
+    assert "点検します" not in text
+    assert "\n\n" in text
+    assert len(text) >= 60
