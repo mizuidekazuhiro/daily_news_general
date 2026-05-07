@@ -59,6 +59,9 @@ def _summarize_json(label: str, data: Any) -> str:
 
 
 def _github_run_url() -> str:
+    failed_url = _env("FAILED_RUN_URL")
+    if failed_url:
+        return failed_url
     server = _env("GITHUB_SERVER_URL", "https://github.com")
     repo = _env("GITHUB_REPOSITORY")
     run_id = _env("GITHUB_RUN_ID")
@@ -67,13 +70,18 @@ def _github_run_url() -> str:
     return ""
 
 
+def _workflow_name() -> str:
+    return _env("FAILED_WORKFLOW_NAME") or _env("GITHUB_WORKFLOW", "GitHub Actions")
+
+
 def _build_subject() -> str:
-    workflow = _env("GITHUB_WORKFLOW", "GitHub Actions")
+    workflow = _workflow_name()
     edition = _env("NIKKEI_EDITION")
     date = _env("NIKKEI_TARGET_DATE", "auto")
     label = "朝刊" if edition == "morning" else "夕刊" if edition == "evening" else edition or ""
     label_part = f" {label}" if label else ""
-    return f"[失敗] {workflow}{label_part} | target={date}"
+    conclusion = _env("FAILED_RUN_CONCLUSION", "failure")
+    return f"[失敗] {workflow}{label_part} | {conclusion} | target={date}"
 
 
 def _build_body() -> str:
@@ -81,12 +89,12 @@ def _build_body() -> str:
     lines = [
         "日経新聞レポートのGitHub Actionsが失敗しました。",
         "",
-        f"Workflow: {_env('GITHUB_WORKFLOW', 'unknown')}",
-        f"Job: {_env('GITHUB_JOB', 'unknown')}",
+        f"Workflow: {_workflow_name()}",
+        f"Conclusion: {_env('FAILED_RUN_CONCLUSION', 'unknown')}",
         f"Repository: {_env('GITHUB_REPOSITORY', 'unknown')}",
-        f"Branch/Ref: {_env('GITHUB_REF_NAME', _env('GITHUB_REF', 'unknown'))}",
-        f"Commit: {_env('GITHUB_SHA', 'unknown')}",
-        f"Run ID: {_env('GITHUB_RUN_ID', 'unknown')}",
+        f"Branch/Ref: {_env('FAILED_HEAD_BRANCH') or _env('GITHUB_REF_NAME', _env('GITHUB_REF', 'unknown'))}",
+        f"Commit: {_env('FAILED_HEAD_SHA') or _env('GITHUB_SHA', 'unknown')}",
+        f"Run ID: {_env('FAILED_RUN_ID') or _env('GITHUB_RUN_ID', 'unknown')}",
         f"Run URL: {run_url or 'unknown'}",
         f"Edition: {_env('NIKKEI_EDITION', 'unknown')}",
         f"Target date: {_env('NIKKEI_TARGET_DATE', 'auto')}",
@@ -106,9 +114,10 @@ def _build_body() -> str:
         if section:
             lines.append(section)
 
-    tail = _tail("logs/nikkei_pipeline_error.txt")
-    if tail:
-        lines.append("\n## nikkei_pipeline_error.txt tail\n" + tail)
+    for path in ["logs/nikkei_pipeline_error.txt", "logs/nikkei_final_report_error.txt"]:
+        tail = _tail(path)
+        if tail:
+            lines.append(f"\n## {path} tail\n" + tail)
 
     return "\n".join(lines)
 
