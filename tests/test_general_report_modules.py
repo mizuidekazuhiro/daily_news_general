@@ -33,7 +33,7 @@ def test_final_synthesis_and_hash():
     arts = [{"title":"a","url":"u","summary":"s","reason_to_read":"r","business_implications":"b"}]
     inp = build_synthesis_input(arts)
     assert "full_text" not in inp[0]
-    rep = {"report_title":"x","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","priority_watch_items":["1","2","3"],"article_sections":[{"ref_id":"A1","url":"u"}]}
+    rep = {"report_title":"x","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","priority_watch_items":["1","2","3"],"article_sections":[{"ref_id":"A1","url":"u","title":"t","importance_score":1,"one_line_summary":"o","why_it_matters":"w","business_action_hint":"b"}]}
     assert validate_final_report(rep, 1)
     assert len(build_input_hash("2026-01-01", arts, rep)) == 64
 
@@ -43,7 +43,14 @@ def test_html_and_notion_helpers(tmp_path: Path):
     rep = {"report_title":"r","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","priority_watch_items":["x","y","z"],"article_sections":[{"ref_id":"A1","title":"t","url":"https://x","importance_score":1,"one_line_summary":"o","why_it_matters":"w","business_action_hint":"b"}]}
     html = render_final_report_html(tpl, rep, "2026-01-01")
     assert "Meiryo UI" in html and '<a href="https://x">A1</a>' in html
-    assert "商社目線の読み" not in html and "業務示唆" in html
+    assert 'class="section-card conclusion-card"' in html
+    assert 'class="section-card signals-card"' in html
+    assert 'class="signal-item"' in html
+    assert 'class="article-row"' in html
+    assert 'class="article-text"' in html
+    assert html.count('class="section-card conclusion-card"') == 1
+    assert html.count('class="section-card signals-card"') == 1
+    assert html.count('class="article-card"') == 1
     assert "https://x</li>" not in html
     assert filter_known_properties({"Title":"a","X":1}, ["Title"]) == {"Title":"a"}
     try:
@@ -51,3 +58,20 @@ def test_html_and_notion_helpers(tmp_path: Path):
         assert False
     except ValueError:
         assert True
+
+
+def test_html_article_card_count_for_multiple_sections():
+    tpl = Path("templates/nikkei_final_report_email.html")
+    rep = {
+        "report_title": "r",
+        "executive_summary": "e",
+        "today_key_message": "k",
+        "cross_article_implications": "c",
+        "priority_watch_items": ["s1", "s2"],
+        "article_sections": [
+            {"ref_id": "A1", "title": "t1", "url": "https://x/1", "importance_score": 1, "one_line_summary": "o1", "why_it_matters": "w1", "business_action_hint": "b1"},
+            {"ref_id": "A2", "title": "t2", "url": "https://x/2", "importance_score": 2, "one_line_summary": "o2", "why_it_matters": "w2", "business_action_hint": "b2"},
+        ],
+    }
+    html = render_final_report_html(tpl, rep, "2026-01-01")
+    assert html.count('class="article-card"') == 2
