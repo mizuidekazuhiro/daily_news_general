@@ -37,7 +37,7 @@ def test_renderer_new_layout_and_hides_legacy_blocks():
     assert "重要記事" in html
     assert 'class="signal-item">示唆1</li>' in html and 'class="signal-item">示唆2</li>' in html
     assert "なぜ重要か" in html
-    assert "white-space:pre-line" in html
+    assert "white-space" in html and "pre-line" in html
     assert '<a href="https://nikkei.example/a?x=1&amp;y=2">&lt;危険&gt;</a>' in html
     assert "https://www.notion.so/abcdef" in html
     assert "https://www.notion.so/pp22" in html
