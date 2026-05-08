@@ -4,72 +4,21 @@
   <meta charset="utf-8">
   <style>
     * { box-sizing: border-box; }
-    body {
-      font-family: 'Meiryo UI', 'Meiryo', sans-serif;
-      background: #f5f7fb;
-      color: #1f2937;
-      margin: 0;
-      padding: 16px;
-      line-height: 1.65;
-      max-width: 100%;
-    }
-    .container {
-      width: 100%;
-      max-width: 860px;
-      margin: 0 auto;
-    }
-    .meta {
-      color: #4b5563;
-      margin-bottom: 16px;
-      font-size: 13px;
-    }
-    .section-card {
-      max-width: 100%;
-      background: #ffffff;
-      border: 1px solid #dbe3ee;
-      border-radius: 12px;
-      padding: 16px;
-      margin: 0 0 16px 0;
-    }
-    .section-title {
-      margin: 0 0 10px 0;
-      color: #0f172a;
-      font-size: 18px;
-      font-weight: 700;
-    }
-    .conclusion-card {
-      background: #f8fbff;
-      border-left: 6px solid #60a5fa;
-    }
-    .signals-card { background: #ffffff; border: 1px solid #cfd8e3; }
-    .articles-card { background: #ffffff; }
-    .article-card {
-      max-width: 100%;
-      border: 1px solid #e2e8f0;
-      border-radius: 10px;
-      padding: 12px;
-      margin-bottom: 12px;
-      background: #fcfdff;
-    }
-    .article-row {
-      background: #f8fafc;
-      border: 1px solid #e5e7eb;
-      border-radius: 8px;
-      padding: 8px 10px;
-      margin-top: 8px;
-    }
+    body { font-family: 'Meiryo UI', 'Meiryo', sans-serif; background: #f5f7fb; color: #1f2937; margin: 0; padding: 16px; max-width: 100%; }
+    .container { width: 100%; max-width: 860px; margin: 0 auto; }
+    .meta { color: #4b5563; margin-bottom: 16px; font-size: 13px; }
+    .section-card { max-width: 100%; background: #fff; border: 1px solid #dbe3ee; border-radius: 12px; padding: 16px; margin: 0 0 16px 0; }
+    .section-title { margin: 0 0 10px 0; color: #0f172a; font-size: 18px; font-weight: 700; }
+    .conclusion-card { background: #f8fbff; border-left: 6px solid #60a5fa; }
+    .signals-card { background: #fff; border: 1px solid #cfd8e3; }
+    .articles-card { background: #fff; }
+    .article-card { max-width: 100%; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-bottom: 12px; background: #fcfdff; }
+    .article-row { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
     .article-label { font-weight: 700; margin: 0 0 4px 0; color: #1e3a8a; }
     .article-text { max-width: 100%; }
-    .signal-list, .watch-list, .all-article-list, .reference-list { margin: 0; padding-left: 20px; }
-    .signal-item {
-      border: 1px solid #e5e7eb;
-      border-radius: 8px;
-      background: #f8fafc;
-      margin: 8px 0;
-      padding: 10px;
-      max-width: 100%;
-      box-sizing: border-box;
-    }
+    .signal-list { margin: 0; padding: 0; list-style: none; }
+    .watch-list, .all-article-list { margin: 0; padding-left: 20px; }
+    .signal-item { border: 1px solid #e5e7eb; border-radius: 8px; background: #f8fafc; margin: 8px 0; padding: 10px; max-width: 100%; box-sizing: border-box; list-style: none; }
     ul, ol { margin: 0; padding-left: 20px; }
     p, li, div { overflow-wrap: anywhere; word-break: break-word; }
     body, .container, .section-card, .article-card { max-width: 100%; }
@@ -77,40 +26,31 @@
   </style>
 </head>
 <body>
-  <div class="container">
-    <h2>${report_title}</h2>
-    <div class="meta">生成日時: ${generated_at} / 対象日: ${target_date} / 対象記事数: ${article_count}</div>
+<div class="container">
+  <h2>${report_title}</h2>
+  <div class="meta">生成日時: ${generated_at} / 対象日: ${target_date} / 対象記事数: ${article_count}</div>
 
-    <section class="section-card conclusion-card">
-      <h3 class="section-title">今日の結論</h3>
-      <p>${today_key_message}</p>
-    </section>
+  <section class="section-card conclusion-card">
+    <h3 class="section-title">今日の結論</h3>
+    <p>${today_key_message}</p>
+  </section>
 
-    <section class="section-card signals-card">
-      <h3 class="section-title">今日の重要シグナル</h3>
-      <ul class="signal-list">${priority_watch_items}</ul>
-    </section>
+  <section class="section-card signals-card">
+    <h3 class="section-title">今日の重要シグナル</h3>
+    <ul class="signal-list">${integrated_insights}</ul>
+  </section>
 
-    <section class="section-card articles-card">
-      <h3 class="section-title">重要記事</h3>
-      ${article_items}
-    </section>
+  <section class="section-card articles-card">
+    <h3 class="section-title">重要記事</h3>
+    ${article_items}
+  </section>
 
-    <section class="section-card watchlist-card">
-      <h3 class="section-title">要注意・継続ウォッチ</h3>
-      <p>${cross_article_implications}</p>
-      <ul class="watch-list">${watch_items}</ul>
-    </section>
+  ${watchlist_section}
 
-    <section class="section-card all-articles-card">
-      <h3 class="section-title">取得記事一覧</h3>
-      <ul class="all-article-list">${all_article_items}</ul>
-    </section>
-
-    <section class="section-card references-card">
-      <h3 class="section-title">Notionで開くリンク</h3>
-      <ul class="reference-list">${reference_links}</ul>
-    </section>
-  </div>
+  <section class="section-card all-articles-card">
+    <h3 class="section-title">取得記事一覧</h3>
+    <ul class="all-article-list">${all_article_items}</ul>
+  </section>
+</div>
 </body>
 </html>

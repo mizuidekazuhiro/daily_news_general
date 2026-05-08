@@ -38,40 +38,55 @@ def test_final_synthesis_and_hash():
     assert len(build_input_hash("2026-01-01", arts, rep)) == 64
 
 
-def test_html_and_notion_helpers(tmp_path: Path):
+def test_html_renderer_new_structure_and_classes():
     tpl = Path("templates/nikkei_final_report_email.html")
-    rep = {"report_title":"r","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","priority_watch_items":["x","y","z"],"article_sections":[{"ref_id":"A1","title":"t","url":"https://x","importance_score":1,"one_line_summary":"o","why_it_matters":"w","business_action_hint":"b"}]}
-    html = render_final_report_html(tpl, rep, "2026-01-01")
-    assert "Meiryo UI" in html and '<a href="https://x">A1</a>' in html
+    rep = {
+        "report_title": "r",
+        "today_key_message": "k",
+        "integrated_insights": ["signal1", "signal2"],
+        "watchlist": ["watch1"],
+        "article_sections": [{
+            "ref_id": "A1", "title": "t", "url": "https://x", "what_happened": "o",
+            "why_it_matters": "w", "watch_points": ["p1", "p2"], "summary_and_implications": "s",
+            "notion_url": "https://notion.so/page"
+        }],
+    }
+    all_articles = [{"ref_id": "A9", "title": "all", "url": "https://all"}]
+    html = render_final_report_html(tpl, rep, "2026-01-01", all_articles=all_articles)
     assert 'class="section-card conclusion-card"' in html
     assert 'class="section-card signals-card"' in html
     assert 'class="signal-item"' in html
+    assert 'class="watch-item"' in html
     assert 'class="article-row"' in html
     assert 'class="article-text"' in html
-    assert html.count('class="section-card conclusion-card"') == 1
-    assert html.count('class="section-card signals-card"') == 1
+    assert 'class="notion-link"' in html
+    assert 'class="all-list-item"' in html
+    assert "signal1" in html and "watch1" in html
     assert html.count('class="article-card"') == 1
-    assert "https://x</li>" not in html
+
+
+def test_html_article_card_count_and_watchlist_hidden():
+    tpl = Path("templates/nikkei_final_report_email.html")
+    rep = {
+        "report_title": "r",
+        "today_key_message": "k",
+        "integrated_insights": ["signal1"],
+        "watchlist": [],
+        "article_sections": [
+            {"ref_id": "A1", "title": "t1", "url": "https://x/1", "what_happened": "o1", "why_it_matters": "w1", "watch_points": "p1", "summary_and_implications": "s1", "page_id": "abcd-ef"},
+            {"ref_id": "A2", "title": "t2", "url": "https://x/2", "what_happened": "o2", "why_it_matters": "w2", "watch_points": "p2", "summary_and_implications": "s2"},
+        ],
+    }
+    html = render_final_report_html(tpl, rep, "2026-01-01")
+    assert html.count('class="article-card"') == 2
+    assert '要注意・継続ウォッチ' not in html
+    assert 'class="notion-link"' in html
+
+
+def test_html_and_notion_helpers():
     assert filter_known_properties({"Title":"a","X":1}, ["Title"]) == {"Title":"a"}
     try:
         validate_required(["Title"])
         assert False
     except ValueError:
         assert True
-
-
-def test_html_article_card_count_for_multiple_sections():
-    tpl = Path("templates/nikkei_final_report_email.html")
-    rep = {
-        "report_title": "r",
-        "executive_summary": "e",
-        "today_key_message": "k",
-        "cross_article_implications": "c",
-        "priority_watch_items": ["s1", "s2"],
-        "article_sections": [
-            {"ref_id": "A1", "title": "t1", "url": "https://x/1", "importance_score": 1, "one_line_summary": "o1", "why_it_matters": "w1", "business_action_hint": "b1"},
-            {"ref_id": "A2", "title": "t2", "url": "https://x/2", "importance_score": 2, "one_line_summary": "o2", "why_it_matters": "w2", "business_action_hint": "b2"},
-        ],
-    }
-    html = render_final_report_html(tpl, rep, "2026-01-01")
-    assert html.count('class="article-card"') == 2
