@@ -83,16 +83,16 @@ def render_final_report_html(
         body = ""
         if has_structured:
             if what_happened:
-                body += f'<div class="article-row"><div class="article-label">何が起きたか</div><div>{_esc(what_happened)}</div></div>'
+                body += f'<div class="article-row"><div class="article-label">何が起きたか</div><div class="article-text">{_esc(what_happened)}</div></div>'
             if why_it_matters:
-                body += f'<div class="article-row"><div class="article-label">なぜ重要か</div><div>{_esc(why_it_matters)}</div></div>'
+                body += f'<div class="article-row"><div class="article-label">なぜ重要か</div><div class="article-text">{_esc(why_it_matters)}</div></div>'
             if points:
                 body += '<div class="article-row"><div class="article-label">見るべき点</div><ul>' + "".join(f"<li>{_esc(x)}</li>" for x in points) + "</ul></div>"
         elif summary_text:
-            body += f'<div class="article-row"><div class="article-label">要約と示唆</div><div>{_esc(summary_text)}</div></div>'
+            body += f'<div class="article-row"><div class="article-label">要約と示唆</div><div class="article-text">{_esc(summary_text)}</div></div>'
 
         if not body and summary_text:
-            body += f'<div class="article-row"><div class="article-label">要約と示唆</div><div>{_esc(summary_text)}</div></div>'
+            body += f'<div class="article-row"><div class="article-label">要約と示唆</div><div class="article-text">{_esc(summary_text)}</div></div>'
         sections.append(
             '<article class="article-card">'
             f'<div class="article-title">{_title_link(sec)}{_notion_link(sec)}</div>'
@@ -103,19 +103,25 @@ def render_final_report_html(
     all_items = []
     articles = all_articles or []
     for article in articles:
-        all_items.append(f"<li>{_title_link(article)}{_notion_link(article)}</li>")
+        all_items.append(f"<li class=\"all-list-item\">{_title_link(article)}{_notion_link(article)}</li>")
 
     tpl = Template(template_path.read_text(encoding="utf-8"))
     watchlist = report.get("watchlist")
     watch_items = [str(x).strip() for x in watchlist if str(x).strip()] if isinstance(watchlist, list) else []
     watchlist_section = ""
     if watch_items:
-        watchlist_section = "<section><h3>要注意・継続ウォッチ</h3><ul>" + "".join(f"<li>{_esc(x)}</li>" for x in watch_items) + "</ul></section>"
+        watchlist_section = (
+            '<section class=\"section-card watchlist-card\">'
+            '<h3 class=\"section-title\">要注意・継続ウォッチ</h3><ul>'
+            + "".join(f'<li class=\"watch-item\">{_esc(x)}</li>' for x in watch_items)
+            + '</ul></section>'
+        )
     return tpl.safe_substitute(
         today_key_message=_esc(report.get("today_key_message", "")),
-        brief_items="".join(f"<li>{_esc(x)}</li>" for x in _brief_items(report)),
+        brief_items="".join(f'<li class=\"signal-item\">{_esc(x)}</li>' for x in _brief_items(report)),
         article_items="".join(sections),
         watchlist_section=watchlist_section,
         all_article_count=len(articles),
         all_article_items="".join(all_items),
+        executive_summary=_esc(report.get("executive_summary", "")),
     )

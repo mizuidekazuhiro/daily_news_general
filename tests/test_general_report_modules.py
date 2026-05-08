@@ -40,11 +40,55 @@ def test_final_synthesis_and_hash():
 
 def test_html_and_notion_helpers(tmp_path: Path):
     tpl = Path("templates/nikkei_final_report_email.html")
-    rep = {"report_title":"r","executive_summary":"e","today_key_message":"k","cross_article_implications":"c","integrated_insights":["x"],"article_sections":[{"ref_id":"A1","title":"t","url":"https://x","importance_score":1,"summary_and_implications":"o\n\nw"}]}
-    html = render_final_report_html(tpl, rep, "2026-01-01")
-    assert "Meiryo UI" in html and '<a href="https://x">t</a>' in html and 'A1' not in html
-    assert "今日の重要シグナル" in html and "業務示唆" not in html
-    assert "https://x</li>" not in html
+    rep = {
+        "report_title": "r",
+        "executive_summary": "本日の全体像です",
+        "today_key_message": "k",
+        "cross_article_implications": "c",
+        "integrated_insights": ["長いシグナル本文"],
+        "watchlist": ["継続監視1"],
+        "article_sections": [
+            {
+                "ref_id": "A1",
+                "title": "t",
+                "url": "https://x",
+                "importance_score": 1,
+                "what_happened": "出来事",
+                "why_it_matters": "重要性",
+                "watch_points": ["監視点"],
+                "summary_and_implications": "o\n\nw",
+                "notion_url": "https://notion.so/page",
+            },
+            {
+                "ref_id": "A2",
+                "title": "t2",
+                "url": "https://y",
+                "importance_score": 1,
+                "summary_and_implications": "fallback",
+                "page_id": "abc-def",
+            },
+        ],
+    }
+    all_articles = [{"title": "all1", "url": "https://all1"}]
+    html = render_final_report_html(tpl, rep, "2026-01-01", all_articles=all_articles)
+
+    assert 'class="section-card conclusion-card"' in html
+    assert 'class="section-card summary-card"' in html
+    assert "全体ブリーフ" in html
+    assert "本日の全体像です" in html
+    assert 'class="section-card signals-card"' in html
+    assert 'class="signal-item"' in html
+    assert 'class="watch-item"' in html
+    assert html.count('class="article-card"') == 2
+    assert 'class="article-row"' in html and 'class="article-text"' in html
+    assert 'class="notion-link"' in html
+    assert 'class="all-list-item"' in html
+    assert '<a href="https://x">t</a>' in html and 'A1' not in html
+
+    rep["watchlist"] = []
+    html_no_watch = render_final_report_html(tpl, rep, "2026-01-01", all_articles=all_articles)
+    assert "要注意・継続ウォッチ" not in html_no_watch
+
     assert filter_known_properties({"Title":"a","X":1}, ["Title"]) == {"Title":"a"}
     try:
         validate_required(["Title"])
