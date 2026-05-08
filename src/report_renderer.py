@@ -91,6 +91,7 @@ def render_final_report_html(template_path: Path, report: Dict[str, Any], target
         target_date=escape(str(target_date)),
         article_count=len(article_sections),
         today_key_message=escape(str(report.get("today_key_message", ""))),
+        executive_summary=escape(str(report.get("executive_summary", ""))),
         integrated_insights=signal_items,
         article_items="".join(article_cards),
         watchlist_section=watchlist_section,

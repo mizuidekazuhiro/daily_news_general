@@ -43,6 +43,7 @@ def test_html_renderer_new_structure_and_classes():
     rep = {
         "report_title": "r",
         "today_key_message": "k",
+        "executive_summary": "全体の要約です",
         "integrated_insights": ["signal1", "signal2"],
         "watchlist": ["watch1"],
         "article_sections": [{
@@ -54,6 +55,9 @@ def test_html_renderer_new_structure_and_classes():
     all_articles = [{"ref_id": "A9", "title": "all", "url": "https://all"}]
     html = render_final_report_html(tpl, rep, "2026-01-01", all_articles=all_articles)
     assert 'class="section-card conclusion-card"' in html
+    assert 'class="section-card summary-card"' in html
+    assert '全体ブリーフ' in html
+    assert '全体の要約です' in html
     assert 'class="section-card signals-card"' in html
     assert 'class="signal-item"' in html
     assert 'class="watch-item"' in html

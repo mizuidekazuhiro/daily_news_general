@@ -11,6 +11,7 @@
     .section-title { margin: 0 0 10px 0; color: #0f172a; font-size: 18px; font-weight: 700; }
     .conclusion-card { background: #f8fbff; border-left: 6px solid #60a5fa; }
     .signals-card { background: #fff; border: 1px solid #cfd8e3; }
+    .summary-card { background: #ffffff; border: 1px solid #d6deea; }
     .articles-card { background: #fff; }
     .article-card { max-width: 100%; border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px; margin-bottom: 12px; background: #fcfdff; }
     .article-row { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 8px; padding: 8px 10px; margin-top: 8px; }
@@ -33,6 +34,11 @@
   <section class="section-card conclusion-card">
     <h3 class="section-title">今日の結論</h3>
     <p>${today_key_message}</p>
+  </section>
+
+  <section class="section-card summary-card">
+    <h3 class="section-title">全体ブリーフ</h3>
+    <p>${executive_summary}</p>
   </section>
 
   <section class="section-card signals-card">
