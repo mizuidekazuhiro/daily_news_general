@@ -4,104 +4,49 @@
   <meta charset="utf-8">
   <style>
     * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: #f6f7f9;
-      font-family: 'Meiryo UI', 'Meiryo', sans-serif;
-      line-height: 1.7;
-      color: #222;
-      padding: 18px 10px;
-      max-width: 100%;
-    }
+    body { margin: 0; background: #f5f5f5; font-family: 'Meiryo UI', 'Meiryo', sans-serif; line-height: 1.75; color: #111; padding: 18px 10px; max-width: 100%; }
     p, li, div { overflow-wrap: anywhere; word-break: break-word; }
     a { color: #0645d2; }
-    .container {
-      max-width: 860px;
-      width: 100%;
-      margin: 0 auto;
-      background: #fff;
-      border: 1px solid #e8ebf0;
-      border-radius: 14px;
-      padding: 22px;
-    }
-    .section-card {
-      max-width: 100%;
-      margin: 0 0 18px;
-      padding: 16px;
-      border: 1px solid #e5e7eb;
-      border-radius: 10px;
-      background: #fff;
-    }
-    .section-title { margin: 0 0 12px; font-size: 18px; color: #1f2937; }
-    .conclusion-card { border-left: 4px solid #1d4ed8; }
-    .summary-card { border-left: 4px solid #0f766e; }
-    .signals-card { border-left: 4px solid #7c3aed; }
-    .articles-card { border-left: 4px solid #b45309; }
-    .watchlist-card { border-left: 4px solid #be123c; }
-    .all-articles-card { border-left: 4px solid #475569; }
-    .article-card {
-      max-width: 100%;
-      padding: 14px;
-      border: 1px solid #e5e7eb;
-      border-radius: 10px;
-      margin: 12px 0;
-      background: #fcfcfd;
-    }
-    .article-title { font-size: 16px; font-weight: 700; }
-    .article-row {
-      margin-top: 10px;
-      padding-top: 10px;
-      border-top: 1px solid #eef1f4;
-    }
-    .article-label { font-size: 13px; font-weight: 700; color: #374151; margin-bottom: 5px; }
-    .article-text { color: #1f2937; white-space: pre-line; }
-    .signal-list { list-style: none; padding: 0; margin: 0; }
-    .signal-item {
-      list-style: none;
-      margin: 8px 0;
-      padding: 10px 12px;
-      border: 1px solid #e9d5ff;
-      background: #faf5ff;
-      border-radius: 8px;
-    }
-    .watch-item { margin: 8px 0; }
-    .all-list-item { margin: 8px 0; }
+    .container { max-width: 860px; width: 100%; margin: 0 auto; background: #fff; border: 1px solid #e5e5e5; border-radius: 12px; padding: 22px; }
+    .section-card { margin: 0 0 18px; padding: 16px; border: 1px solid #ddd; border-radius: 10px; background: #fff; }
+    .section-title { margin: 0 0 12px; font-size: 18px; color: #111; }
+    .article-card { padding: 14px; border: 1px solid #ddd; border-radius: 10px; margin: 12px 0; background: #fff; }
+    .article-title { font-size: 16px; font-weight: 700; color: #111; }
+    .article-row { margin-top: 10px; padding-top: 10px; border-top: 1px solid #e5e5e5; }
+    .article-label { font-size: 13px; font-weight: 700; color: #333; margin-bottom: 5px; }
+    .article-text { color: #222; white-space: pre-line; }
+    .article-source-text { color: #666; background: #f7f7f7; border: 1px solid #e5e5e5; padding: 10px; border-radius: 8px; font-size: 12px; white-space: pre-line; }
+    .signal-list, .dot-list { margin: 0; padding-left: 18px; }
+    .signal-item, .watch-item, .all-list-item { margin: 8px 0; }
     .notion-link { font-size: 12px; color: #0645d2; margin-left: 4px; }
-    .lead { margin: 0; }
+    .lead { margin: 0 0 8px; white-space: pre-line; }
     .muted { color: #666; font-size: 12px; }
-    @media (max-width: 640px) {
-      body { padding: 8px; }
-      .container { padding: 14px; border-radius: 10px; }
-      .section-card { padding: 12px; }
-    }
+    @media (max-width: 640px) { body { padding: 8px; } .container { padding: 14px; border-radius: 10px; } .section-card { padding: 12px; } }
   </style>
 </head>
 <body>
   <div class="container">
-    <section class="section-card conclusion-card">
-      <h3 class="section-title">今日の結論</h3>
-      <p class="lead">${today_key_message}</p>
+    <section class="section-card">
+      <h3 class="section-title">■ 本日の読み筋</h3>
+      <p class="lead">● 今日の記事群から見える流れ
+${today_key_message}</p>
+      ${executive_summary_block}
     </section>
 
-    <section class="section-card summary-card">
-      <h3 class="section-title">全体ブリーフ</h3>
-      <p class="lead">${executive_summary}</p>
-    </section>
-
-    <section class="section-card signals-card">
-      <h3 class="section-title">今日の重要シグナル</h3>
+    <section class="section-card">
+      <h3 class="section-title">■ 注目すべき変化</h3>
       <ul class="signal-list">${brief_items}</ul>
     </section>
 
-    <section class="section-card articles-card">
-      <h3 class="section-title">重要記事</h3>
+    <section class="section-card">
+      <h3 class="section-title">■ 重要記事5本</h3>
       ${article_items}
     </section>
 
     ${watchlist_section}
 
-    <section class="section-card all-articles-card">
-      <h3 class="section-title">取得記事一覧</h3>
+    <section class="section-card">
+      <h3 class="section-title">■ 取得記事一覧</h3>
       <p class="muted">全${all_article_count}件</p>
       <ol>${all_article_items}</ol>
     </section>
