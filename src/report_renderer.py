@@ -126,7 +126,10 @@ def render_final_report_html(
 
     return tpl.safe_substitute(
         today_key_message=_esc(report.get("today_key_message", "")),
-        brief_items="".join(f'<li class=\"signal-item\">● {_esc(x)}</li>' for x in _brief_items(report)),
+        brief_items="".join(
+            f'<div class="paragraph-block signal-item"><div class="paragraph-head">● 注目ポイント</div><div class="paragraph-body">{_esc(x)}</div></div>'
+            for x in _brief_items(report)
+        ),
         article_items="".join(sections),
         watchlist_section=watchlist_section,
         all_article_count=len(articles),

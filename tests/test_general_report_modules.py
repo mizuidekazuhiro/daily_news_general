@@ -75,7 +75,7 @@ def test_html_and_notion_helpers(tmp_path: Path):
     assert "■ 本日の読み筋" in html
     assert "● 背景・文脈" in html
     assert "■ 注目すべき変化" in html
-    assert 'class="signal-item"' in html
+    assert 'signal-item' in html and '● 注目ポイント' in html
     assert 'class="watch-item"' in html
     assert html.count('class="article-card"') == 2
     assert 'class="paragraph-block"' in html and 'class="paragraph-body"' in html
