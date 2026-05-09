@@ -72,22 +72,20 @@ def test_html_and_notion_helpers(tmp_path: Path):
     all_articles = [{"title": "all1", "url": "https://all1"}]
     html = render_final_report_html(tpl, rep, "2026-01-01", all_articles=all_articles)
 
-    assert 'class="section-card conclusion-card"' in html
-    assert 'class="section-card summary-card"' in html
-    assert "全体ブリーフ" in html
-    assert "本日の全体像です" in html
-    assert 'class="section-card signals-card"' in html
+    assert "■ 本日の読み筋" in html
+    assert "● 背景・文脈" in html
+    assert "■ 注目すべき変化" in html
     assert 'class="signal-item"' in html
     assert 'class="watch-item"' in html
     assert html.count('class="article-card"') == 2
     assert 'class="article-row"' in html and 'class="article-text"' in html
     assert 'class="notion-link"' in html
     assert 'class="all-list-item"' in html
-    assert '<a href="https://x">t</a>' in html and 'A1' not in html
+    assert '<a href="https://x">t</a>' in html and '■ A1｜' in html
 
     rep["watchlist"] = []
     html_no_watch = render_final_report_html(tpl, rep, "2026-01-01", all_articles=all_articles)
-    assert "要注意・継続ウォッチ" not in html_no_watch
+    assert "■ 継続して見る点" not in html_no_watch
 
     assert filter_known_properties({"Title":"a","X":1}, ["Title"]) == {"Title":"a"}
     try:
@@ -123,12 +121,14 @@ def test_final_report_prompt_includes_quality_requirements():
     system_prompt = cli.captured_input[0]["content"]
 
     assert "today_key_messageは自然な2〜3文" in system_prompt
-    assert "毎朝3分で読む意思決定メモ" in system_prompt
-    assert "integrated_insightsはlist[str]で3〜5個" in system_prompt
-    assert "各項目は最大2文" in system_prompt
+    assert "毎朝3分で読む新聞ブリーフ" in system_prompt
+    assert "integrated_insightsは『注目すべき変化』として表示されるlist[str]で3〜5個" in system_prompt
+    assert "各項目が2文以内" in system_prompt
     assert "禁止表現" in system_prompt
     assert "確認対象" in system_prompt
     assert "備えよ" in system_prompt
+    assert "商社目線" in system_prompt
+    assert "本日の結論" in system_prompt
 
 
 def test_fallback_summary_and_implications_not_thin():
