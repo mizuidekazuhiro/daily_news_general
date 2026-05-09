@@ -84,16 +84,16 @@ def render_final_report_html(
         body = ""
         if has_structured:
             if what_happened:
-                body += f'<div class="article-row"><div class="article-label">● 要約</div><div class="article-text">{_esc(what_happened)}</div></div>'
+                body += f'<div class="paragraph-block"><div class="paragraph-head">● 要約</div><div class="paragraph-body">{_esc(what_happened)}</div></div>'
             if why_it_matters:
-                body += f'<div class="article-row"><div class="article-label">● なぜ重要か</div><div class="article-text">{_esc(why_it_matters)}</div></div>'
+                body += f'<div class="paragraph-block"><div class="paragraph-head">● なぜ重要か</div><div class="paragraph-body">{_esc(why_it_matters)}</div></div>'
             if points:
-                body += '<div class="article-row"><div class="article-label">→ 影響と見るべき点</div><ul class="dot-list">' + "".join(f"<li>・{_esc(x)}</li>" for x in points) + "</ul></div>"
+                body += '<div class="paragraph-block"><div class="paragraph-head">→ 影響と見るべき点</div><ul class="dot-list">' + "".join(f"<li>・{_esc(x)}</li>" for x in points) + "</ul></div>"
         elif summary_text:
-            body += f'<div class="article-row"><div class="article-label">● 要約</div><div class="article-text">{_esc(summary_text)}</div></div>'
+            body += f'<div class="paragraph-block"><div class="paragraph-head">● 要約</div><div class="paragraph-body">{_esc(summary_text)}</div></div>'
 
         if not body and summary_text:
-            body += f'<div class="article-row"><div class="article-label">● 要約</div><div class="article-text">{_esc(summary_text)}</div></div>'
+            body += f'<div class="paragraph-block"><div class="paragraph-head">● 要約</div><div class="paragraph-body">{_esc(summary_text)}</div></div>'
 
         ref_id = _non_empty_text(sec.get("ref_id"))
         header = f"■ {ref_id}｜" if ref_id else "■ "
@@ -122,7 +122,7 @@ def render_final_report_html(
     executive_summary = _non_empty_text(report.get("executive_summary", ""))
     executive_summary_block = ""
     if executive_summary:
-        executive_summary_block = f'<p class="lead">● 背景・文脈\n{_esc(executive_summary)}</p>'
+        executive_summary_block = f'<div class="paragraph-block lead"><div class="paragraph-head">● 背景・文脈</div><div class="paragraph-body">{_esc(executive_summary)}</div></div>'
 
     return tpl.safe_substitute(
         today_key_message=_esc(report.get("today_key_message", "")),

@@ -78,7 +78,7 @@ def test_html_and_notion_helpers(tmp_path: Path):
     assert 'class="signal-item"' in html
     assert 'class="watch-item"' in html
     assert html.count('class="article-card"') == 2
-    assert 'class="article-row"' in html and 'class="article-text"' in html
+    assert 'class="paragraph-block"' in html and 'class="paragraph-body"' in html
     assert 'class="notion-link"' in html
     assert 'class="all-list-item"' in html
     assert '<a href="https://x">t</a>' in html and '■ A1｜' in html
