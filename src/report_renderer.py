@@ -3,7 +3,6 @@ from __future__ import annotations
 from html import escape
 from pathlib import Path
 from string import Template
-import os
 from typing import Any, Dict
 
 
@@ -67,34 +66,6 @@ def _brief_items(report: Dict[str, Any]) -> list[str]:
     return [x for x in fallback if x]
 
 
-def _env_int(name: str, default: int) -> int:
-    v = os.getenv(name)
-    if v is None or not str(v).strip():
-        return default
-    try:
-        return int(str(v).strip())
-    except ValueError:
-        return default
-
-
-def _article_source_text(sec: dict[str, Any], article_map: dict[str, dict[str, Any]], body_limit: int) -> str:
-    if body_limit <= 0:
-        return ""
-    candidates = []
-    key = str(sec.get("url") or "").strip()
-    if key and key in article_map:
-        candidates.append(article_map[key])
-    title = _safe_title(sec)
-    for article in article_map.values():
-        if _safe_title(article) == title:
-            candidates.append(article)
-    for article in candidates:
-        source = _non_empty_text(article.get("full_text")) or _non_empty_text(article.get("text_excerpt"))
-        if source:
-            return source[:body_limit]
-    return ""
-
-
 def render_final_report_html(
     template_path: Path,
     report: Dict[str, Any],
@@ -104,8 +75,6 @@ def render_final_report_html(
     del target_date
     sections = []
     articles = all_articles or []
-    article_map = {str(a.get("url") or "").strip(): a for a in articles if str(a.get("url") or "").strip()}
-    body_limit = _env_int("NIKKEI_FINAL_REPORT_EMAIL_BODY_CHARS", 2000)
     for sec in report.get("article_sections", []):
         what_happened = _non_empty_text(sec.get("what_happened"))
         why_it_matters = _non_empty_text(sec.get("why_it_matters"))
@@ -126,9 +95,6 @@ def render_final_report_html(
         if not body and summary_text:
             body += f'<div class="article-row"><div class="article-label">● 要約</div><div class="article-text">{_esc(summary_text)}</div></div>'
 
-        source_text = _article_source_text(sec, article_map, body_limit)
-        if source_text:
-            body += f'<div class="article-row"><div class="article-label">※ 原文本文</div><div class="article-source-text">{_esc(source_text)}</div></div>'
         ref_id = _non_empty_text(sec.get("ref_id"))
         header = f"■ {ref_id}｜" if ref_id else "■ "
         sections.append(
@@ -149,7 +115,7 @@ def render_final_report_html(
     if watch_items:
         watchlist_section = (
             '<section class=\"section-card watchlist-card\">'
-            '<h3 class=\"section-title\">■ 継続して見る点</h3><ul>'
+            '<h3 class=\"section-title\">■ 継続して見る点</h3><ul class=\"watch-list\">'
             + "".join(f'<li class=\"watch-item\">→ {_esc(x)}</li>' for x in watch_items)
             + '</ul></section>'
         )

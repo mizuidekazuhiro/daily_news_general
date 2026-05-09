@@ -3,8 +3,7 @@ from pathlib import Path
 from src.report_renderer import render_final_report_html
 
 
-def test_renderer_newspaper_brief_layout_and_labels(monkeypatch):
-    monkeypatch.setenv("NIKKEI_FINAL_REPORT_EMAIL_BODY_CHARS", "80")
+def test_renderer_newspaper_brief_layout_and_labels():
     rep = {
         "today_key_message": "需要の流れが変化している。",
         "executive_summary": "政策と投資判断が背景にある。",
@@ -43,8 +42,8 @@ def test_renderer_newspaper_brief_layout_and_labels(monkeypatch):
     assert "● 要約" in html
     assert "● なぜ重要か" in html
     assert "→ 影響と見るべき点" in html
-    assert "※ 原文本文" in html
-    assert html.count("※ 原文本文") == 1
+    assert "※ 原文本文" not in html
+    assert "article-source-text" not in html
     assert "商社目線" not in html
     assert "今日の結論" not in html
     assert "重要シグナル" not in html
@@ -52,15 +51,17 @@ def test_renderer_newspaper_brief_layout_and_labels(monkeypatch):
     assert "https://www.notion.so/abcdef" in html
 
 
-def test_renderer_disable_source_text_when_zero(monkeypatch):
-    monkeypatch.setenv("NIKKEI_FINAL_REPORT_EMAIL_BODY_CHARS", "0")
-    rep = {"today_key_message": "k", "integrated_insights": ["i"], "article_sections": [{"title": "t", "url": "https://x", "what_happened": "h"}]}
-    html = render_final_report_html(Path("templates/nikkei_final_report_email.html"), rep, "2026-05-06", all_articles=[{"title": "t", "url": "https://x", "full_text": "abc"}])
-    assert "※ 原文本文" not in html
-
-
 def test_all_articles_list_has_links_only():
     rep = {"today_key_message": "k", "integrated_insights": ["i"], "article_sections": []}
     html = render_final_report_html(Path("templates/nikkei_final_report_email.html"), rep, "2026-05-06", all_articles=[{"title": "all1", "url": "https://all1", "summary": "xx"}])
     assert '<li class="all-list-item"><a href="https://all1">all1</a></li>' in html
     assert "xx" not in html
+
+
+def test_renderer_has_no_double_markers():
+    rep = {"today_key_message": "k", "integrated_insights": ["i1"], "watchlist": ["w1"], "article_sections": [{"title": "t", "url": "https://x", "what_happened": "h", "why_it_matters": "m", "watch_points": ["p1"]}]}
+    html = render_final_report_html(Path("templates/nikkei_final_report_email.html"), rep, "2026-05-06", all_articles=[])
+    assert "• ●" not in html
+    assert "• ・" not in html
+    assert "• →" not in html
+    assert "list-style: none" in html
