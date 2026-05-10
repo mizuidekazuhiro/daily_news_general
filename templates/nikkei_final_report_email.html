@@ -12,12 +12,13 @@
     .section-title { margin: 0 0 12px; font-size: 18px; color: #111; }
     .article-card { padding: 14px; border: 1px solid #ddd; border-radius: 10px; margin: 12px 0; background: #fff; }
     .article-title { font-size: 16px; font-weight: 700; color: #111; }
-    .article-row { margin-top: 10px; padding-top: 10px; border-top: 1px solid #e5e5e5; }
-    .article-label { font-size: 13px; font-weight: 700; color: #333; margin-bottom: 5px; }
-    .article-text { color: #222; white-space: pre-line; }
+     .article-body { margin-top: 10px; }
+    .paragraph-block { margin-top: 10px; padding-top: 10px; border-top: 1px solid #e5e5e5; }
+    .paragraph-head { font-size: 13px; font-weight: 700; color: #333; margin-bottom: 5px; }
+    .paragraph-body { color: #222; white-space: pre-line; padding-left: 1.2em; }
     .signal-list, .dot-list, .watch-list { margin: 0; padding-left: 0; list-style: none; }
     .signal-item, .watch-item, .all-list-item { margin: 8px 0; }
-    .article-text { padding-left: 1.2em; }
+    .dot-list { margin: 0; padding-left: 0; list-style: none; }
     .dot-list li { padding-left: 1.2em; }
     .notion-link { font-size: 12px; color: #0645d2; margin-left: 4px; }
     .lead { margin: 0 0 8px; white-space: pre-line; }
@@ -29,14 +30,13 @@
   <div class="container">
     <section class="section-card">
       <h3 class="section-title">■ 本日の読み筋</h3>
-      <p class="lead">● 今日の記事群から見える流れ
-${today_key_message}</p>
+      <div class="paragraph-block lead"><div class="paragraph-head">● 今日の記事群から見える流れ</div><div class="paragraph-body">${today_key_message}</div></div>
       ${executive_summary_block}
     </section>
 
     <section class="section-card">
       <h3 class="section-title">■ 注目すべき変化</h3>
-      <ul class="signal-list">${brief_items}</ul>
+      <div class="signal-list">${brief_items}</div>
     </section>
 
     <section class="section-card">
