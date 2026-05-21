@@ -26,4 +26,4 @@ jobs:
           NOTION_DIRECT_SITES_ENABLED: ${{ secrets.NOTION_DIRECT_SITES_ENABLED }}
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DIRECT_SITES_DB_ID: ${{ secrets.NOTION_DIRECT_SITES_DB_ID }}
-        run: python direct_site_updates.py
+        run: python direct_site_updates_with_date_templates.py
