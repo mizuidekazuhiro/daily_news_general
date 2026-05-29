@@ -17,6 +17,18 @@ from src.report_selection import SelectionConfig, select_articles
 
 DEFAULTS={"NIKKEI_FINAL_REPORT_MODEL":"gpt-5-mini","NIKKEI_FINAL_REPORT_MAX_OUTPUT_TOKENS":8000,"NIKKEI_FINAL_REPORT_ARTICLE_TEXT_CHARS":1800}
 NOISE=["javascript:void(0)","共有","文字サイズ","保存","印刷","自動翻訳","日経の記事利用サービス","Myニュースでまとめ読み","［有料会員限定］"]
+REPORT_EXCLUDE_TITLE_PATTERNS=[
+    "競馬", "ファン投票", "フォルテアンジェロ", "宝塚記念", "クロワデュノール",
+    "アジアツアー", "コンサート", "ライブ", "&TEAM", "緻密なダンス", "映画", "小説", "舞台",
+    "人事", "訃報", "おくやみ", "読売新聞大阪本社人事", "役員人事", "社告",
+    "きょうのことば", "春秋", "私の履歴書", "交遊抄", "文化", "スポーツ",
+]
+REPORT_INCLUDE_HINTS=[
+    "資源", "素材", "エネルギー", "原油", "LNG", "電気", "半導体", "鉄", "アルミ", "銅", "タングステン",
+    "政策", "規制", "制裁", "税", "補助", "安全保障", "中国", "米国", "EU", "インド", "東南アジア",
+    "投資", "買収", "M&A", "工場", "設備", "インフラ", "データセンター", "物流", "PPP",
+    "為替", "金利", "FRB", "市場", "株", "貯蓄率", "消費", "物価", "EV", "AI", "クラウド",
+]
 
 def _env_str(n,d=""): v=os.getenv(n); return d if v is None or v.strip()=="" else v.strip()
 def _env_bool(n,d=False): v=os.getenv(n); return d if v is None or v.strip()=="" else v.strip().lower() in {"1","true","yes","on"}
@@ -37,6 +49,25 @@ def _normalize_article(a:dict)->dict:
 def _format_date(s:str)->str:
     return f"{s[0:4]}-{s[4:6]}-{s[6:8]}" if s and len(s)==8 and s.isdigit() else s
 
+
+def _is_report_noise_article(article:dict)->bool:
+    title=str(article.get("title") or "")
+    text=" ".join(str(article.get(k) or "") for k in ["title","Summary","Reason to Read","Business Implications","matched_rules"])
+    if any(p in title for p in REPORT_EXCLUDE_TITLE_PATTERNS):
+        return not any(h in text for h in REPORT_INCLUDE_HINTS)
+    return False
+
+
+def _filter_report_candidates(articles:list[dict])->tuple[list[dict],dict[str,Any]]:
+    if not _env_bool("NIKKEI_FINAL_REPORT_EXCLUDE_SOFT_NEWS", True):
+        return articles, {"soft_news_filter_enabled": False, "soft_news_excluded_count": 0, "soft_news_excluded_titles": []}
+    kept=[]; excluded=[]
+    for article in articles:
+        if _is_report_noise_article(article):
+            excluded.append(article)
+        else:
+            kept.append(article)
+    return kept, {"soft_news_filter_enabled": True, "soft_news_excluded_count": len(excluded), "soft_news_excluded_titles": [x.get("title","") for x in excluded[:30]]}
 
 
 def _load_notion_map(path: Path) -> dict[str, dict[str, str]]:
@@ -61,7 +92,6 @@ def _load_notion_map(path: Path) -> dict[str, dict[str, str]]:
     return out
 
 
-
 def _merge_notion_fields(articles: list[dict], url_map: dict[str, dict[str, str]]) -> list[dict]:
     out = []
     for article in articles:
@@ -74,7 +104,6 @@ def _merge_notion_fields(articles: list[dict], url_map: dict[str, dict[str, str]
             merged["notion_url"] = notion_url
         out.append(merged)
     return out
-
 
 
 def _build_mail_subject(display_date:str, edition:str)->str:
@@ -96,10 +125,10 @@ def _build_article_sections_from_input(in_articles:list[dict])->list[dict]:
         reason = (a.get("reason_to_read") or "").strip()
         implications = (a.get("business_implications") or "").strip()
         one_line = summary or (excerpt[:160] if excerpt else "記事要点を整理中です。")
-        why = reason or "記事の変化が需給・投資・価格にどう波及するかを読む意義があります。"
-        action = implications or "案件前提、取引先の投資姿勢、関連コストの動きを並べて把握したい内容です。"
+        why = reason or "事業環境、需給、投資、価格に波及する可能性があるためです。"
+        action = implications or "需要見通し、取引先の投資姿勢、関連コストの動きを並べて把握したい内容です。"
         fact_sentence = summary or excerpt or "記事本文の要点を整理しています。"
-        implication_sentence = reason or implications or "商社としては、需要見通し、取引先の投資姿勢、関連コストへの波及を見ておきたい内容です。"
+        implication_sentence = reason or implications or "需要見通し、取引先の投資姿勢、関連コストへの波及を見ておきたい内容です。"
         outlook_sentence = implications or reason or "取引先・投資先・調達先への影響を分けて読むと、案件前提の変化を把握しやすくなります。"
         out.append({
             "ref_id": f"A{i}",
@@ -124,23 +153,23 @@ def _generate_report(client,input_payload,retry=False):
     model=_env_str("NIKKEI_FINAL_REPORT_MODEL",DEFAULTS["NIKKEI_FINAL_REPORT_MODEL"])
     prompt=(
         "JSONのみ。Markdown禁止。説明文禁止。"
-        "メールは毎朝3分で読む新聞ブリーフ。"
+        "メールは1分で全体像、3分で重要記事を読める新聞ブリーフ。取得記事の羅列ではなく、意思決定に使える要約にする。"
         "必須キー: report_title,today_key_message,executive_summary,cross_article_implications,integrated_insights,article_sections,watchlist。"
         "article_sectionsは入力articlesと同じ件数。"
         "ref_idはA1,A2...の順。url/title/importance_scoreは入力値をそのまま保持。"
         "article_sectionsの各要素キー: ref_id,title,url,importance_score,what_happened,why_it_matters,watch_points,summary_and_implications。"
-        "today_key_messageは自然な2〜3文とし、見出し語や命令調を避ける。"
-        "today_key_messageは『今日の記事群から見える流れ』として表示される前提で、自然な2〜3文で書く。"
-        "executive_summaryは『背景・文脈』として表示される前提で書く。integrated_insightsは『注目すべき変化』として表示されるlist[str]で3〜5個。"
-        "integrated_insightsは記事本文に基づく具体表現を使い、同じ示唆の重複を避ける。"
-        "article_sectionsではwhat_happened=要約、why_it_matters=なぜ重要か、watch_points=影響と見るべき点として具体的に書く。"
+        "today_key_messageは『今日の結論』として表示される。3文以内で、最重要テーマを具体的に書く。"
+        "executive_summaryは『背景・文脈』として表示される。today_key_messageと重複させない。"
+        "integrated_insightsは『注目すべき変化』として表示されるlist[str]で3〜5個。各項目は素材・エネルギー、政策・規制、金融・市場、投資・インフラ等の変化が分かる具体文にする。"
+        "article_sectionsではwhat_happened=要点、why_it_matters=なぜ読むべきか、watch_points=見るべき点として具体的に書く。"
         "watch_pointsは一般論だけにせず、命令調（確認してください・備えてください等）を避ける。"
         "what_happenedは2〜3文、why_it_mattersは1〜2文、watch_pointsは0〜3個。"
+        "文化、スポーツ、競馬、人事、訃報、小ネタは、産業・市場・投資判断に直接関係しない限り重要記事扱いしない。"
         "不明な点は不明と書き、記事にない事実を作らない。"
         "watchlistは0〜5個。重要時のみ出力し、不要なら空配列。"
-        "禁止表現: 『確認対象』『追加確認』『備えよ』『攻勢』『再配分』『経済安全保障化』『商機を生む』『優位性が高い』『R&D強化』『人材投資』『国際提携』『商社目線』『ビジネス目線』『So What』『アクション』『本日の結論』『重要シグナル』。"
+        "禁止表現: 『確認対象』『追加確認』『備えよ』『攻勢』『再配分』『経済安全保障化』『商機を生む』『優位性が高い』『R&D強化』『人材投資』『国際提携』『商社目線』『ビジネス目線』『So What』『アクション』『重要シグナル』『今日の記事群から見える流れ』『注目ポイント』。"
         "固定分類に無理に当てはめず、記事群に即した自然なビジネスブリーフ文体で書く。"
-        "出力前に自己チェック: today_key_messageが2〜3文か、integrated_insightsが3〜5個か、各項目が2文以内か、"
+        "出力前に自己チェック: today_key_messageが3文以内か、integrated_insightsが3〜5個か、各項目が2文以内か、"
         "具体性があるか、一般論だけで終わっていないか、禁止表現がないか、示唆重複がないか、"
         "記事にない事実を作っていないか、不明点を不明と書いているか確認する。"
     )
@@ -185,7 +214,9 @@ def main()->int:
     norm=[_normalize_article(a) for a in data]
     notion_map = _load_notion_map(Path("logs/nikkei_save_results.json"))
     norm=_merge_notion_fields(norm, notion_map)
-    sel,log=select_articles(norm, SelectionConfig(mode="top_importance_rank", top_rank=5, include_ties=False, min_importance_score=0))
+    report_candidates, filter_log = _filter_report_candidates(norm)
+    sel,log=select_articles(report_candidates, SelectionConfig(mode="top_importance_rank", top_rank=5, include_ties=False, min_importance_score=0))
+    log.update(filter_log)
     sel=sel[:5]
     log["report_selected_count"]=len(sel); log["selected_article_titles"]= [x.get("title","") for x in sel]; log["selected_article_scores"]= [x.get("importance_score",0) for x in sel]
     Path("logs").mkdir(exist_ok=True)
@@ -219,7 +250,7 @@ def main()->int:
 
     display_date=_display_target_date(sel,in_articles)
     fallback=not success
-    report=parsed if success else {"report_title":f"日経事業ブリーフ {display_date}","today_key_message":"最終GPT生成に失敗したため、重要記事の要点を整理して表示します。","executive_summary":"重要記事の変化点を確認し、影響範囲を見直してください。","cross_article_implications":"必要に応じて投資・事業・リスク観点で追加確認してください。","integrated_insights":["最終GPT生成に失敗したため、重要記事の要点を暫定表示しています。","記事本文とリンク先を確認し、判断に必要な追加情報を補完してください。"],"article_sections":_build_article_sections_from_input(in_articles)}
+    report=parsed if success else {"report_title":f"日経事業ブリーフ {display_date}","today_key_message":"最終GPT生成に失敗したため、重要記事の要点を整理して表示します。","executive_summary":"重要記事の変化点を確認し、影響範囲を見直すための暫定版です。","cross_article_implications":"必要に応じて投資・事業・リスク観点で追加情報を補完します。","integrated_insights":["最終GPT生成に失敗したため、重要記事の要点を暫定表示しています。","記事本文とリンク先を確認し、判断に必要な追加情報を補完します。"],"article_sections":_build_article_sections_from_input(in_articles)}
     report["article_sections"] = _merge_notion_fields(report.get("article_sections", []), {str(a.get("url") or "").strip(): {"notion_url": a.get("notion_url", ""), "page_id": a.get("page_id", "")} for a in norm})
 
     raw_log={"model":_env_str("NIKKEI_FINAL_REPORT_MODEL",DEFAULTS["NIKKEI_FINAL_REPORT_MODEL"]),"finish_reason":finish,"raw_response_text":raw,"parsed_json":parsed,"parsed_top_level_keys":list(parsed.keys()) if isinstance(parsed,dict) else [],"validation_errors":errs,"retry_used":retry_used,"retry_raw_response_text":retry_raw,"retry_parsed_json":retry_parsed,"retry_validation_errors":retry_errs,"retry_parsed_top_level_keys":list(retry_parsed.keys()) if isinstance(retry_parsed,dict) else [],"recovered_missing_article_sections":recovered_missing_article_sections,"final_validation_errors_after_recovery":(errs if success else (retry_errs or errs))}
