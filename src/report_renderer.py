@@ -188,6 +188,10 @@ def render_final_report_html(
             "</article>"
         )
 
+    all_items = []
+    for article in articles:
+        all_items.append(f'<li class="all-list-item">{_title_link(article)}{_notion_link(article)}</li>')
+
     tpl = Template(template_path.read_text(encoding="utf-8"))
     watchlist = report.get("watchlist")
     watch_items = [str(x).strip() for x in watchlist if str(x).strip()] if isinstance(watchlist, list) else []
@@ -217,5 +221,6 @@ def render_final_report_html(
         watchlist_section=watchlist_section,
         all_article_count=len(articles),
         article_category_summary=_category_summary(articles),
+        all_article_items="".join(all_items),
         executive_summary_block=executive_summary_block,
     )
