@@ -1,8 +1,9 @@
 name: Daily News Digest
 
+# This legacy workflow is kept for manual testing only.
+# Scheduled delivery is handled by .github/workflows/general_news.yml
+# to prevent duplicate morning emails.
 on:
-  schedule:
-    - cron: '31 20 * * *'   # JST 5:31
   workflow_dispatch:
 
 jobs:
@@ -17,7 +18,7 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - run: python news_digest.py
+      - run: python news_digest.py --job main
         env:
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
