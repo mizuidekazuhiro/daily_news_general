@@ -89,7 +89,8 @@ on:
         type: choice
         options: ["true","false"]
   schedule:
-    - cron: "17,37,57 7 * * *"
+    - cron: "47 6 * * *"
+    - cron: "7,27 7 * * *"
 
 jobs:
   nikkei-evening:
