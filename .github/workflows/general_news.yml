@@ -2,7 +2,7 @@ name: general-news
 on:
   workflow_dispatch:
   schedule:
-    - cron: "30 21 * * 0-6"
+    - cron: "30 21 * * *"
 
 jobs:
   run:
