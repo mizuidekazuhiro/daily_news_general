@@ -2,7 +2,7 @@ name: Direct Site Updates
 
 on:
   schedule:
-    - cron: '0 22 * * 0-6' # JST 07:00
+    - cron: '0 22 * * *' # JST 07:00
   workflow_dispatch:
 
 jobs:
