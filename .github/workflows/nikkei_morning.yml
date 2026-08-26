@@ -44,9 +44,9 @@ on:
         type: choice
         options: ["true","false"]
       report_top_rank:
-        description: "Number of top importance articles for GPT/report"
+        description: "Maximum number of top importance articles for GPT/report"
         required: true
-        default: "10"
+        default: "5"
         type: string
       article_gpt_min_importance_score:
         description: "Minimum importance score for article GPT enrichment. Articles with score <= this value are skipped."
@@ -89,12 +89,13 @@ on:
         type: choice
         options: ["true","false"]
   schedule:
-    - cron: "17,37,57 21 * * 0-6"
+    # One scheduled run. The job itself retries at +20/+40 minutes if the paper is not ready.
+    - cron: "17 21 * * 0-6"
 
 jobs:
   nikkei-morning:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       NOTION_ARTICLE_DB_ID: ${{ secrets.NOTION_ARTICLE_DB_ID }}
@@ -160,7 +161,49 @@ jobs:
           from pathlib import Path
           Path('.storage/nikkei_storage_state.json').write_text(os.environ['NIKKEI_SESSION_STATE_JSON'],encoding='utf-8')
           P
-      - run: python scripts/run_nikkei_paper_pipeline.py
+      - name: Run Nikkei pipeline with publication retries
+        shell: bash
+        run: |
+          set -u
+          attempts=1
+          if [ "${GITHUB_EVENT_NAME}" = "schedule" ]; then attempts=3; fi
+          for attempt in $(seq 1 "${attempts}"); do
+            echo "pipeline_attempt=${attempt}/${attempts}"
+            rm -rf logs
+            mkdir -p logs
+            set +e
+            python scripts/run_nikkei_paper_pipeline.py
+            code=$?
+            set -e
+
+            retryable="false"
+            if [ "${code}" -eq 0 ] && [ -f logs/nikkei_paper_pipeline_skip.json ]; then
+              reason=$(python - <<'P'
+          import json
+          from pathlib import Path
+          p=Path('logs/nikkei_paper_pipeline_skip.json')
+          try:
+              print(json.loads(p.read_text(encoding='utf-8')).get('skip_reason',''))
+          except Exception:
+              print('invalid_skip_marker')
+          P
+          )
+              if [ "${reason}" = "edition_mismatch" ] || [ "${reason}" = "no_articles_for_edition" ]; then
+                retryable="true"
+              fi
+            fi
+
+            if [ "${code}" -eq 0 ] && [ "${retryable}" = "false" ]; then
+              exit 0
+            fi
+            if [ "${attempt}" -ge "${attempts}" ]; then
+              if [ "${code}" -ne 0 ]; then exit "${code}"; fi
+              echo "paper_not_ready_after_retries"
+              exit 1
+            fi
+            echo "Paper not ready or transient pipeline failure; retrying in 20 minutes."
+            sleep 1200
+          done
       - name: Check final report skip marker
         id: fr_skip
         run: |
