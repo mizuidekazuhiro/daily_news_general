@@ -1,0 +1,55 @@
+name: Nikkei Regression Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/nikkei_score_articles.py'
+      - 'scripts/run_nikkei_final_report.py'
+      - 'src/report_selection.py'
+      - 'src/report_renderer.py'
+      - 'templates/nikkei_final_report_email.html'
+      - '.github/workflows/nikkei_morning.yml'
+      - '.github/workflows/nikkei_evening.yml'
+      - 'tests/test_nikkei_score_articles.py'
+      - 'tests/test_nikkei_final_report_integration.py'
+      - 'tests/test_nikkei_final_report_renderer.py'
+      - 'tests/test_general_report_modules.py'
+      - '.github/workflows/nikkei_regression_tests.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pyyaml
+      - name: Compile Python modules
+        run: python -m compileall -q scripts src
+      - name: Validate Nikkei workflow YAML
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+          for path in [
+              '.github/workflows/nikkei_morning.yml',
+              '.github/workflows/nikkei_evening.yml',
+          ]:
+              yaml.safe_load(Path(path).read_text(encoding='utf-8'))
+              print(f'validated: {path}')
+          PY
+      - name: Run Nikkei regression tests
+        run: |
+          pytest -q \
+            tests/test_nikkei_score_articles.py \
+            tests/test_nikkei_final_report_integration.py \
+            tests/test_nikkei_final_report_renderer.py \
+            tests/test_general_report_modules.py
