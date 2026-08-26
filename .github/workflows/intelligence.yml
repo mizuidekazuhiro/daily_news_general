@@ -1,0 +1,66 @@
+name: Intelligence DB
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Generate Intelligence operations without writing Notion"
+        required: true
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+      lookback_days:
+        description: "Days of recent articles to inspect"
+        required: true
+        default: "2"
+        type: string
+      min_importance_score:
+        description: "Minimum article importance score"
+        required: true
+        default: "4"
+        type: string
+  schedule:
+    # 07:30 JST. Runs after general-news and the Nikkei morning job/retries.
+    - cron: "30 22 * * *"
+
+jobs:
+  intelligence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      INTELLIGENCE_NIKKEI_DB_ID: "354dec27-c9aa-803e-bef1-f446abac9b2e"
+      INTELLIGENCE_GENERAL_DB_ID: "2eddec27-c9aa-8022-9699-c36467fd9477"
+      NOTION_INTELLIGENCE_DB_ID: "3f97b174-1c01-446c-8ebf-65e511f92621"
+      INTELLIGENCE_MODEL: "gpt-5-mini"
+      INTELLIGENCE_LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '2' }}
+      INTELLIGENCE_MIN_IMPORTANCE_SCORE: ${{ github.event_name == 'workflow_dispatch' && inputs.min_importance_score || '4' }}
+      INTELLIGENCE_MAX_CANDIDATES: "10"
+      INTELLIGENCE_MAX_EXISTING_INSIGHTS: "100"
+      INTELLIGENCE_ARTICLE_BODY_CHARS: "3500"
+      INTELLIGENCE_MAX_OUTPUT_TOKENS: "7000"
+      INTELLIGENCE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Build/update Intelligence DB
+        run: python scripts/run_intelligence_pipeline.py
+
+      - name: Upload Intelligence logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intelligence-logs
+          path: |
+            logs/intelligence*.json
