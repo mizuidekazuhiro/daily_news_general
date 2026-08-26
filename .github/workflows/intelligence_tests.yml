@@ -1,0 +1,50 @@
+name: Intelligence Pipeline Tests
+
+on:
+  pull_request:
+    paths:
+      - 'src/intelligence_pipeline.py'
+      - 'scripts/run_intelligence_pipeline.py'
+      - 'tests/test_intelligence_pipeline.py'
+      - '.github/workflows/intelligence.yml'
+      - '.github/workflows/intelligence_tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'src/intelligence_pipeline.py'
+      - 'scripts/run_intelligence_pipeline.py'
+      - 'tests/test_intelligence_pipeline.py'
+      - '.github/workflows/intelligence.yml'
+      - '.github/workflows/intelligence_tests.yml'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pyyaml
+
+      - name: Compile Intelligence modules
+        run: python -m py_compile src/intelligence_pipeline.py scripts/run_intelligence_pipeline.py
+
+      - name: Validate Intelligence workflow YAML
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+          yaml.safe_load(Path('.github/workflows/intelligence.yml').read_text(encoding='utf-8'))
+          print('validated: .github/workflows/intelligence.yml')
+          PY
+
+      - name: Run Intelligence unit tests
+        run: pytest -q tests/test_intelligence_pipeline.py
