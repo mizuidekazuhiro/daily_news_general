@@ -17,9 +17,10 @@ def test_env_defaults_on_empty(monkeypatch):
 
 
 def test_normalize_fields():
-    a = {"source_title": "s", "body": "b", "summary": "ss", "reason_to_read": "rr", "business_implications": "bb"}
+    body = "本文テキストのサンプルです。"
+    a = {"source_title": "s", "body": body, "summary": "ss", "reason_to_read": "rr", "business_implications": "bb"}
     n = mod._normalize_article(a)
-    assert n["title"] == "s" and n["full_text"] == "b"
+    assert n["title"] == "s" and n["full_text"] == body
     assert n["Summary"] == "ss" and n["Reason to Read"] == "rr" and n["Business Implications"] == "bb"
 
 
