@@ -1,0 +1,36 @@
+name: Keep Scheduled Workflows Active
+
+on:
+  schedule:
+    - cron: "11 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Keep repository active when needed
+        shell: bash
+        run: |
+          set -euo pipefail
+          last_commit_epoch="$(git log -1 --format=%ct)"
+          now_epoch="$(date -u +%s)"
+          age_days="$(( (now_epoch - last_commit_epoch) / 86400 ))"
+
+          echo "Latest commit is ${age_days} day(s) old."
+          if [ "${age_days}" -lt 45 ]; then
+            echo "Repository is active; no keepalive commit needed."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keep scheduled workflows active"
+          git push
