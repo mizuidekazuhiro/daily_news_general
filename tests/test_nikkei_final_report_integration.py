@@ -17,44 +17,51 @@ def test_env_defaults_on_empty(monkeypatch):
 
 
 def test_normalize_fields():
-    a={"source_title":"s","body":"b","gptProcessed":True,"summary":"ss","reason_to_read":"rr","business_implications":"bb"}
-    n=mod._normalize_article(a)
-    assert n["title"]=="s" and n["full_text"]=="b" and n["gpt_processed_norm"] is True
-    assert n["Summary"]=="ss" and n["Reason to Read"]=="rr" and n["Business Implications"]=="bb"
+    a = {"source_title": "s", "body": "b", "summary": "ss", "reason_to_read": "rr", "business_implications": "bb"}
+    n = mod._normalize_article(a)
+    assert n["title"] == "s" and n["full_text"] == "b"
+    assert n["Summary"] == "ss" and n["Reason to Read"] == "rr" and n["Business Implications"] == "bb"
 
 
-def test_daily_props_mail_sent_at_behavior():
-    p1=mod._daily_props({"report_title":"r"},2,"h",False)
-    p2=mod._daily_props({"report_title":"r"},2,"h",True)
-    assert "Mail Sent At" not in p1
-    assert "Mail Sent At" in p2 and "start" in p2["Mail Sent At"]["date"]
+def test_report_label_prefixes_are_removed():
+    rep = mod._normalize_report_labels({
+        "today_key_message": "今日の結論：投資が加速している。",
+        "executive_summary": "背景・文脈：政策支援が続く。",
+    })
+    assert rep["today_key_message"] == "投資が加速している。"
+    assert rep["executive_summary"] == "政策支援が続く。"
 
 
-def test_notion_blocks_links():
-    blocks=mod._notion_blocks({"today_key_message":"a","executive_summary":"b","cross_article_implications":"c","priority_watch_items":[]},[{"title":"t","url":"https://x"}])
-    s=json.dumps(blocks, ensure_ascii=False)
-    assert "https://x" in s and "A1" in s
+def test_split_recipients(monkeypatch):
+    monkeypatch.setenv("MAIL_CC", "a@example.com,b@example.com\nc@example.com")
+    assert mod._split_recipients("MAIL_CC") == ["a@example.com", "b@example.com", "c@example.com"]
 
 
-def test_workflow_scope():
+def test_missing_scored_file_fails_when_mail_required(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("NIKKEI_SEND_FINAL_REPORT_MAIL", "true")
+    assert mod.main() == 1
+    summary = json.loads((tmp_path / "logs/nikkei_final_report_summary.json").read_text(encoding="utf-8"))
+    assert summary["mail_sent"] is False
+    assert summary["exit_code"] == 1
+
+
+def test_missing_scored_file_ok_when_mail_disabled(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("NIKKEI_SEND_FINAL_REPORT_MAIL", "false")
+    assert mod.main() == 0
+
+
+def test_workflow_scope_and_single_schedule_retry():
     general = Path('.github/workflows/general_news.yml').read_text(encoding='utf-8')
     assert 'run_nikkei_final_report.py' not in general
-    for wf in ['.github/workflows/nikkei_morning.yml','.github/workflows/nikkei_evening.yml']:
-        assert 'run_nikkei_final_report.py' in Path(wf).read_text(encoding='utf-8')
-
-
-def test_fallback_mail_policy():
-    assert mod._fallback_mail_decision(True, False, False, True) == "fallback_mail_blocked"
-    assert mod._fallback_mail_decision(True, True, False, True) == "send"
-    assert mod._fallback_mail_decision(False, False, False, True) == "send"
-
-
-def test_defaults_and_override(monkeypatch):
-    monkeypatch.delenv("NIKKEI_SEND_FINAL_REPORT_MAIL", raising=False)
-    monkeypatch.delenv("NIKKEI_FINAL_REPORT_SUBJECT_PREFIX", raising=False)
-    assert mod._env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL") is True
-    assert mod._env_str("NIKKEI_FINAL_REPORT_SUBJECT_PREFIX") == "【日経新聞ブリーフ】"
-    monkeypatch.setenv("NIKKEI_SEND_FINAL_REPORT_MAIL", "true")
-    monkeypatch.setenv("NIKKEI_FINAL_REPORT_SUBJECT_PREFIX", "[X]")
-    assert mod._env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL") is True
-    assert mod._env_str("NIKKEI_FINAL_REPORT_SUBJECT_PREFIX") == "[X]"
+    morning = Path('.github/workflows/nikkei_morning.yml').read_text(encoding='utf-8')
+    evening = Path('.github/workflows/nikkei_evening.yml').read_text(encoding='utf-8')
+    for wf in [morning, evening]:
+        assert 'run_nikkei_final_report.py' in wf
+        assert 'Run Nikkei pipeline with publication retries' in wf
+        assert 'sleep 1200' in wf
+    assert '17 21 * * 0-6' in morning
+    assert '17,37,57 21' not in morning
+    assert '47 6 * * 0-6' in evening
+    assert '7,27 7' not in evening
