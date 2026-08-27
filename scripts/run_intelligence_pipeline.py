@@ -11,6 +11,10 @@ from src.intelligence_safety import apply_safety_patch
 
 apply_safety_patch()
 
+from src.intelligence_policy import apply_policy_patch
+
+apply_policy_patch()
+
 from src.intelligence_pipeline import main
 
 
