@@ -3,9 +3,11 @@ from __future__ import annotations
 from src.intelligence_pipeline import Article
 from src.intelligence_processing import (
     filter_intelligence_entry_candidates,
+    filter_region_unprocessed_articles,
     filter_unprocessed_articles,
     intelligence_entry_floor,
     mark_applied_articles_processed,
+    mark_page_ids_region_processed,
 )
 
 
@@ -21,6 +23,41 @@ class FakeNotion:
     def update_page(self, page_id, properties):
         self.updated.append((page_id, properties))
         return {"id": page_id}
+
+
+class FakeRegionalNotion:
+    def __init__(self, region_rows=None):
+        self.region_rows = region_rows or []
+        self.updated = []
+
+    def query_database(self, database_id, filter_obj=None, max_pages=30, **kwargs):
+        multi = (filter_obj or {}).get("multi_select") or {}
+        if "contains" in multi:
+            region = multi["contains"]
+            out = []
+            for row in self.region_rows:
+                names = [x["name"] for x in row.get("properties", {}).get("Intelligence Regions Processed", {}).get("multi_select", [])]
+                if region in names:
+                    out.append(row)
+            return out
+        if multi.get("is_not_empty") is True:
+            return list(self.region_rows)
+        raise AssertionError(filter_obj)
+
+    def update_page(self, page_id, properties):
+        self.updated.append((page_id, properties))
+        return {"id": page_id}
+
+
+def _region_row(page_id: str, regions: list[str]):
+    return {
+        "id": page_id,
+        "properties": {
+            "Intelligence Regions Processed": {
+                "multi_select": [{"name": value} for value in regions],
+            }
+        },
+    }
 
 
 def make_article(
@@ -52,6 +89,34 @@ def test_filter_unprocessed_articles_excludes_persisted_noops():
     ]
     filtered = filter_unprocessed_articles(notion, "db", articles)
     assert [x.page_id for x in filtered] == ["22222222-2222-2222-2222-222222222222"]
+
+
+def test_region_processing_ignores_global_processed_state_from_other_scope():
+    article_india = make_article("11111111-1111-1111-1111-111111111111")
+    article_japan = make_article("22222222-2222-2222-2222-222222222222")
+    notion = FakeRegionalNotion(region_rows=[
+        _region_row(article_india.page_id, ["India"]),
+        _region_row(article_japan.page_id, ["Japan"]),
+    ])
+    filtered = filter_region_unprocessed_articles(
+        notion, "db", [article_india, article_japan], "Japan",
+    )
+    assert [x.page_id for x in filtered] == [article_india.page_id]
+
+
+def test_mark_region_processed_appends_without_overwriting_other_regions():
+    page_id = "11111111-1111-1111-1111-111111111111"
+    notion = FakeRegionalNotion(region_rows=[_region_row(page_id, ["India"])])
+    errors = mark_page_ids_region_processed(
+        notion, "db", [page_id], region="Japan", dry_run=False,
+    )
+    assert errors == []
+    assert notion.updated == [
+        (
+            page_id,
+            {"Intelligence Regions Processed": {"multi_select": [{"name": "India"}, {"name": "Japan"}]}},
+        )
+    ]
 
 
 def test_mark_applied_articles_processed_marks_noop_and_success_once():
