@@ -14,6 +14,7 @@ from src.intelligence_pipeline import Article
 
 INDIA_EVIDENCE_RE = re.compile(r"(?:\bindia\b|\bindian\b|インド)", re.IGNORECASE)
 _original_load_general = v2.load_general
+_original_generate_operations = v2.generate_operations
 
 
 def explicit_india_evidence_v3(article: Article) -> bool:
@@ -84,10 +85,88 @@ def expand_short_refs_v3(raw: Any, ref_map: dict[str, Article]) -> Any:
     return fixed
 
 
+def generate_operations_resilient(
+    client: Any,
+    *,
+    model: str,
+    max_output_tokens: int,
+    batch: list[Article],
+    existing: list[Any],
+) -> tuple[Any, list[dict[str, Any]], dict[str, Any]]:
+    """Fall back to per-article classification if a whole GPT batch is unusable.
+
+    This keeps a single malformed/ambiguous article from terminating a historical run.
+    Articles that still fail individually are recorded as explicit noops with a
+    classification_error marker in the raw log so the rest of the backfill can continue.
+    """
+    try:
+        return _original_generate_operations(
+            client,
+            model=model,
+            max_output_tokens=max_output_tokens,
+            batch=batch,
+            existing=existing,
+        )
+    except RuntimeError as exc:
+        if "no valid Intelligence operations" not in str(exc):
+            raise
+
+    combined_operations: list[dict[str, Any]] = []
+    raw_items: list[dict[str, Any]] = []
+    failed_refs: list[str] = []
+
+    for article in batch:
+        try:
+            raw, operations, prompt_payload = _original_generate_operations(
+                client,
+                model=model,
+                max_output_tokens=max_output_tokens,
+                batch=[article],
+                existing=existing,
+            )
+            combined_operations.extend(operations)
+            raw_items.append({
+                "article_ref": article.page_id,
+                "status": "classified",
+                "raw_output": raw,
+                "prompt": prompt_payload,
+            })
+        except RuntimeError as single_exc:
+            if "no valid Intelligence operations" not in str(single_exc):
+                raise
+            failed_refs.append(article.page_id)
+            combined_operations.append({
+                "action": "noop",
+                "article_refs": [article.ref()],
+                "classification_error": "GPT returned no valid Intelligence operation after batch and single-article retries",
+            })
+            raw_items.append({
+                "article_ref": article.page_id,
+                "status": "classification_failed",
+                "error": str(single_exc),
+            })
+
+    combined_operations = v2.coalesce_operations(combined_operations)
+    combined_operations = v2.add_uncovered_noops(combined_operations, batch)
+    raw = {
+        "fallback": "per_article_after_batch_failure",
+        "failed_article_refs": failed_refs,
+        "items": raw_items,
+    }
+    prompt_payload = {
+        "fallback": "per_article_after_batch_failure",
+        "article_count": len(batch),
+        "failed_article_refs": failed_refs,
+        "new_articles": [article.to_prompt() for article in batch],
+    }
+    return raw, combined_operations, prompt_payload
+
+
 # v2 resolves these globals at runtime. Patch only the backfill-specific behavior.
 v2.expand_short_refs = expand_short_refs_v3
 v2.explicit_india_evidence = explicit_india_evidence_v3
 v2.load_general = load_general_v3
+v2.generate_operations = generate_operations_resilient
 
 
 if __name__ == "__main__":
