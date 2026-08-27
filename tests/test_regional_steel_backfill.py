@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from scripts.run_regional_steel_backfill import explicit_region_evidence, get_region_profile
 from scripts.run_regional_steel_backfill_filtered import (
     explicit_region_and_steel_evidence,
+    explicit_region_evidence_strict,
     explicit_steel_evidence,
     filter_existing_for_region,
 )
@@ -39,6 +40,7 @@ def test_japan_scope_accepts_domestic_steel_project():
         ["Japan"],
     )
     assert explicit_region_evidence(article, profile)
+    assert explicit_region_evidence_strict(article, profile)
 
 
 def test_japan_scope_does_not_match_nippon_steel_name_alone():
@@ -48,7 +50,7 @@ def test_japan_scope_does_not_match_nippon_steel_name_alone():
         "Nippon Steel announced an investment at an integrated steel plant in India. The project concerns Indian operations only.",
         ["India", "Japan"],
     )
-    assert not explicit_region_evidence(article, profile)
+    assert not explicit_region_evidence_strict(article, profile)
 
 
 def test_japan_scope_does_not_match_japanese_company_name_alone():
@@ -58,7 +60,18 @@ def test_japan_scope_does_not_match_japanese_company_name_alone():
         "インド国内の製鉄所で能力増強を実施する。現地の生産能力と設備投資を拡大する計画だ。",
         ["India", "Japan"],
     )
-    assert not explicit_region_evidence(article, profile)
+    assert not explicit_region_evidence_strict(article, profile)
+
+
+def test_japan_scope_rejects_japanese_steelmaker_overseas_project():
+    profile = get_region_profile("Japan")
+    article = _article(
+        "Thai government and Nippon Steel advance green-industry project",
+        "The Japanese steelmaker will work with Thai partners on a low-carbon steel project in Thailand. The investment and plant are in Thailand.",
+        ["Japan", "Thailand"],
+    )
+    assert not explicit_region_evidence_strict(article, profile)
+    assert not explicit_region_and_steel_evidence(article, profile)
 
 
 def test_india_profile_still_rejects_indian_owner_nationality_only():
@@ -90,7 +103,7 @@ def test_steel_gate_rejects_unrelated_japan_factory_expansion():
         ["Japan"],
         ["Japan", "Capacity Expansion", "Data Center"],
     )
-    assert explicit_region_evidence(article, profile)
+    assert explicit_region_evidence_strict(article, profile)
     assert not explicit_steel_evidence(article)
     assert not explicit_region_and_steel_evidence(article, profile)
 
@@ -98,21 +111,21 @@ def test_steel_gate_rejects_unrelated_japan_factory_expansion():
 def test_steel_gate_accepts_raw_material_story():
     profile = get_region_profile("Japan")
     article = _article(
-        "Japan steelmakers secure coking coal supply",
-        "Japanese steel industry buyers signed a long-term coking coal supply agreement for blast-furnace operations in Japan.",
+        "Japan steel industry secures coking coal supply",
+        "Steelmakers signed a long-term coking coal supply agreement for blast-furnace operations in Japan.",
         ["Japan"],
     )
     assert explicit_region_and_steel_evidence(article, profile)
 
 
-def test_steel_tag_hint_can_preserve_sparse_steel_article():
+def test_noisy_steel_tag_alone_does_not_pass():
     article = _article(
         "Major low-carbon project receives support",
-        "The project will build new equipment and start commercial operations in 2028.",
+        "The project will build new data-center equipment and start commercial operations in 2028.",
         ["Japan"],
-        ["Green Steel"],
+        ["Green Steel", "Steel Plant Investment"],
     )
-    assert explicit_steel_evidence(article)
+    assert not explicit_steel_evidence(article)
 
 
 def test_existing_insights_are_scoped_to_active_region():
