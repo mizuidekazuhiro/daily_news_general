@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 from src.intelligence_pipeline import Article
-from src.intelligence_processing import filter_unprocessed_articles, mark_applied_articles_processed
+from src.intelligence_processing import (
+    filter_intelligence_entry_candidates,
+    filter_unprocessed_articles,
+    intelligence_entry_floor,
+    mark_applied_articles_processed,
+)
 
 
 class FakeNotion:
@@ -18,16 +23,22 @@ class FakeNotion:
         return {"id": page_id}
 
 
-def make_article(page_id: str) -> Article:
+def make_article(
+    page_id: str,
+    *,
+    title: str = "Test article",
+    score: float = 8.0,
+    tags: list[str] | None = None,
+) -> Article:
     return Article(
         source="general",
         page_id=page_id,
-        title="Test article",
+        title=title,
         published_at="2026-08-27",
-        importance_score=8.0,
+        importance_score=score,
         source_name="test",
         country=["India"],
-        tags=[],
+        tags=tags or [],
         body="A sufficiently long test body about a material Indian steel project and its investment milestone.",
         notion_url="",
     )
@@ -69,3 +80,34 @@ def test_dry_run_never_marks_sources_processed():
     errors = mark_applied_articles_processed(notion, result, dry_run=True)
     assert errors == []
     assert notion.updated == []
+
+
+def test_structural_entry_allows_low_score_binding_joint_venture():
+    article = make_article(
+        "33333333-3333-3333-3333-333333333333",
+        title="JSW Steel, Japan's JFE Receive CCI Nod For BPSL Joint Venture To Boost Steel Output",
+        score=2.5,
+        tags=["JSW Steel India", "Steel"],
+    )
+    assert filter_intelligence_entry_candidates([article], 4.0) == [article]
+
+
+def test_low_score_generic_stock_article_stays_out():
+    article = make_article(
+        "44444444-4444-4444-4444-444444444444",
+        title="JSW Steel shares rise 2% in afternoon trade",
+        score=2.5,
+        tags=["JSW Steel India", "Steel"],
+    )
+    assert filter_intelligence_entry_candidates([article], 4.0) == []
+
+
+def test_structural_exception_has_hard_floor():
+    article = make_article(
+        "55555555-5555-5555-5555-555555555555",
+        title="Company announces joint venture for steel facility",
+        score=1.5,
+        tags=["Steel"],
+    )
+    assert intelligence_entry_floor(4.0) == 2.0
+    assert filter_intelligence_entry_candidates([article], 4.0) == []
