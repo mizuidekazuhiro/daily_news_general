@@ -1,0 +1,4 @@
+India steel Intelligence historical backfill
+Scope: prior 180 days, importance score >= 4
+Mode: live after tightened dry-run validation
+Prepared: 2026-08-27 JST
