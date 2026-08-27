@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import src.intelligence_pipeline as pipeline
@@ -8,8 +9,21 @@ import src.intelligence_pipeline as pipeline
 
 _ORIGINAL_LOAD_NIKKEI = pipeline._load_nikkei_articles
 _ORIGINAL_LOAD_GENERAL = pipeline._load_general_articles
+_ORIGINAL_LOAD_EXISTING = pipeline._load_existing_insights
 _ORIGINAL_APPLY_OPERATIONS = pipeline.apply_operations
 _PATCHED = False
+_LINKED_MIGRATION_DONE = False
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_dry_run() -> bool:
+    return _env_bool("INTELLIGENCE_DRY_RUN") or _env_bool("INDIA_STEEL_BACKFILL_DRY_RUN")
 
 
 def processed_article_ids(notion: pipeline.NotionClient, database_id: str) -> set[str]:
@@ -42,6 +56,59 @@ def filter_unprocessed_articles(
     return [article for article in articles if pipeline._clean_id(article.page_id) not in processed]
 
 
+def mark_page_ids_processed(
+    notion: pipeline.NotionClient,
+    page_ids: list[str],
+    *,
+    dry_run: bool,
+) -> list[dict[str, str]]:
+    if dry_run:
+        return []
+    errors: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw_page_id in page_ids:
+        page_id = pipeline._hyphenate_id(raw_page_id)
+        key = pipeline._clean_id(page_id)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        try:
+            notion.update_page(page_id, {"Intelligence Processed": {"checkbox": True}})
+        except Exception as exc:
+            logging.exception("intelligence_mark_processed_failed page_id=%s", page_id)
+            errors.append({"page_id": page_id, "error": f"{type(exc).__name__}: {exc}"})
+    return errors
+
+
+def _load_existing_and_migrate_linked(
+    notion: pipeline.NotionClient,
+    db_id: str,
+    max_existing: int,
+) -> list[pipeline.Insight]:
+    """One-time per process: mark currently linked source pages as classified.
+
+    Existing Tracking Insights are already accepted Intelligence decisions. Their
+    source pages should not be fetched and parsed again before the linked-ID check.
+    Closed rows are excluded by the underlying loader and therefore do not seed
+    this migration.
+    """
+    global _LINKED_MIGRATION_DONE
+    existing = _ORIGINAL_LOAD_EXISTING(notion, db_id, max_existing)
+    if _LINKED_MIGRATION_DONE or _is_dry_run():
+        return existing
+
+    page_ids: list[str] = []
+    for item in existing:
+        page_ids.extend(item.nikkei_sources)
+        page_ids.extend(item.general_sources)
+    errors = mark_page_ids_processed(notion, page_ids, dry_run=False)
+    if errors:
+        raise RuntimeError(f"Failed to migrate {len(errors)} linked Intelligence source markers")
+    _LINKED_MIGRATION_DONE = True
+    logging.info("intelligence_linked_sources_marked_processed count=%s", len(set(map(pipeline._clean_id, page_ids))))
+    return existing
+
+
 def _load_nikkei_unprocessed(
     notion: pipeline.NotionClient,
     db_id: str,
@@ -71,33 +138,11 @@ def mark_applied_articles_processed(
     dry_run: bool,
 ) -> list[dict[str, str]]:
     """Persist successful CREATE/UPDATE/NOOP classifications on source pages."""
-    if dry_run:
-        return []
-
     page_ids: list[str] = []
-    seen: set[str] = set()
     for applied in result.get("applied") or []:
         for ref in applied.get("article_refs") or []:
-            page_id = pipeline._hyphenate_id(str(ref.get("page_id") or ""))
-            key = pipeline._clean_id(page_id)
-            if key and key not in seen:
-                seen.add(key)
-                page_ids.append(page_id)
-
-    errors: list[dict[str, str]] = []
-    for page_id in page_ids:
-        try:
-            notion.update_page(
-                page_id,
-                {"Intelligence Processed": {"checkbox": True}},
-            )
-        except Exception as exc:
-            logging.exception("intelligence_mark_processed_failed page_id=%s", page_id)
-            errors.append({
-                "page_id": page_id,
-                "error": f"{type(exc).__name__}: {exc}",
-            })
-    return errors
+            page_ids.append(str(ref.get("page_id") or ""))
+    return mark_page_ids_processed(notion, page_ids, dry_run=dry_run)
 
 
 def processing_apply_operations(
@@ -130,6 +175,7 @@ def apply_processing_patch() -> None:
     global _PATCHED
     if _PATCHED:
         return
+    pipeline._load_existing_insights = _load_existing_and_migrate_linked
     pipeline._load_nikkei_articles = _load_nikkei_unprocessed
     pipeline._load_general_articles = _load_general_unprocessed
     pipeline.apply_operations = processing_apply_operations
