@@ -24,7 +24,7 @@ on:
       batch_size:
         description: "Articles per GPT batch"
         required: true
-        default: "20"
+        default: "12"
         type: string
 
 jobs:
@@ -45,10 +45,10 @@ jobs:
       INDIA_STEEL_BACKFILL_MODEL: "gpt-5-mini"
       INDIA_STEEL_BACKFILL_LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '180' }}
       INDIA_STEEL_BACKFILL_MIN_SCORE: ${{ github.event_name == 'workflow_dispatch' && inputs.min_score || '4' }}
-      INDIA_STEEL_BACKFILL_BATCH_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.batch_size || '20' }}
+      INDIA_STEEL_BACKFILL_BATCH_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.batch_size || '12' }}
       INDIA_STEEL_BACKFILL_MAX_BATCHES: ${{ contains(github.event.head_commit.message, '[india-steel-backfill-v3-dry]') && '1' || '50' }}
       INDIA_STEEL_BACKFILL_MAX_EXISTING: "500"
-      INDIA_STEEL_BACKFILL_BODY_CHARS: "3500"
+      INDIA_STEEL_BACKFILL_BODY_CHARS: "6000"
       INDIA_STEEL_BACKFILL_MAX_OUTPUT_TOKENS: "10000"
       INDIA_STEEL_BACKFILL_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || contains(github.event.head_commit.message, '[india-steel-backfill-v3-dry]') }}
 

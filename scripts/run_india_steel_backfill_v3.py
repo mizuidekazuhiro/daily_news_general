@@ -22,11 +22,18 @@ from src.intelligence_policy import apply_policy_patch
 
 apply_policy_patch()
 
+# Persist CREATE/UPDATE/NOOP classifications before v2 imports apply_operations,
+# so its runtime reference includes the source-article processed marker.
+from src.intelligence_processing import apply_processing_patch, filter_unprocessed_articles
+
+apply_processing_patch()
+
 from scripts import run_india_steel_backfill_v2 as v2
-from src.intelligence_pipeline import Article
+from src.intelligence_pipeline import Article, NotionClient
 
 INDIA_EVIDENCE_RE = re.compile(r"(?:\bindia\b|\bindian\b|インド)", re.IGNORECASE)
 _original_load_general = v2.load_general
+_original_load_nikkei = v2.load_nikkei
 _original_generate_operations = v2.generate_operations
 
 
@@ -38,9 +45,16 @@ def explicit_india_evidence_v3(article: Article) -> bool:
     return bool(INDIA_EVIDENCE_RE.search(text))
 
 
-def load_general_v3(*args: Any, **kwargs: Any) -> list[Article]:
-    """Apply strict India evidence and collapse exact-title duplicate rows."""
-    articles = _original_load_general(*args, **kwargs)
+def load_general_v3(
+    notion: NotionClient,
+    db_id: str,
+    cutoff: Any,
+    min_score: float,
+    body_chars: int,
+) -> list[Article]:
+    """Apply strict India evidence, processed-state filter and title dedup."""
+    articles = _original_load_general(notion, db_id, cutoff, min_score, body_chars)
+    articles = filter_unprocessed_articles(notion, db_id, articles)
     filtered = [a for a in articles if explicit_india_evidence_v3(a)]
 
     # Keep the highest-scored/newest row when the same story was ingested more than once.
@@ -55,6 +69,17 @@ def load_general_v3(*args: Any, **kwargs: Any) -> list[Article]:
             seen_titles.add(key)
         deduped.append(article)
     return deduped
+
+
+def load_nikkei_v3(
+    notion: NotionClient,
+    db_id: str,
+    cutoff: Any,
+    min_score: float,
+    body_chars: int,
+) -> list[Article]:
+    articles = _original_load_nikkei(notion, db_id, cutoff, min_score, body_chars)
+    return filter_unprocessed_articles(notion, db_id, articles)
 
 
 def expand_short_refs_v3(raw: Any, ref_map: dict[str, Article]) -> Any:
@@ -179,6 +204,7 @@ def generate_operations_resilient(
 v2.expand_short_refs = expand_short_refs_v3
 v2.explicit_india_evidence = explicit_india_evidence_v3
 v2.load_general = load_general_v3
+v2.load_nikkei = load_nikkei_v3
 v2.generate_operations = generate_operations_resilient
 
 

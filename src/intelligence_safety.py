@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import src.intelligence_pipeline as pipeline
@@ -11,9 +12,8 @@ _ORIGINAL_NORMALIZE_OPERATIONS = pipeline.normalize_operations
 _ORIGINAL_PROPERTIES_FOR_OPERATION = pipeline._properties_for_operation
 
 # Stable geography/project anchors encoded in Insight Keys. Project/location
-# anchors require literal source-text evidence. Country anchors can use stricter
-# operational-context patterns to avoid false positives such as "Indian owners"
-# in an otherwise Netherlands-only article.
+# anchors require literal source-text evidence. Administrative aliases that
+# identify the same project are intentionally grouped here.
 GEO_KEY_ALIASES: dict[str, tuple[str, ...]] = {
     "japan": ("japan", "japanese", "日本"),
     "china": ("china", "chinese", "中国"),
@@ -28,13 +28,15 @@ GEO_KEY_ALIASES: dict[str, tuple[str, ...]] = {
     "jamshedpur": ("jamshedpur",),
     "hazira": ("hazira",),
     "ludhiana": ("ludhiana",),
-    "rajayyapeta": ("rajayyapeta",),
-    "rayalaseema": ("rayalaseema",),
+    "rajayyapeta": ("rajayyapeta", "anakapalli", "anakapalle"),
+    "rayalaseema": ("rayalaseema", "sunnapurallapalle"),
     "andhra-pradesh": ("andhra pradesh", "andhra"),
-    "dhinkia": ("dhinkia",),
+    "dhinkia": ("dhinkia", "paradeep", "paradip"),
     "vijayanagar": ("vijayanagar",),
     "dolvi": ("dolvi",),
     "kalinganagar": ("kalinganagar",),
+    "vsp": ("visakhapatnam steel plant", "vsp", "visakhapatnam"),
+    "minas-revuboe": ("minas de revuboe", "minas revuboe", "mdr", "moatize"),
 }
 
 COUNTRY_KEY_PATTERNS: dict[str, tuple[str, ...]] = {
@@ -42,24 +44,28 @@ COUNTRY_KEY_PATTERNS: dict[str, tuple[str, ...]] = {
         r"\bin india\b",
         r"\bindia(?:n)? operations?\b",
         r"\bindia(?:n)? (?:steel|capacity|production|output|capex|investment|plant|project|market|demand|business)\b",
-        r"\b(?:jharkhand|odisha|orissa|andhra pradesh|ludhiana|hazira|jamshedpur|vijayanagar|dolvi|bokaro|kalinganagar|rajayyapeta|rayalaseema|paradeep)\b",
+        r"\b(?:jharkhand|odisha|orissa|andhra pradesh|ludhiana|hazira|jamshedpur|vijayanagar|dolvi|bokaro|kalinganagar|rajayyapeta|anakapalli|anakapalle|rayalaseema|paradeep|paradip|visakhapatnam)\b",
         r"インド(?:国内|事業|生産|能力|投資|製鉄|鉄鋼)",
     ),
 }
 
-# Topic anchors are derived from stable Insight-Key segments. This prevents an
-# India article about the same company but an unrelated topic (for example raw
-# materials commentary) from updating an India capacity-strategy row.
+# Topic anchors are derived from stable Insight-Key segments. This prevents a
+# same-company/same-location article about a different facility or question from
+# overwriting a tracked project.
 TOPIC_KEY_ALIASES: dict[str, tuple[str, ...]] = {
-    "capacity-strategy": ("capacity", "expansion", "production", "output", "mtpa", "capex", "investment", "commission"),
-    "capacity-capex": ("capacity", "capex", "investment", "expansion", "production", "output", "mtpa"),
-    "brownfield-expansion": ("brownfield", "expansion", "capacity", "bokaro steel plant", "tender", "epc", "blast furnace"),
+    "capacity-strategy": ("capacity", "expansion", "mtpa", "capex", "investment", "commission", "restart", "ramp"),
+    "capacity-capex": ("capacity", "capex", "investment", "expansion", "mtpa", "commission", "restart", "ramp"),
+    "brownfield-expansion": ("brownfield", "expansion", "capacity", "tender", "epc", "blast furnace", "commission"),
     "greenfield-jv": ("joint venture", " jv ", "greenfield", "integrated steel", "steel plant", "capacity"),
     "greenfield": ("greenfield", "steel plant", "integrated steel", "capacity", "construction", "foundation", "project"),
     "low-carbon-ironmaking": ("easymelt", "hisarna", "ironmaking", "blast furnace", "low-carbon", "low carbon", "decarbon"),
     "eaf": ("eaf", "electric arc furnace", "scrap-based", "scrap based"),
     "safeguard-duty": ("safeguard duty", "safeguard", "duty", "tariff"),
     "production-trends": ("crude steel production", "finished steel", "steel consumption", "steel output"),
+    "automotive-crc": ("pickling line", "tandem cold mill", "pltcm", "cold-rolled", "cold rolled", "automotive", "ahss", "galvanized", "galvanised"),
+    "ladle-explosion": ("ladle explosion", "sms-1", "caster-2", "molten steel", "fatalit", "casualt"),
+    "coking-coal-acquisition": ("coking coal", "coal mine", "minas de revuboe", "minas revuboe", "mdr", "moatize"),
+    "lpg-shortage-impact": ("lpg", "liquefied petroleum gas", "hormuz", "gas tanker", "petroleum ministry"),
 }
 
 COMPANY_ANCHORS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -70,6 +76,7 @@ COMPANY_ANCHORS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("jindal steel", ("jindal steel", "jindal")),
     ("posco", ("posco",)),
     ("jfe steel", ("jfe steel", "jfe")),
+    ("rashtriya ispat nigam", ("rashtriya ispat nigam", "rinl", "visakhapatnam steel plant")),
 )
 
 DURABLE_CREATE_TERMS = (
@@ -82,6 +89,16 @@ DURABLE_CREATE_TERMS = (
 )
 
 NUMBER_WORDS = ("one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten")
+_NUMBER_RE = re.compile(r"(?<![A-Za-z])\d+(?:[,.]\d+)*(?![A-Za-z])")
+_SCALED_NUMBER_PATTERNS: tuple[tuple[re.Pattern[str], Decimal], ...] = (
+    (re.compile(r"(\d+(?:[,.]\d+)*)\s+lakh\s+crores?\b", re.I), Decimal("100000")),
+    (re.compile(r"(\d+(?:[,.]\d+)*)\s+lakh\b", re.I), Decimal("100000")),
+    (re.compile(r"(\d+(?:[,.]\d+)*)\s+(?:million|mn)\b", re.I), Decimal("1000000")),
+    (re.compile(r"(\d+(?:[,.]\d+)*)\s+billion\b", re.I), Decimal("1000000000")),
+    (re.compile(r"(\d+(?:[,.]\d+)*)\s+(?:thousand|k)\b", re.I), Decimal("1000")),
+    (re.compile(r"(\d+(?:[,.]\d+)*)\s*(?:mtpa|mt\b)", re.I), Decimal("1000000")),
+    (re.compile(r"(\d+(?:[,.]\d+)*)\s*(?:ktpa|kt\b)", re.I), Decimal("1000")),
+)
 
 
 def _normalise_text(value: str) -> str:
@@ -124,24 +141,26 @@ def _geography_guard(insight_key: str, source_text: str) -> bool:
         patterns = COUNTRY_KEY_PATTERNS.get(segment)
         if patterns and not any(re.search(pattern, source_text, re.IGNORECASE) for pattern in patterns):
             return False
-        aliases = GEO_KEY_ALIASES.get(segment)
-        if aliases and not any(_normalise_text(alias) in source_text for alias in aliases):
-            return False
+
+        # Project keys often combine geography and topic, e.g. odisha-dhinkia or
+        # rayalaseema-lowcarbon. Require every geography anchor encoded in the
+        # segment rather than only exact segment matches.
+        for anchor, aliases in GEO_KEY_ALIASES.items():
+            if anchor != segment and anchor not in segment:
+                continue
+            if not any(_normalise_text(alias) in source_text for alias in aliases):
+                return False
     return True
 
 
 def _topic_guard(insight_key: str, source_text: str) -> bool:
-    matched_topic_anchor = False
     for segment in _key_segments(insight_key):
         for anchor, aliases in TOPIC_KEY_ALIASES.items():
             if anchor not in segment:
                 continue
-            matched_topic_anchor = True
             if not any(_normalise_text(alias) in source_text for alias in aliases):
                 return False
-    # Not all historical keys encode a machine-readable topic; those still get
-    # company + geography guards and the stricter GPT prompt.
-    return True if matched_topic_anchor else True
+    return True
 
 
 def _update_identity_guard(existing: pipeline.Insight, articles: list[pipeline.Article]) -> tuple[bool, str]:
@@ -159,20 +178,52 @@ def _update_identity_guard(existing: pipeline.Insight, articles: list[pipeline.A
     return True, ""
 
 
+def _decimal_token(value: str) -> str | None:
+    try:
+        decimal = Decimal(str(value).replace(",", ""))
+    except (InvalidOperation, ValueError):
+        return None
+    if not decimal.is_finite():
+        return None
+    if decimal == decimal.to_integral():
+        return str(decimal.quantize(Decimal("1")))
+    return format(decimal.normalize(), "f").rstrip("0").rstrip(".")
+
+
 def _canonical_numbers(value: str) -> set[str]:
     out: set[str] = set()
-    for token in re.findall(r"(?<![A-Za-z])\d+(?:[,.]\d+)*(?![A-Za-z])", str(value or "")):
-        canonical = token.replace(",", "")
-        if "." not in canonical:
-            canonical = canonical.lstrip("0") or "0"
-        out.add(canonical)
+    for token in _NUMBER_RE.findall(str(value or "")):
+        canonical = _decimal_token(token)
+        if canonical is not None:
+            out.add(canonical)
     return out
 
 
+def _numeric_variants(value: str) -> set[str]:
+    """Return literal and unit-equivalent numeric representations.
+
+    This prevents valid facts from being rejected solely because a model writes
+    `500,000 tpa` while the source writes `500 KT`, or `136,000 crore` while the
+    source writes `1.36 lakh crore`.
+    """
+    text = str(value or "")
+    variants = set(_canonical_numbers(text))
+    for pattern, multiplier in _SCALED_NUMBER_PATTERNS:
+        for match in pattern.finditer(text):
+            base = _decimal_token(match.group(1))
+            if base is None:
+                continue
+            scaled = _decimal_token(str(Decimal(base) * multiplier))
+            if scaled is not None:
+                variants.add(scaled)
+    return variants
+
+
 def _number_is_grounded(number: str, source_text: str) -> bool:
-    compact = source_text.replace(",", "")
-    # Avoid substring matches such as 12 inside 120.
-    return bool(re.search(rf"(?<!\d){re.escape(number)}(?!\d)", compact))
+    canonical = _decimal_token(number)
+    if canonical is None:
+        return False
+    return canonical in _numeric_variants(source_text)
 
 
 def _unsupported_grounding_claims(operation: dict[str, Any], articles: list[pipeline.Article]) -> list[str]:
@@ -192,9 +243,8 @@ def _unsupported_grounding_claims(operation: dict[str, Any], articles: list[pipe
 
 
 def _durable_create_guard(operation: dict[str, Any], articles: list[pipeline.Article]) -> tuple[bool, str]:
-    # High/Medium items may still be created, but 'Other' must have a concrete
-    # durable action. This blocks management commentary and generic diplomacy
-    # from becoming standalone Intelligence rows.
+    # Legacy helper used by direct safety tests. Production business policy is
+    # controlled by Notion via intelligence_policy.py.
     if operation.get("event_type") != "Other":
         return True, ""
     text = _source_text(articles)
@@ -318,13 +368,13 @@ def safe_prompt_system() -> str:
     return _ORIGINAL_PROMPT_SYSTEM() + """
 
 SAFETY AND KNOWLEDGE-MAINTENANCE OVERRIDES:
-13. UPDATE IDENTITY LOCK: An update must concern the same entity/company AND the same geography/project/topic as the existing row. Company name alone is never sufficient. If an existing insight_key contains a named country, state, city, plant or project, the new source must explicitly concern that geography/project. A nationality reference such as 'Indian owner' does not establish that an article concerns Indian operations.
-14. TOPIC LOCK: A same-company/same-country article still cannot update an unrelated topic. Capacity/capex rows require capacity, production, investment or expansion evidence; technology/project rows require evidence about that technology/project. Otherwise create a separate durable insight or noop.
+13. UPDATE IDENTITY LOCK: An update must concern the same entity/company AND the same geography/project/topic as the existing row. Company name alone is never sufficient. Administrative labels for the same physical project (for example Rajayyapeta in Anakapalli district) are the same project, not separate Insights.
+14. TOPIC LOCK: A same-company/same-country article still cannot update an unrelated facility or metric. A downstream PLTCM Insight cannot be updated merely because an upstream CSP at the same site reports lifetime output.
 15. For update, do NOT redefine the row. Keep the existing insight title, company, country, theme and event_type conceptually unchanged. The application layer will enforce this lock.
 16. For update, key_facts must contain ONLY the new source-supported factual delta. Do not rewrite or summarize away prior facts; the application layer merges the new delta into historical Key Facts.
 17. CREATE IS RARE. Create only when there is a concrete durable item worth tracking over time: plant/capacity milestone, named investment, JV/M&A, formal policy/trade measure, material contract/order, project-level technology milestone, or a material structural supply/demand shift.
 18. Default to noop for management commentary/opinion, generic risk statements, one-off monthly statistics, think-tank recommendations, broad diplomatic cooperation, or generic MOUs without a named steel project/contract/investment.
-19. Every number, amount, capacity, percentage, date and stated duration in key_facts/what_changed must appear in the referenced new article text. If the source does not state it, omit it and put the uncertainty in watch_items.
+19. Every number, amount, capacity, percentage, date and stated duration in key_facts/what_changed must be supported by the referenced new article text. Preserve the source's numeric expression and unit where practical; do not invent unit conversions.
 20. Never infer execution risk, capex reallocation, delays or causality from a management/personnel change unless the source explicitly links that change to the tracked project.
 """.strip()
 

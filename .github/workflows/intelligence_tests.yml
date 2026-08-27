@@ -7,12 +7,15 @@ on:
       - 'src/intelligence_safety.py'
       - 'src/intelligence_policy.py'
       - 'src/intelligence_rules.py'
+      - 'src/intelligence_processing.py'
       - 'scripts/run_intelligence_pipeline.py'
       - 'scripts/run_india_steel_backfill_v3.py'
       - 'tests/test_intelligence_pipeline.py'
       - 'tests/test_intelligence_safety.py'
       - 'tests/test_intelligence_rules.py'
       - 'tests/test_intelligence_policy.py'
+      - 'tests/test_intelligence_final_quality.py'
+      - 'tests/test_intelligence_processing.py'
       - '.github/workflows/intelligence.yml'
       - '.github/workflows/india_steel_backfill_v3.yml'
       - '.github/workflows/intelligence_tests.yml'
@@ -23,12 +26,15 @@ on:
       - 'src/intelligence_safety.py'
       - 'src/intelligence_policy.py'
       - 'src/intelligence_rules.py'
+      - 'src/intelligence_processing.py'
       - 'scripts/run_intelligence_pipeline.py'
       - 'scripts/run_india_steel_backfill_v3.py'
       - 'tests/test_intelligence_pipeline.py'
       - 'tests/test_intelligence_safety.py'
       - 'tests/test_intelligence_rules.py'
       - 'tests/test_intelligence_policy.py'
+      - 'tests/test_intelligence_final_quality.py'
+      - 'tests/test_intelligence_processing.py'
       - '.github/workflows/intelligence.yml'
       - '.github/workflows/india_steel_backfill_v3.yml'
       - '.github/workflows/intelligence_tests.yml'
@@ -51,7 +57,7 @@ jobs:
           pip install pytest pyyaml
 
       - name: Compile Intelligence modules
-        run: python -m py_compile src/intelligence_pipeline.py src/intelligence_safety.py src/intelligence_policy.py src/intelligence_rules.py scripts/run_intelligence_pipeline.py scripts/run_india_steel_backfill_v3.py
+        run: python -m py_compile src/intelligence_pipeline.py src/intelligence_safety.py src/intelligence_policy.py src/intelligence_rules.py src/intelligence_processing.py scripts/run_intelligence_pipeline.py scripts/run_india_steel_backfill_v3.py
 
       - name: Validate Intelligence workflow YAML
         run: |
@@ -67,4 +73,4 @@ jobs:
           PY
 
       - name: Run Intelligence unit tests
-        run: pytest -q tests/test_intelligence_pipeline.py tests/test_intelligence_safety.py tests/test_intelligence_rules.py tests/test_intelligence_policy.py
+        run: pytest -q tests/test_intelligence_pipeline.py tests/test_intelligence_safety.py tests/test_intelligence_rules.py tests/test_intelligence_policy.py tests/test_intelligence_final_quality.py tests/test_intelligence_processing.py
