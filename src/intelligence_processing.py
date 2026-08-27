@@ -55,6 +55,10 @@ def _is_dry_run() -> bool:
     )
 
 
+def _regional_scope() -> str:
+    return str(os.getenv("REGIONAL_STEEL_BACKFILL_REGION") or "").strip()
+
+
 def intelligence_entry_floor(min_score: float) -> float:
     return min(float(min_score), STRUCTURAL_ENTRY_SCORE_FLOOR)
 
@@ -151,11 +155,7 @@ def _region_state_map(
     notion: pipeline.NotionClient,
     database_id: str,
 ) -> dict[str, list[str]]:
-    """Load only rows that already have regional classifications.
-
-    This lets us append a second region without overwriting the first region's
-    marker and avoids a GET request for every processed article.
-    """
+    """Load only rows that already have regional classifications."""
     rows = notion.query_database(
         database_id,
         filter_obj={"property": REGION_PROCESSED_PROPERTY, "multi_select": {"is_not_empty": True}},
@@ -292,6 +292,36 @@ def _load_general_unprocessed(
     return filter_unprocessed_articles(notion, db_id, articles)
 
 
+def _load_nikkei_region_unprocessed(
+    notion: pipeline.NotionClient,
+    db_id: str,
+    cutoff: Any,
+    min_score: float,
+    body_chars: int,
+) -> list[pipeline.Article]:
+    region = _regional_scope()
+    articles = _ORIGINAL_LOAD_NIKKEI(
+        notion, db_id, cutoff, intelligence_entry_floor(min_score), body_chars,
+    )
+    articles = filter_intelligence_entry_candidates(articles, min_score)
+    return filter_region_unprocessed_articles(notion, db_id, articles, region)
+
+
+def _load_general_region_unprocessed(
+    notion: pipeline.NotionClient,
+    db_id: str,
+    cutoff: Any,
+    min_score: float,
+    body_chars: int,
+) -> list[pipeline.Article]:
+    region = _regional_scope()
+    articles = _ORIGINAL_LOAD_GENERAL(
+        notion, db_id, cutoff, intelligence_entry_floor(min_score), body_chars,
+    )
+    articles = filter_intelligence_entry_candidates(articles, min_score)
+    return filter_region_unprocessed_articles(notion, db_id, articles, region)
+
+
 def mark_applied_articles_processed(
     notion: pipeline.NotionClient,
     result: dict[str, Any],
@@ -341,12 +371,7 @@ def processing_apply_operations(
     dry_run: bool,
 ) -> dict[str, Any]:
     result = _ORIGINAL_APPLY_OPERATIONS(
-        notion,
-        intelligence_db_id,
-        operations,
-        existing,
-        model,
-        dry_run,
+        notion, intelligence_db_id, operations, existing, model, dry_run,
     )
     marker_errors = mark_applied_articles_processed(notion, result, dry_run=dry_run)
     result["processing_mark_errors"] = marker_errors
@@ -358,12 +383,49 @@ def processing_apply_operations(
     return result
 
 
+def regional_processing_apply_operations(
+    notion: pipeline.NotionClient,
+    intelligence_db_id: str,
+    operations: list[dict[str, Any]],
+    existing: list[pipeline.Insight],
+    model: str,
+    dry_run: bool,
+) -> dict[str, Any]:
+    result = _ORIGINAL_APPLY_OPERATIONS(
+        notion, intelligence_db_id, operations, existing, model, dry_run,
+    )
+    marker_errors = mark_applied_articles_region_processed(
+        notion,
+        result,
+        region=_regional_scope(),
+        nikkei_db_id=str(os.getenv("INTELLIGENCE_NIKKEI_DB_ID") or pipeline.DEFAULT_NIKKEI_DB_ID),
+        general_db_id=str(os.getenv("INTELLIGENCE_GENERAL_DB_ID") or pipeline.DEFAULT_GENERAL_DB_ID),
+        dry_run=dry_run,
+    )
+    result["regional_processing_mark_errors"] = marker_errors
+    if marker_errors:
+        result.setdefault("errors", []).extend(
+            {"action": "mark_region_processed", "insight_key": "", "error": item["error"]}
+            for item in marker_errors
+        )
+    return result
+
+
 def apply_processing_patch() -> None:
     global _PATCHED
     if _PATCHED:
         return
-    pipeline._load_existing_insights = _load_existing_and_migrate_linked
-    pipeline._load_nikkei_articles = _load_nikkei_unprocessed
-    pipeline._load_general_articles = _load_general_unprocessed
-    pipeline.apply_operations = processing_apply_operations
+    if _regional_scope():
+        # Regional backfills deliberately ignore the global processed checkbox.
+        # A source classified in another scope must still be eligible here until
+        # this specific region has evaluated it.
+        pipeline._load_existing_insights = _ORIGINAL_LOAD_EXISTING
+        pipeline._load_nikkei_articles = _load_nikkei_region_unprocessed
+        pipeline._load_general_articles = _load_general_region_unprocessed
+        pipeline.apply_operations = regional_processing_apply_operations
+    else:
+        pipeline._load_existing_insights = _load_existing_and_migrate_linked
+        pipeline._load_nikkei_articles = _load_nikkei_unprocessed
+        pipeline._load_general_articles = _load_general_unprocessed
+        pipeline.apply_operations = processing_apply_operations
     _PATCHED = True
