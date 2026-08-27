@@ -1,0 +1,1 @@
+Focused dry-run trigger for headline-only project-status upgrade guard.
