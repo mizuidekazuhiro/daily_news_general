@@ -38,9 +38,9 @@ jobs:
     env:
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-      INTELLIGENCE_NIKKEI_DB_ID: "354dec27-c9aa-803e-bef1-f446abac9b2e"
-      INTELLIGENCE_GENERAL_DB_ID: "2eddec27-c9aa-8022-9699-c36467fd9477"
-      NOTION_INTELLIGENCE_DB_ID: "3f97b174-1c01-446c-8ebf-65e511f92621"
+      INTELLIGENCE_NIKKEI_DB_ID: "354dec27-c9aa-80b1-a188-000b76db2286"
+      INTELLIGENCE_GENERAL_DB_ID: "2eddec27-c9aa-8050-bfdb-000b1846c25e"
+      NOTION_INTELLIGENCE_DB_ID: "9b551231-0bcc-489a-834b-3ebdf1fde2bb"
       INDIA_STEEL_BACKFILL_MODEL: "gpt-5-mini"
       INDIA_STEEL_BACKFILL_LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '180' }}
       INDIA_STEEL_BACKFILL_MIN_SCORE: ${{ github.event_name == 'workflow_dispatch' && inputs.min_score || '4' }}
