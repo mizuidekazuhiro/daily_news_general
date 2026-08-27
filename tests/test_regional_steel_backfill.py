@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from scripts.run_regional_steel_backfill import explicit_region_evidence, get_region_profile
-from scripts.run_regional_steel_backfill_filtered import explicit_region_and_steel_evidence, explicit_steel_evidence
+from scripts.run_regional_steel_backfill_filtered import (
+    explicit_region_and_steel_evidence,
+    explicit_steel_evidence,
+    filter_existing_for_region,
+)
 from src.intelligence_pipeline import Article
 
 
@@ -107,3 +113,15 @@ def test_steel_tag_hint_can_preserve_sparse_steel_article():
         ["Green Steel"],
     )
     assert explicit_steel_evidence(article)
+
+
+def test_existing_insights_are_scoped_to_active_region():
+    profile = get_region_profile("Japan")
+    existing = [
+        SimpleNamespace(insight_key="india-only", country=["India"]),
+        SimpleNamespace(insight_key="japan-only", country=["Japan"]),
+        SimpleNamespace(insight_key="cross-border", country=["Japan", "United States"]),
+        SimpleNamespace(insight_key="empty", country=[]),
+    ]
+    selected = filter_existing_for_region(existing, profile)
+    assert [x.insight_key for x in selected] == ["japan-only", "cross-border"]
