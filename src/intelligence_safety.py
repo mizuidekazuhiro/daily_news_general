@@ -114,7 +114,9 @@ def _update_identity_guard(existing: pipeline.Insight, articles: list[pipeline.A
 def _canonical_numbers(value: str) -> set[str]:
     out: set[str] = set()
     for token in re.findall(r"(?<![A-Za-z])\d+(?:[,.]\d+)*(?![A-Za-z])", str(value or "")):
-        canonical = token.replace(",", "").lstrip("0") or "0"
+        canonical = token.replace(",", "")
+        if "." not in canonical:
+            canonical = canonical.lstrip("0") or "0"
         out.add(canonical)
     return out
 
