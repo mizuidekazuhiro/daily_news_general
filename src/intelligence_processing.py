@@ -14,10 +14,11 @@ _ORIGINAL_LOAD_EXISTING = pipeline._load_existing_insights
 _ORIGINAL_APPLY_OPERATIONS = pipeline.apply_operations
 _PATCHED = False
 _LINKED_MIGRATION_DONE = False
+REGION_PROCESSED_PROPERTY = "Intelligence Regions Processed"
 
 # Source-importance scoring is intentionally broader and can underrate durable
 # Intelligence events (for example a binding 50:50 steel JV can arrive as a
-# stock-market article with ImportanceScore 2.5).  Let a narrow set of clearly
+# stock-market article with ImportanceScore 2.5). Let a narrow set of clearly
 # structural headlines through to the Intelligence policy layer, which remains
 # responsible for CREATE/UPDATE/NOOP.
 STRUCTURAL_ENTRY_SCORE_FLOOR = 2.0
@@ -47,7 +48,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 
 def _is_dry_run() -> bool:
-    return _env_bool("INTELLIGENCE_DRY_RUN") or _env_bool("INDIA_STEEL_BACKFILL_DRY_RUN")
+    return (
+        _env_bool("INTELLIGENCE_DRY_RUN")
+        or _env_bool("INDIA_STEEL_BACKFILL_DRY_RUN")
+        or _env_bool("REGIONAL_STEEL_BACKFILL_DRY_RUN")
+    )
 
 
 def intelligence_entry_floor(min_score: float) -> float:
@@ -80,12 +85,7 @@ def filter_intelligence_entry_candidates(
 
 
 def processed_article_ids(notion: pipeline.NotionClient, database_id: str) -> set[str]:
-    """Return page IDs already classified by the Intelligence pipeline.
-
-    `Intelligence Processed` is deliberately user-resettable in Notion. Turning
-    it off is the explicit way to re-evaluate an article after a major policy
-    change; normal reruns do not repeatedly spend model calls on stable NOOPs.
-    """
+    """Return page IDs already classified by the global Intelligence pipeline."""
     rows = notion.query_database(
         database_id,
         filter_obj={"property": "Intelligence Processed", "checkbox": {"equals": True}},
@@ -107,6 +107,68 @@ def filter_unprocessed_articles(
         return []
     processed = processed_article_ids(notion, database_id)
     return [article for article in articles if pipeline._clean_id(article.page_id) not in processed]
+
+
+def region_processed_article_ids(
+    notion: pipeline.NotionClient,
+    database_id: str,
+    region: str,
+) -> set[str]:
+    """Return pages already classified for one regional backfill scope.
+
+    The global `Intelligence Processed` checkbox is intentionally not consulted:
+    a source can be a stable NOOP for India yet a valid CREATE for Japan. Regional
+    processing state therefore lives independently in a multi-select property.
+    """
+    region_name = str(region or "").strip()
+    if not region_name:
+        return set()
+    rows = notion.query_database(
+        database_id,
+        filter_obj={"property": REGION_PROCESSED_PROPERTY, "multi_select": {"contains": region_name}},
+        max_pages=100,
+    )
+    return {
+        pipeline._clean_id(str(row.get("id") or ""))
+        for row in rows
+        if row.get("id")
+    }
+
+
+def filter_region_unprocessed_articles(
+    notion: pipeline.NotionClient,
+    database_id: str,
+    articles: list[pipeline.Article],
+    region: str,
+) -> list[pipeline.Article]:
+    if not articles:
+        return []
+    processed = region_processed_article_ids(notion, database_id, region)
+    return [article for article in articles if pipeline._clean_id(article.page_id) not in processed]
+
+
+def _region_state_map(
+    notion: pipeline.NotionClient,
+    database_id: str,
+) -> dict[str, list[str]]:
+    """Load only rows that already have regional classifications.
+
+    This lets us append a second region without overwriting the first region's
+    marker and avoids a GET request for every processed article.
+    """
+    rows = notion.query_database(
+        database_id,
+        filter_obj={"property": REGION_PROCESSED_PROPERTY, "multi_select": {"is_not_empty": True}},
+        max_pages=100,
+    )
+    out: dict[str, list[str]] = {}
+    for row in rows:
+        page_id = pipeline._clean_id(str(row.get("id") or ""))
+        if not page_id:
+            continue
+        values = pipeline._prop_multi(row.get("properties") or {}, REGION_PROCESSED_PROPERTY)
+        out[page_id] = values
+    return out
 
 
 def mark_page_ids_processed(
@@ -133,18 +195,50 @@ def mark_page_ids_processed(
     return errors
 
 
+def mark_page_ids_region_processed(
+    notion: pipeline.NotionClient,
+    database_id: str,
+    page_ids: list[str],
+    *,
+    region: str,
+    dry_run: bool,
+) -> list[dict[str, str]]:
+    if dry_run:
+        return []
+    region_name = str(region or "").strip()
+    if not region_name:
+        return [{"page_id": "", "error": "missing region"}]
+    current = _region_state_map(notion, database_id)
+    errors: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for raw_page_id in page_ids:
+        page_id = pipeline._hyphenate_id(raw_page_id)
+        key = pipeline._clean_id(page_id)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        values = list(current.get(key, []))
+        if region_name in values:
+            continue
+        values.append(region_name)
+        try:
+            notion.update_page(
+                page_id,
+                {REGION_PROCESSED_PROPERTY: {"multi_select": [{"name": value} for value in values]}},
+            )
+            current[key] = values
+        except Exception as exc:
+            logging.exception("intelligence_mark_region_processed_failed page_id=%s region=%s", page_id, region_name)
+            errors.append({"page_id": page_id, "error": f"{type(exc).__name__}: {exc}"})
+    return errors
+
+
 def _load_existing_and_migrate_linked(
     notion: pipeline.NotionClient,
     db_id: str,
     max_existing: int,
 ) -> list[pipeline.Insight]:
-    """One-time per process: mark currently linked source pages as classified.
-
-    Existing Tracking Insights are already accepted Intelligence decisions. Their
-    source pages should not be fetched and parsed again before the linked-ID check.
-    Closed rows are excluded by the underlying loader and therefore do not seed
-    this migration.
-    """
+    """One-time per process: mark currently linked source pages globally classified."""
     global _LINKED_MIGRATION_DONE
     existing = _ORIGINAL_LOAD_EXISTING(notion, db_id, max_existing)
     if _LINKED_MIGRATION_DONE or _is_dry_run():
@@ -204,12 +298,38 @@ def mark_applied_articles_processed(
     *,
     dry_run: bool,
 ) -> list[dict[str, str]]:
-    """Persist successful CREATE/UPDATE/NOOP classifications on source pages."""
+    """Persist successful CREATE/UPDATE/NOOP classifications globally."""
     page_ids: list[str] = []
     for applied in result.get("applied") or []:
         for ref in applied.get("article_refs") or []:
             page_ids.append(str(ref.get("page_id") or ""))
     return mark_page_ids_processed(notion, page_ids, dry_run=dry_run)
+
+
+def mark_applied_articles_region_processed(
+    notion: pipeline.NotionClient,
+    result: dict[str, Any],
+    *,
+    region: str,
+    nikkei_db_id: str,
+    general_db_id: str,
+    dry_run: bool,
+) -> list[dict[str, str]]:
+    """Persist successful classifications for one regional scope only."""
+    by_source: dict[str, list[str]] = {"nikkei": [], "general": []}
+    for applied in result.get("applied") or []:
+        for ref in applied.get("article_refs") or []:
+            source = str(ref.get("source") or "").strip().lower()
+            if source in by_source:
+                by_source[source].append(str(ref.get("page_id") or ""))
+    errors: list[dict[str, str]] = []
+    errors.extend(mark_page_ids_region_processed(
+        notion, nikkei_db_id, by_source["nikkei"], region=region, dry_run=dry_run,
+    ))
+    errors.extend(mark_page_ids_region_processed(
+        notion, general_db_id, by_source["general"], region=region, dry_run=dry_run,
+    ))
+    return errors
 
 
 def processing_apply_operations(
