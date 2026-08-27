@@ -1,0 +1,1 @@
+One-time dry-run trigger for final India Intelligence v1.2 acceptance validation. No Notion Intelligence writes or source processed markers are expected in dry-run mode.
