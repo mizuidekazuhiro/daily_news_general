@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any
 
 import src.intelligence_pipeline as pipeline
@@ -14,6 +15,29 @@ _ORIGINAL_APPLY_OPERATIONS = pipeline.apply_operations
 _PATCHED = False
 _LINKED_MIGRATION_DONE = False
 
+# Source-importance scoring is intentionally broader and can underrate durable
+# Intelligence events (for example a binding 50:50 steel JV can arrive as a
+# stock-market article with ImportanceScore 2.5).  Let a narrow set of clearly
+# structural headlines through to the Intelligence policy layer, which remains
+# responsible for CREATE/UPDATE/NOOP.
+STRUCTURAL_ENTRY_SCORE_FLOOR = 2.0
+STRUCTURAL_ENTRY_PATTERNS = (
+    r"\bjoint venture\b",
+    r"\b50\s*:\s*50\b.*\bjv\b",
+    r"\bjv\b.*\b(?:steel|plant|facility|company)\b",
+    r"\bacquir(?:e|es|ed|ing|ition)\b",
+    r"\bmerger\b|\bmerge(?:s|d)?\b|\btakeover\b",
+    r"\bcommission(?:s|ed|ing)?\b|\binaugurat(?:e|es|ed|ion)\b",
+    r"\bgreenfield\b|\bbrownfield\b",
+    r"\bcapacity\b.*\b(?:mtpa|million tonnes|million tons|tpa|ktpa)\b",
+    r"\b(?:mtpa|million tonnes|million tons|tpa|ktpa)\b.*\bcapacity\b",
+    r"\belectric arc furnace\b|\beaf\b|\bblast furnace\b",
+    r"\bpreferred bidder\b|\bmining block\b|\biron[- ]ore block\b|\bcoal block\b",
+    r"\bsafeguard duty\b|\banti[- ]dumping\b|\bcountervailing duty\b",
+    r"\b(?:government|cabinet|regulator|commission)\b.*\b(?:approv(?:e|es|ed|al)|notification|policy)\b",
+    r"\b(?:epc|engineering)\b.*\b(?:contract|order|award)\b",
+)
+
 
 def _env_bool(name: str, default: bool = False) -> bool:
     value = os.getenv(name)
@@ -24,6 +48,35 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 def _is_dry_run() -> bool:
     return _env_bool("INTELLIGENCE_DRY_RUN") or _env_bool("INDIA_STEEL_BACKFILL_DRY_RUN")
+
+
+def intelligence_entry_floor(min_score: float) -> float:
+    return min(float(min_score), STRUCTURAL_ENTRY_SCORE_FLOOR)
+
+
+def is_structural_entry_candidate(article: pipeline.Article) -> bool:
+    haystack = " | ".join([
+        str(article.title or ""),
+        " ".join(str(tag or "") for tag in article.tags),
+    ]).casefold()
+    return any(re.search(pattern, haystack, flags=re.IGNORECASE) for pattern in STRUCTURAL_ENTRY_PATTERNS)
+
+
+def filter_intelligence_entry_candidates(
+    articles: list[pipeline.Article],
+    min_score: float,
+) -> list[pipeline.Article]:
+    """Keep normal high-score items plus low-score, clearly structural events."""
+    threshold = float(min_score)
+    return [
+        article
+        for article in articles
+        if article.importance_score >= threshold
+        or (
+            article.importance_score >= STRUCTURAL_ENTRY_SCORE_FLOOR
+            and is_structural_entry_candidate(article)
+        )
+    ]
 
 
 def processed_article_ids(notion: pipeline.NotionClient, database_id: str) -> set[str]:
@@ -116,7 +169,14 @@ def _load_nikkei_unprocessed(
     min_score: float,
     body_chars: int,
 ) -> list[pipeline.Article]:
-    articles = _ORIGINAL_LOAD_NIKKEI(notion, db_id, cutoff, min_score, body_chars)
+    articles = _ORIGINAL_LOAD_NIKKEI(
+        notion,
+        db_id,
+        cutoff,
+        intelligence_entry_floor(min_score),
+        body_chars,
+    )
+    articles = filter_intelligence_entry_candidates(articles, min_score)
     return filter_unprocessed_articles(notion, db_id, articles)
 
 
@@ -127,7 +187,14 @@ def _load_general_unprocessed(
     min_score: float,
     body_chars: int,
 ) -> list[pipeline.Article]:
-    articles = _ORIGINAL_LOAD_GENERAL(notion, db_id, cutoff, min_score, body_chars)
+    articles = _ORIGINAL_LOAD_GENERAL(
+        notion,
+        db_id,
+        cutoff,
+        intelligence_entry_floor(min_score),
+        body_chars,
+    )
+    articles = filter_intelligence_entry_candidates(articles, min_score)
     return filter_unprocessed_articles(notion, db_id, articles)
 
 
