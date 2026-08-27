@@ -24,7 +24,12 @@ apply_policy_patch()
 
 # Persist CREATE/UPDATE/NOOP classifications before v2 imports apply_operations,
 # so its runtime reference includes the source-article processed marker.
-from src.intelligence_processing import apply_processing_patch, filter_unprocessed_articles
+from src.intelligence_processing import (
+    apply_processing_patch,
+    filter_intelligence_entry_candidates,
+    filter_unprocessed_articles,
+    intelligence_entry_floor,
+)
 
 apply_processing_patch()
 
@@ -52,8 +57,15 @@ def load_general_v3(
     min_score: float,
     body_chars: int,
 ) -> list[Article]:
-    """Apply strict India evidence, processed-state filter and title dedup."""
-    articles = _original_load_general(notion, db_id, cutoff, min_score, body_chars)
+    """Apply structural entry exception, India evidence, processed filter and dedup."""
+    articles = _original_load_general(
+        notion,
+        db_id,
+        cutoff,
+        intelligence_entry_floor(min_score),
+        body_chars,
+    )
+    articles = filter_intelligence_entry_candidates(articles, min_score)
     articles = filter_unprocessed_articles(notion, db_id, articles)
     filtered = [a for a in articles if explicit_india_evidence_v3(a)]
 
@@ -78,7 +90,14 @@ def load_nikkei_v3(
     min_score: float,
     body_chars: int,
 ) -> list[Article]:
-    articles = _original_load_nikkei(notion, db_id, cutoff, min_score, body_chars)
+    articles = _original_load_nikkei(
+        notion,
+        db_id,
+        cutoff,
+        intelligence_entry_floor(min_score),
+        body_chars,
+    )
+    articles = filter_intelligence_entry_candidates(articles, min_score)
     return filter_unprocessed_articles(notion, db_id, articles)
 
 
