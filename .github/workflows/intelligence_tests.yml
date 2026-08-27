@@ -12,6 +12,7 @@ on:
       - 'tests/test_intelligence_pipeline.py'
       - 'tests/test_intelligence_safety.py'
       - 'tests/test_intelligence_rules.py'
+      - 'tests/test_intelligence_policy.py'
       - '.github/workflows/intelligence.yml'
       - '.github/workflows/india_steel_backfill_v3.yml'
       - '.github/workflows/intelligence_tests.yml'
@@ -27,6 +28,7 @@ on:
       - 'tests/test_intelligence_pipeline.py'
       - 'tests/test_intelligence_safety.py'
       - 'tests/test_intelligence_rules.py'
+      - 'tests/test_intelligence_policy.py'
       - '.github/workflows/intelligence.yml'
       - '.github/workflows/india_steel_backfill_v3.yml'
       - '.github/workflows/intelligence_tests.yml'
@@ -65,4 +67,4 @@ jobs:
           PY
 
       - name: Run Intelligence unit tests
-        run: pytest -q tests/test_intelligence_pipeline.py tests/test_intelligence_safety.py tests/test_intelligence_rules.py
+        run: pytest -q tests/test_intelligence_pipeline.py tests/test_intelligence_safety.py tests/test_intelligence_rules.py tests/test_intelligence_policy.py
