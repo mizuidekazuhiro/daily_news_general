@@ -42,14 +42,11 @@ def test_japan_scope_does_not_match_nippon_steel_name_alone():
 def test_japan_scope_does_not_match_japanese_company_name_alone():
     profile = get_region_profile("Japan")
     article = _article(
-        "日本製鉄、海外製鉄所への投資を拡大",
-        "インド国内の製鉄所で能力増強を実施する。日本国内の設備や供給への変更は発表していない。",
+        "日本製鉄、インド製鉄所への投資を拡大",
+        "インド国内の製鉄所で能力増強を実施する。現地の生産能力と設備投資を拡大する計画だ。",
         ["India", "Japan"],
     )
-    # The article explicitly says there is no Japan-domestic change, but the
-    # phrase 日本国内 still exists; the region prefilter is intentionally recall-
-    # oriented and policy/identity layers decide whether it becomes Intelligence.
-    assert explicit_region_evidence(article, profile)
+    assert not explicit_region_evidence(article, profile)
 
 
 def test_india_profile_still_rejects_indian_owner_nationality_only():
