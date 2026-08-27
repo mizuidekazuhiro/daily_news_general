@@ -1,5 +1,0 @@
-India steel Intelligence historical backfill live trigger.
-Date: 2026-08-27
-Lookback: 180 days
-Minimum importance score: 4
-Validated by v3 dry-run: 448 candidates; first 20 => create 6 / update 3 / noop 5 / errors 0.
