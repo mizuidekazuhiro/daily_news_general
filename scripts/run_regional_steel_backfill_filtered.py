@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import os
 import re
+import sys
+from pathlib import Path
 from typing import Any
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from scripts import run_regional_steel_backfill as regional
 from src.intelligence_pipeline import Article
@@ -24,24 +30,38 @@ STEEL_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 
-STEEL_TAG_HINTS = {
-    "steel",
-    "steel plant investment",
-    "製鉄所の設備投資",
-    "green steel",
-}
+# Japan must be the physical/commercial event geography. A phrase such as
+# "Japanese steelmaker" or a Japanese company name does not make an overseas
+# project a Japan Insight.
+JAPAN_EVENT_RE = re.compile(
+    r"(?:"
+    r"\b(?:in|into|across|within|from|to)\s+japan\b|"
+    r"\bjapan(?:'s)?\s+(?:steel\s+(?:market|industry|production|demand|supply|capacity|imports?|exports?|policy)|"
+    r"domestic\s+(?:steel|market|production|plant|plants|mill|mills|capacity|investment|operations?))\b|"
+    r"\b(?:kimitsu|kashima|chiba|keihin|kurashiki|fukuyama|nagoya|wakayama|oita|hirohata|muroran|kakogawa|"
+    r"kyushu\s+works?|east\s+nippon\s+works?|west\s+nippon\s+works?)\b|"
+    r"日本(?:国内|市場|政府|鉄鋼業|鉄鋼市場|製鉄所|工場|事業|生産|需要|供給|投資|設備|能力|政策)|"
+    r"国内(?:製鉄所|鉄鋼|市場|需要|供給|生産|設備|能力|投資|事業|工場)|"
+    r"(?:君津|鹿島|千葉|京浜|倉敷|福山|名古屋|和歌山|大分|広畑|室蘭|神戸|加古川|九州)(?:製鉄所|地区|工場|事業所)"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def explicit_steel_evidence(article: Article) -> bool:
     text = f"{article.title}\n{article.body[:5000]}"
-    if STEEL_CONTEXT_RE.search(text):
-        return True
-    tags = {str(tag or "").strip().casefold() for tag in article.tags}
-    return bool(tags & STEEL_TAG_HINTS)
+    return bool(STEEL_CONTEXT_RE.search(text))
+
+
+def explicit_region_evidence_strict(article: Article, profile: regional.RegionProfile) -> bool:
+    text = f"{article.title}\n{article.body[:5000]}"
+    if profile.name == "Japan":
+        return bool(JAPAN_EVENT_RE.search(text))
+    return _ORIGINAL_REGION_EVIDENCE(article, profile)
 
 
 def explicit_region_and_steel_evidence(article: Article, profile: regional.RegionProfile) -> bool:
-    return _ORIGINAL_REGION_EVIDENCE(article, profile) and explicit_steel_evidence(article)
+    return explicit_region_evidence_strict(article, profile) and explicit_steel_evidence(article)
 
 
 def filter_existing_for_region(existing: list[Any], profile: regional.RegionProfile) -> list[Any]:
