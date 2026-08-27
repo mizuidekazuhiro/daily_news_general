@@ -62,7 +62,7 @@ jobs:
       REGIONAL_STEEL_BACKFILL_MODEL: "gpt-5-mini"
       REGIONAL_STEEL_BACKFILL_LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '180' }}
       REGIONAL_STEEL_BACKFILL_MIN_SCORE: ${{ github.event_name == 'workflow_dispatch' && inputs.min_score || '4' }}
-      REGIONAL_STEEL_BACKFILL_BATCH_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.batch_size || '12' }}
+      REGIONAL_STEEL_BACKFILL_BATCH_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.batch_size || '4' }}
       REGIONAL_STEEL_BACKFILL_MAX_EXISTING: "500"
       REGIONAL_STEEL_BACKFILL_BODY_CHARS: "6000"
       REGIONAL_STEEL_BACKFILL_MAX_OUTPUT_TOKENS: "10000"
