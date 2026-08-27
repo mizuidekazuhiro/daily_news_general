@@ -41,7 +41,7 @@ jobs:
       INTELLIGENCE_LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '2' }}
       INTELLIGENCE_MIN_IMPORTANCE_SCORE: ${{ github.event_name == 'workflow_dispatch' && inputs.min_importance_score || '4' }}
       INTELLIGENCE_MAX_CANDIDATES: ${{ github.event_name == 'workflow_dispatch' && inputs.max_candidates || '10' }}
-      INTELLIGENCE_MAX_EXISTING_INSIGHTS: "100"
+      INTELLIGENCE_MAX_EXISTING_INSIGHTS: "500"
       INTELLIGENCE_ARTICLE_BODY_CHARS: "3500"
       INTELLIGENCE_MAX_OUTPUT_TOKENS: "7000"
       INTELLIGENCE_DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || 'false' }}
