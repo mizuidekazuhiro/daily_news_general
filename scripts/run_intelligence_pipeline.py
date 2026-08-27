@@ -7,6 +7,10 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from src.intelligence_safety import apply_safety_patch
+
+apply_safety_patch()
+
 from src.intelligence_pipeline import main
 
 
