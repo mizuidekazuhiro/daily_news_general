@@ -52,6 +52,7 @@ DATA-INTEGRITY OVERRIDES (code-enforced, not business-policy rules):
 16. For update, key_facts must contain ONLY the new source-supported factual delta. Do not rewrite or summarize away prior facts; the application layer merges the new delta into historical Key Facts.
 17. Every number, amount, capacity, percentage, date and stated duration in key_facts/what_changed must appear in the referenced new article text. If the source does not state it, omit it and put the uncertainty in watch_items.
 18. Never infer execution risk, capex reallocation, delays or causality from a management/personnel change unless the source explicitly links that change to the tracked project.
+19. A material project-state upgrade (for example JV formed, acquisition closed, plant commissioned, FID/approval, construction started) must be supported by substantive article body text, not only by a headline, SEO title or navigation snippet.
 """.strip()
 
 
@@ -224,6 +225,10 @@ def _integrity_normalize_operations(
                     safety_reason=True,
                 )
             )
+            continue
+
+        if operation.get("action") == "update" and safety._headline_only_status_upgrade(operation, articles):
+            safe.append(_noop_from(operation, "headline_only_status_upgrade", safety_reason=True))
             continue
 
         if operation.get("action") == "update":
