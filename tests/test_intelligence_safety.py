@@ -101,6 +101,65 @@ def test_cross_geography_update_is_noop_even_with_noisy_country_metadata():
     assert ops[0]["safety_reason"] == "geography_or_project_mismatch"
 
 
+def test_indian_owner_phrase_does_not_make_ijmuiden_article_an_india_update():
+    existing = make_insight(
+        key="tata-steel|india|capacity-capex|fy27",
+        title="Tata Steel India capacity strategy",
+        company="Tata Steel",
+        country=["India"],
+    )
+    article = make_article(
+        "11111111-1111-1111-1111-111111111112",
+        title="MPs agree to back €2b for Tata Steel IJmuiden",
+        body=(
+            "MPs agreed to a €2 billion subsidy package for Tata Steel in IJmuiden. "
+            "The agreement was struck with Tata's Indian owners and concerns cleaner production in the Netherlands."
+        ),
+        country=["India", "EU"],
+    )
+
+    ops = safe_normalize_operations(
+        operation_raw(
+            article,
+            existing,
+            key_facts="A €2 billion subsidy package was approved for IJmuiden.",
+            what_changed="The €2 billion Netherlands package advanced.",
+        ),
+        [article],
+        [existing],
+    )
+    assert ops[0]["action"] == "noop"
+    assert ops[0]["safety_reason"] == "geography_or_project_mismatch"
+
+
+def test_same_company_same_country_wrong_topic_is_noop():
+    existing = make_insight(
+        key="tata-steel|india|capacity-capex|fy27",
+        title="Tata Steel India capacity strategy",
+        company="Tata Steel",
+        country=["India"],
+    )
+    article = make_article(
+        "11111111-1111-1111-1111-111111111113",
+        title="Tata Steel CEO highlights critical minerals risks in India",
+        body="In India, Tata Steel management highlighted critical-minerals sourcing vulnerability and freight pressure.",
+        country=["India"],
+    )
+
+    ops = safe_normalize_operations(
+        operation_raw(
+            article,
+            existing,
+            key_facts="Management highlighted critical-minerals sourcing vulnerability.",
+            what_changed="Raw-material risk commentary was added.",
+        ),
+        [article],
+        [existing],
+    )
+    assert ops[0]["action"] == "noop"
+    assert ops[0]["safety_reason"] == "topic_mismatch"
+
+
 def test_named_project_location_must_be_in_source_text():
     existing = make_insight(
         key="sail|bokaro|brownfield-expansion|2026",

@@ -10,15 +10,14 @@ _ORIGINAL_PROMPT_SYSTEM = pipeline._prompt_system
 _ORIGINAL_NORMALIZE_OPERATIONS = pipeline.normalize_operations
 _ORIGINAL_PROPERTIES_FOR_OPERATION = pipeline._properties_for_operation
 
-# Stable geography/project anchors encoded in Insight Keys. If one of these is
-# present in an existing key, a source article must explicitly mention it before
-# the article is allowed to update that row. This intentionally ignores noisy
-# Notion country metadata and reads the article text itself.
+# Stable geography/project anchors encoded in Insight Keys. Project/location
+# anchors require literal source-text evidence. Country anchors can use stricter
+# operational-context patterns to avoid false positives such as "Indian owners"
+# in an otherwise Netherlands-only article.
 GEO_KEY_ALIASES: dict[str, tuple[str, ...]] = {
-    "india": ("india", "indian", "インド"),
     "japan": ("japan", "japanese", "日本"),
     "china": ("china", "chinese", "中国"),
-    "united-states": ("united states", "u.s.", "us steel", "america", "american", "米国"),
+    "united-states": ("united states", "u.s.", "america", "american", "米国"),
     "eu": ("european union", "europe", "european", "eu ", "eu-"),
     "vietnam": ("vietnam", "vietnamese", "ベトナム"),
     "thailand": ("thailand", "thai ", "タイ"),
@@ -36,6 +35,31 @@ GEO_KEY_ALIASES: dict[str, tuple[str, ...]] = {
     "vijayanagar": ("vijayanagar",),
     "dolvi": ("dolvi",),
     "kalinganagar": ("kalinganagar",),
+}
+
+COUNTRY_KEY_PATTERNS: dict[str, tuple[str, ...]] = {
+    "india": (
+        r"\bin india\b",
+        r"\bindia(?:n)? operations?\b",
+        r"\bindia(?:n)? (?:steel|capacity|production|output|capex|investment|plant|project|market|demand|business)\b",
+        r"\b(?:jharkhand|odisha|orissa|andhra pradesh|ludhiana|hazira|jamshedpur|vijayanagar|dolvi|bokaro|kalinganagar|rajayyapeta|rayalaseema|paradeep)\b",
+        r"インド(?:国内|事業|生産|能力|投資|製鉄|鉄鋼)",
+    ),
+}
+
+# Topic anchors are derived from stable Insight-Key segments. This prevents an
+# India article about the same company but an unrelated topic (for example raw
+# materials commentary) from updating an India capacity-strategy row.
+TOPIC_KEY_ALIASES: dict[str, tuple[str, ...]] = {
+    "capacity-strategy": ("capacity", "expansion", "production", "output", "mtpa", "capex", "investment", "commission"),
+    "capacity-capex": ("capacity", "capex", "investment", "expansion", "production", "output", "mtpa"),
+    "brownfield-expansion": ("brownfield", "expansion", "capacity", "bokaro steel plant", "tender", "epc", "blast furnace"),
+    "greenfield-jv": ("joint venture", " jv ", "greenfield", "integrated steel", "steel plant", "capacity"),
+    "greenfield": ("greenfield", "steel plant", "integrated steel", "capacity", "construction", "foundation", "project"),
+    "low-carbon-ironmaking": ("easymelt", "hisarna", "ironmaking", "blast furnace", "low-carbon", "low carbon", "decarbon"),
+    "eaf": ("eaf", "electric arc furnace", "scrap-based", "scrap based"),
+    "safeguard-duty": ("safeguard duty", "safeguard", "duty", "tariff"),
+    "production-trends": ("crude steel production", "finished steel", "steel consumption", "steel output"),
 }
 
 COMPANY_ANCHORS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -64,6 +88,10 @@ def _normalise_text(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip().casefold()
 
 
+def _key_segments(insight_key: str) -> list[str]:
+    return [x.strip().casefold() for x in str(insight_key or "").split("|") if x.strip()]
+
+
 def _articles_for_operation(operation: dict[str, Any], candidates: list[pipeline.Article]) -> list[pipeline.Article]:
     article_map = {(a.source, pipeline._clean_id(a.page_id)): a for a in candidates}
     out: list[pipeline.Article] = []
@@ -83,17 +111,37 @@ def _source_text(articles: list[pipeline.Article]) -> str:
     return _normalise_text("\n".join(f"{a.title}\n{a.body}\n{a.published_at}" for a in articles))
 
 
-def _required_geo_alias_groups(insight_key: str) -> list[tuple[str, ...]]:
-    segments = [x.strip().casefold() for x in str(insight_key or "").split("|") if x.strip()]
-    return [GEO_KEY_ALIASES[x] for x in segments if x in GEO_KEY_ALIASES]
-
-
 def _company_guard(existing: pipeline.Insight, source_text: str) -> bool:
     company = _normalise_text(existing.company)
     for needle, aliases in COMPANY_ANCHORS:
         if needle in company:
             return any(_normalise_text(alias) in source_text for alias in aliases)
     return True
+
+
+def _geography_guard(insight_key: str, source_text: str) -> bool:
+    for segment in _key_segments(insight_key):
+        patterns = COUNTRY_KEY_PATTERNS.get(segment)
+        if patterns and not any(re.search(pattern, source_text, re.IGNORECASE) for pattern in patterns):
+            return False
+        aliases = GEO_KEY_ALIASES.get(segment)
+        if aliases and not any(_normalise_text(alias) in source_text for alias in aliases):
+            return False
+    return True
+
+
+def _topic_guard(insight_key: str, source_text: str) -> bool:
+    matched_topic_anchor = False
+    for segment in _key_segments(insight_key):
+        for anchor, aliases in TOPIC_KEY_ALIASES.items():
+            if anchor not in segment:
+                continue
+            matched_topic_anchor = True
+            if not any(_normalise_text(alias) in source_text for alias in aliases):
+                return False
+    # Not all historical keys encode a machine-readable topic; those still get
+    # company + geography guards and the stricter GPT prompt.
+    return True if matched_topic_anchor else True
 
 
 def _update_identity_guard(existing: pipeline.Insight, articles: list[pipeline.Article]) -> tuple[bool, str]:
@@ -103,10 +151,10 @@ def _update_identity_guard(existing: pipeline.Insight, articles: list[pipeline.A
 
     if not _company_guard(existing, text):
         return False, "company_mismatch"
-
-    for aliases in _required_geo_alias_groups(existing.insight_key):
-        if not any(_normalise_text(alias) in text for alias in aliases):
-            return False, "geography_or_project_mismatch"
+    if not _geography_guard(existing.insight_key, text):
+        return False, "geography_or_project_mismatch"
+    if not _topic_guard(existing.insight_key, text):
+        return False, "topic_mismatch"
 
     return True, ""
 
@@ -270,13 +318,14 @@ def safe_prompt_system() -> str:
     return _ORIGINAL_PROMPT_SYSTEM() + """
 
 SAFETY AND KNOWLEDGE-MAINTENANCE OVERRIDES:
-13. UPDATE IDENTITY LOCK: An update must concern the same entity/company AND the same geography/project/topic as the existing row. Company name alone is never sufficient. If an existing insight_key contains a named country, state, city, plant or project, the new source must explicitly concern that geography/project. Otherwise create a separate durable insight or noop.
-14. For update, do NOT redefine the row. Keep the existing insight title, company, country, theme and event_type conceptually unchanged. The application layer will enforce this lock.
-15. For update, key_facts must contain ONLY the new source-supported factual delta. Do not rewrite or summarize away prior facts; the application layer merges the new delta into historical Key Facts.
-16. CREATE IS RARE. Create only when there is a concrete durable item worth tracking over time: plant/capacity milestone, named investment, JV/M&A, formal policy/trade measure, material contract/order, project-level technology milestone, or a material structural supply/demand shift.
-17. Default to noop for management commentary/opinion, generic risk statements, one-off monthly statistics, think-tank recommendations, broad diplomatic cooperation, or generic MOUs without a named steel project/contract/investment.
-18. Every number, amount, capacity, percentage, date and stated duration in key_facts/what_changed must appear in the referenced new article text. If the source does not state it, omit it and put the uncertainty in watch_items.
-19. Never infer execution risk, capex reallocation, delays or causality from a management/personnel change unless the source explicitly links that change to the tracked project.
+13. UPDATE IDENTITY LOCK: An update must concern the same entity/company AND the same geography/project/topic as the existing row. Company name alone is never sufficient. If an existing insight_key contains a named country, state, city, plant or project, the new source must explicitly concern that geography/project. A nationality reference such as 'Indian owner' does not establish that an article concerns Indian operations.
+14. TOPIC LOCK: A same-company/same-country article still cannot update an unrelated topic. Capacity/capex rows require capacity, production, investment or expansion evidence; technology/project rows require evidence about that technology/project. Otherwise create a separate durable insight or noop.
+15. For update, do NOT redefine the row. Keep the existing insight title, company, country, theme and event_type conceptually unchanged. The application layer will enforce this lock.
+16. For update, key_facts must contain ONLY the new source-supported factual delta. Do not rewrite or summarize away prior facts; the application layer merges the new delta into historical Key Facts.
+17. CREATE IS RARE. Create only when there is a concrete durable item worth tracking over time: plant/capacity milestone, named investment, JV/M&A, formal policy/trade measure, material contract/order, project-level technology milestone, or a material structural supply/demand shift.
+18. Default to noop for management commentary/opinion, generic risk statements, one-off monthly statistics, think-tank recommendations, broad diplomatic cooperation, or generic MOUs without a named steel project/contract/investment.
+19. Every number, amount, capacity, percentage, date and stated duration in key_facts/what_changed must appear in the referenced new article text. If the source does not state it, omit it and put the uncertainty in watch_items.
+20. Never infer execution risk, capex reallocation, delays or causality from a management/personnel change unless the source explicitly links that change to the tracked project.
 """.strip()
 
 
