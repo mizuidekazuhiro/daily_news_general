@@ -8,9 +8,11 @@ on:
       - 'src/intelligence_policy.py'
       - 'src/intelligence_rules.py'
       - 'src/intelligence_processing.py'
+      - 'scripts/setup_intelligence_database.py'
       - 'scripts/run_intelligence_pipeline.py'
       - 'scripts/run_india_steel_backfill_v3.py'
       - 'scripts/run_regional_steel_backfill.py'
+      - 'tests/test_setup_intelligence_database.py'
       - 'tests/test_intelligence_pipeline.py'
       - 'tests/test_intelligence_safety.py'
       - 'tests/test_intelligence_rules.py'
@@ -31,9 +33,11 @@ on:
       - 'src/intelligence_policy.py'
       - 'src/intelligence_rules.py'
       - 'src/intelligence_processing.py'
+      - 'scripts/setup_intelligence_database.py'
       - 'scripts/run_intelligence_pipeline.py'
       - 'scripts/run_india_steel_backfill_v3.py'
       - 'scripts/run_regional_steel_backfill.py'
+      - 'tests/test_setup_intelligence_database.py'
       - 'tests/test_intelligence_pipeline.py'
       - 'tests/test_intelligence_safety.py'
       - 'tests/test_intelligence_rules.py'
@@ -65,7 +69,7 @@ jobs:
           pip install pytest pyyaml
 
       - name: Compile Intelligence modules
-        run: python -m py_compile src/intelligence_pipeline.py src/intelligence_safety.py src/intelligence_policy.py src/intelligence_rules.py src/intelligence_processing.py scripts/run_intelligence_pipeline.py scripts/run_india_steel_backfill_v3.py scripts/run_regional_steel_backfill.py
+        run: python -m py_compile src/intelligence_pipeline.py src/intelligence_safety.py src/intelligence_policy.py src/intelligence_rules.py src/intelligence_processing.py scripts/setup_intelligence_database.py scripts/run_intelligence_pipeline.py scripts/run_india_steel_backfill_v3.py scripts/run_regional_steel_backfill.py
 
       - name: Validate Intelligence workflow YAML
         run: |
@@ -82,4 +86,4 @@ jobs:
           PY
 
       - name: Run Intelligence unit tests
-        run: pytest -q tests/test_intelligence_pipeline.py tests/test_intelligence_safety.py tests/test_intelligence_rules.py tests/test_intelligence_policy.py tests/test_intelligence_policy_headline_guard.py tests/test_intelligence_final_quality.py tests/test_intelligence_processing.py tests/test_regional_steel_backfill.py
+        run: pytest -q tests/test_setup_intelligence_database.py tests/test_intelligence_pipeline.py tests/test_intelligence_safety.py tests/test_intelligence_rules.py tests/test_intelligence_policy.py tests/test_intelligence_policy_headline_guard.py tests/test_intelligence_final_quality.py tests/test_intelligence_processing.py tests/test_regional_steel_backfill.py

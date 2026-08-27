@@ -57,6 +57,7 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       OPENAI_REQUEST_TIMEOUT_SECONDS: "180"
       OPENAI_MAX_RETRIES: "1"
+      NOTION_INTELLIGENCE_DB_ID: "3c9dec27-c9aa-81d3-8de8-c6d687f3db77"
       INTELLIGENCE_NIKKEI_DB_ID: "354dec27-c9aa-803e-bef1-f446abac9b2e"
       INTELLIGENCE_GENERAL_DB_ID: "2eddec27-c9aa-8022-9699-c36467fd9477"
       INTELLIGENCE_RULES_DB_ID: "875d5e34-33cb-4363-bac4-5a6abdee5e98"
@@ -119,10 +120,15 @@ jobs:
         run: python -m py_compile scripts/setup_intelligence_database.py scripts/run_regional_steel_backfill.py src/intelligence_pipeline.py src/intelligence_safety.py src/intelligence_policy.py src/intelligence_rules.py src/intelligence_processing.py src/openai_json_client.py
 
       - name: Resolve Intelligence database
+        shell: bash
         run: |
-          db_id=$(python scripts/setup_intelligence_database.py)
-          echo "NOTION_INTELLIGENCE_DB_ID=${db_id}" >> "$GITHUB_ENV"
-          echo "Resolved Intelligence DB: ${db_id}"
+          if [[ -n "$NOTION_INTELLIGENCE_DB_ID" ]]; then
+            echo "Using configured Intelligence DB: $NOTION_INTELLIGENCE_DB_ID"
+          else
+            db_id=$(python scripts/setup_intelligence_database.py)
+            echo "NOTION_INTELLIGENCE_DB_ID=${db_id}" >> "$GITHUB_ENV"
+            echo "Resolved Intelligence DB: ${db_id}"
+          fi
 
       - name: Run regional steel backfill
         run: python scripts/run_regional_steel_backfill.py

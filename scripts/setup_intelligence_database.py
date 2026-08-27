@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from typing import Any
 
 import requests
@@ -19,8 +20,10 @@ def clean_id(value: str) -> str:
 
 
 class Notion:
-    def __init__(self, token: str):
+    def __init__(self, token: str, timeout: int = 30, max_retries: int = 5):
         self.session = requests.Session()
+        self.timeout = timeout
+        self.max_retries = max_retries
         self.headers = {
             "Authorization": f"Bearer {token}",
             "Notion-Version": NOTION_VERSION,
@@ -28,10 +31,30 @@ class Notion:
         }
 
     def request(self, method: str, url: str, **kwargs: Any) -> dict[str, Any]:
-        response = self.session.request(method, url, headers=self.headers, timeout=30, **kwargs)
-        if not response.ok:
-            raise RuntimeError(f"Notion {method} {url} failed: HTTP {response.status_code} {response.text[:500]}")
-        return response.json()
+        last_response: requests.Response | None = None
+        for attempt in range(self.max_retries):
+            response = self.session.request(method, url, headers=self.headers, timeout=self.timeout, **kwargs)
+            last_response = response
+            if response.ok:
+                return response.json()
+            if response.status_code == 429 or response.status_code >= 500:
+                if attempt + 1 < self.max_retries:
+                    retry_after = response.headers.get("Retry-After")
+                    try:
+                        wait = float(retry_after) if retry_after else float(min(2 ** attempt, 8))
+                    except (TypeError, ValueError):
+                        wait = float(min(2 ** attempt, 8))
+                    time.sleep(max(wait, 0.1))
+                    continue
+            raise RuntimeError(
+                f"Notion {method} {url} failed: HTTP {response.status_code} {response.text[:500]}"
+            )
+        if last_response is None:
+            raise RuntimeError(f"Notion {method} {url} failed without a response")
+        raise RuntimeError(
+            f"Notion {method} {url} failed after {self.max_retries} attempts: "
+            f"HTTP {last_response.status_code} {last_response.text[:500]}"
+        )
 
     def query_database(self, database_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self.request("POST", f"https://api.notion.com/v1/databases/{clean_id(database_id)}/query", json=payload)
@@ -155,18 +178,26 @@ def create_database(notion: Notion, parent_page_id: str) -> str:
     return str(data["id"])
 
 
+def resolve_database_id(notion: Notion) -> str:
+    configured = os.getenv("NOTION_INTELLIGENCE_DB_ID", "").strip()
+    if configured:
+        notion.query_database(configured, {"page_size": 1})
+        return configured
+
+    parent = find_or_create_container(notion)
+    database_id = find_child_database(notion, parent)
+    if not database_id:
+        database_id = create_database(notion, parent)
+    notion.query_database(database_id, {"page_size": 1})
+    return database_id
+
+
 def main() -> int:
     token = os.getenv("NOTION_TOKEN", "").strip()
     if not token:
         raise RuntimeError("NOTION_TOKEN is required")
     notion = Notion(token)
-    parent = find_or_create_container(notion)
-    database_id = find_child_database(notion, parent)
-    if not database_id:
-        database_id = create_database(notion, parent)
-    # Verify the resolved database is queryable by the same integration.
-    notion.query_database(database_id, {"page_size": 1})
-    print(database_id)
+    print(resolve_database_id(notion))
     return 0
 
 
