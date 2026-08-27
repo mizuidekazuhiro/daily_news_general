@@ -55,12 +55,36 @@ DATA-INTEGRITY OVERRIDES (code-enforced, not business-policy rules):
 """.strip()
 
 
+def _checklist_rule_ids(ruleset: Any, action: str) -> list[str]:
+    action = str(action or "").upper()
+    return [
+        rule.rule_id
+        for rule in ruleset.rules
+        if rule.rule_type in {"BLOCK", "REQUIRE"}
+        and rule.decision_scope in {"ALL", action}
+    ]
+
+
 def policy_prompt_system() -> str:
     ruleset = _ensure_rules_loaded()
     base = _integrity_prompt_system()
     if ruleset is None:
         return base
-    return base + ruleset.prompt_fragment()
+    create_checks = _checklist_rule_ids(ruleset, "CREATE")
+    update_checks = _checklist_rule_ids(ruleset, "UPDATE")
+    checklist = f"""
+
+MANDATORY POLICY CHECKLIST:
+- For every CREATE and UPDATE operation, return `rule_checks` as an object whose keys are exact Notion Rule IDs and values are JSON booleans.
+- CREATE must explicitly check every ID in this list: {create_checks}
+- UPDATE must explicitly check every ID in this list: {update_checks}
+- `true` means the rule condition is satisfied by the referenced article(s); `false` means it is not.
+- You MUST evaluate every listed BLOCK and REQUIRE rule one-by-one. Do not omit a rule merely because you think it is obviously false.
+- `rule_hits` must include every rule whose `rule_checks` value is true, plus any true BOOST rules.
+- A missing BLOCK/REQUIRE check makes the operation invalid and the application will convert it to NOOP.
+- Example: a JSW monthly production release with no restart/completion/capacity milestone must set BLK_UPDATE_SINGLE_PERIOD_STATS=true even if it mentions an ongoing BF upgrade.
+""".rstrip()
+    return base + ruleset.prompt_fragment() + checklist
 
 
 def _clean_ref_ids(refs: Any) -> set[str]:
@@ -81,9 +105,9 @@ def _raw_key(item: dict[str, Any]) -> str:
     return str(item.get("insight_key") or "").strip()
 
 
-def _policy_fields(raw: Any, operation: dict[str, Any]) -> tuple[list[str], str]:
+def _policy_fields(raw: Any, operation: dict[str, Any]) -> tuple[list[str], str, dict[str, bool]]:
     if not isinstance(raw, dict) or not isinstance(raw.get("operations"), list):
-        return [], ""
+        return [], "", {}
     target_action = str(operation.get("action") or "").strip().lower()
     target_key = str(operation.get("insight_key") or "").strip()
     target_refs = _clean_ref_ids(operation.get("article_refs"))
@@ -104,7 +128,7 @@ def _policy_fields(raw: Any, operation: dict[str, Any]) -> tuple[list[str], str]
             best_overlap = overlap
 
     if best is None:
-        return [], ""
+        return [], "", {}
     hits = []
     seen: set[str] = set()
     for value in best.get("rule_hits") or []:
@@ -112,7 +136,42 @@ def _policy_fields(raw: Any, operation: dict[str, Any]) -> tuple[list[str], str]
         if rule_id and rule_id not in seen:
             seen.add(rule_id)
             hits.append(rule_id)
-    return hits, str(best.get("rule_reason") or "").strip()
+
+    checks: dict[str, bool] = {}
+    raw_checks = best.get("rule_checks")
+    if isinstance(raw_checks, dict):
+        for key, value in raw_checks.items():
+            rule_id = str(key or "").strip()
+            if rule_id and isinstance(value, bool):
+                checks[rule_id] = value
+    return hits, str(best.get("rule_reason") or "").strip(), checks
+
+
+def _validate_rule_checklist(
+    ruleset: Any,
+    operation: dict[str, Any],
+    hits: list[str],
+    checks: dict[str, bool],
+) -> tuple[bool, str, list[str]]:
+    required_ids = _checklist_rule_ids(ruleset, str(operation.get("action") or ""))
+    missing = [rule_id for rule_id in required_ids if rule_id not in checks]
+    if missing:
+        return False, "missing_rule_checks:" + ",".join(missing), hits
+
+    control_ids = set(required_ids)
+    merged: list[str] = []
+    seen: set[str] = set()
+    for rule_id in hits:
+        if rule_id in control_ids:
+            continue
+        if rule_id not in seen:
+            seen.add(rule_id)
+            merged.append(rule_id)
+    for rule_id in required_ids:
+        if checks.get(rule_id) and rule_id not in seen:
+            seen.add(rule_id)
+            merged.append(rule_id)
+    return True, "", merged
 
 
 def _noop_from(
@@ -198,10 +257,16 @@ def policy_normalize_operations(
             out.append(operation)
             continue
 
-        hits, rule_reason = _policy_fields(raw, operation)
+        hits, rule_reason, checks = _policy_fields(raw, operation)
+        checklist_ok, checklist_reason, checked_hits = _validate_rule_checklist(ruleset, operation, hits, checks)
         checked = dict(operation)
-        checked["rule_hits"] = hits
+        checked["rule_hits"] = checked_hits
         checked["rule_reason"] = rule_reason
+        checked["rule_checks"] = checks
+        if not checklist_ok:
+            out.append(_noop_from(checked, checklist_reason, hits=tuple(checked_hits)))
+            continue
+
         decision = ruleset.evaluate(checked)
         if not decision.allowed:
             out.append(
