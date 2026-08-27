@@ -1,0 +1,44 @@
+name: Notion Access Diagnostic
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  diagnose:
+    if: contains(github.event.head_commit.message, '[notion-access-diagnostic]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+    steps:
+      - name: Check Notion object access
+        shell: bash
+        run: |
+          set -euo pipefail
+          check() {
+            label="$1"
+            endpoint="$2"
+            code=$(curl -sS -o /tmp/notion.json -w "%{http_code}" \
+              -H "Authorization: Bearer ${NOTION_TOKEN}" \
+              -H "Notion-Version: 2022-06-28" \
+              "https://api.notion.com/v1/${endpoint}")
+            object=$(python - <<'PY'
+          import json
+          try:
+              d=json.load(open('/tmp/notion.json'))
+              print(d.get('object',''))
+          except Exception:
+              print('')
+          PY
+          )
+            echo "${label}: HTTP ${code} object=${object}"
+          }
+
+          check "Daily_report_log page" "pages/2eddec27-c9aa-8098-a6a9-e50104794f7a"
+          check "Nikkei database page" "databases/354dec27-c9aa-803e-bef1-f446abac9b2e"
+          check "Nikkei data source as database" "databases/354dec27-c9aa-80b1-a188-000b76db2286"
+          check "General database page" "databases/2eddec27-c9aa-8022-9699-c36467fd9477"
+          check "General data source as database" "databases/2eddec27-c9aa-8050-bfdb-000b1846c25e"
+          check "Intelligence database page" "databases/3f97b174-1c01-446c-8ebf-65e511f92621"
+          check "Intelligence data source as database" "databases/9b551231-0bcc-489a-834b-3ebdf1fde2bb"
