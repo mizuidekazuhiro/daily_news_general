@@ -4,14 +4,14 @@ from src.intelligence_policy import _checklist_rule_ids, _validate_rule_checklis
 from src.intelligence_rules import IntelligenceRule, RuleSet
 
 
-def rule(rule_id: str, rule_type: str, scope: str) -> IntelligenceRule:
+def rule(rule_id: str, rule_type: str, scope: str, score: float = 0) -> IntelligenceRule:
     return IntelligenceRule(
         rule_id=rule_id,
         name=rule_id,
         rule_type=rule_type,
         decision_scope=scope,
         condition=rule_id,
-        score=0,
+        score=score,
         priority=1,
         applies_to=("All",),
     )
@@ -25,6 +25,9 @@ def ruleset() -> RuleSet:
             rule("BLK_UPDATE_CONTEXT_ONLY", "BLOCK", "UPDATE"),
             rule("REQ_CREATE_DURABLE", "REQUIRE", "CREATE"),
             rule("BLK_CREATE_CORPORATE_HOUSEKEEPING", "BLOCK", "CREATE"),
+            rule("BST_TECH_MILESTONE", "BOOST", "CREATE", 2),
+            rule("BST_MATERIAL_IMPACT", "BOOST", "CREATE", 2),
+            rule("BST_SOURCE_STRENGTH", "BOOST", "CREATE", 1),
         ),
         create_min_score=5,
     )
@@ -76,9 +79,60 @@ def test_false_monthly_block_allows_material_update():
     assert decision.allowed is True
 
 
-def test_create_checklist_is_separate_from_update_checklist():
+def test_create_checklist_includes_boosts_used_for_scoring():
     rs = ruleset()
     assert _checklist_rule_ids(rs, "CREATE") == [
         "REQ_CREATE_DURABLE",
         "BLK_CREATE_CORPORATE_HOUSEKEEPING",
+        "BST_TECH_MILESTONE",
+        "BST_MATERIAL_IMPACT",
+        "BST_SOURCE_STRENGTH",
     ]
+
+
+def test_create_missing_boost_check_fails_closed():
+    rs = ruleset()
+    checks = {
+        "REQ_CREATE_DURABLE": True,
+        "BLK_CREATE_CORPORATE_HOUSEKEEPING": False,
+        "BST_TECH_MILESTONE": True,
+        "BST_MATERIAL_IMPACT": True,
+    }
+    ok, reason, _ = _validate_rule_checklist(rs, {"action": "create"}, [], checks)
+    assert ok is False
+    assert "BST_SOURCE_STRENGTH" in reason
+
+
+def test_true_boost_checks_are_promoted_and_clear_create_threshold():
+    rs = ruleset()
+    checks = {
+        "REQ_CREATE_DURABLE": True,
+        "BLK_CREATE_CORPORATE_HOUSEKEEPING": False,
+        "BST_TECH_MILESTONE": True,
+        "BST_MATERIAL_IMPACT": True,
+        "BST_SOURCE_STRENGTH": True,
+    }
+    ok, reason, hits = _validate_rule_checklist(
+        rs,
+        {"action": "create"},
+        ["REQ_CREATE_DURABLE", "BST_TECH_MILESTONE"],
+        checks,
+    )
+    assert ok is True
+    assert reason == ""
+    assert hits == [
+        "REQ_CREATE_DURABLE",
+        "BST_TECH_MILESTONE",
+        "BST_MATERIAL_IMPACT",
+        "BST_SOURCE_STRENGTH",
+    ]
+    decision = rs.evaluate(
+        {
+            "action": "create",
+            "theme": ["Decarbonization"],
+            "event_type": "Capacity Expansion",
+            "rule_hits": hits,
+        }
+    )
+    assert decision.allowed is True
+    assert decision.score == 5
