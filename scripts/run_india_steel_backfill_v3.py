@@ -1,9 +1,46 @@
 from __future__ import annotations
 
+import re
+import sys
+from pathlib import Path
 from typing import Any
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
 from scripts import run_india_steel_backfill_v2 as v2
 from src.intelligence_pipeline import Article
+
+INDIA_EVIDENCE_RE = re.compile(r"(?:\bindia\b|\bindian\b|インド)", re.IGNORECASE)
+_original_load_general = v2.load_general
+
+
+def explicit_india_evidence_v3(article: Article) -> bool:
+    """Require India as a real word; avoid false matches such as Indiana."""
+    if any(tag in v2.INDIA_STEEL_LABELS for tag in article.tags):
+        return True
+    text = f"{article.title}\n{article.body[:3000]}"
+    return bool(INDIA_EVIDENCE_RE.search(text))
+
+
+def load_general_v3(*args: Any, **kwargs: Any) -> list[Article]:
+    """Apply strict India evidence and collapse exact-title duplicate rows."""
+    articles = _original_load_general(*args, **kwargs)
+    filtered = [a for a in articles if explicit_india_evidence_v3(a)]
+
+    # Keep the highest-scored/newest row when the same story was ingested more than once.
+    filtered.sort(key=lambda a: (a.importance_score, a.published_at, a.title), reverse=True)
+    seen_titles: set[str] = set()
+    deduped: list[Article] = []
+    for article in filtered:
+        key = re.sub(r"\s+", " ", article.title).strip().casefold()
+        if key and key in seen_titles:
+            continue
+        if key:
+            seen_titles.add(key)
+        deduped.append(article)
+    return deduped
 
 
 def expand_short_refs_v3(raw: Any, ref_map: dict[str, Article]) -> Any:
@@ -47,9 +84,10 @@ def expand_short_refs_v3(raw: Any, ref_map: dict[str, Article]) -> Any:
     return fixed
 
 
-# generate_operations() resolves this module global at runtime, so replacing it
-# here fixes both first-pass and semantic-retry outputs without duplicating v2.
+# v2 resolves these globals at runtime. Patch only the backfill-specific behavior.
 v2.expand_short_refs = expand_short_refs_v3
+v2.explicit_india_evidence = explicit_india_evidence_v3
+v2.load_general = load_general_v3
 
 
 if __name__ == "__main__":
