@@ -58,10 +58,17 @@ DATA-INTEGRITY OVERRIDES (code-enforced, not business-policy rules):
 
 def _checklist_rule_ids(ruleset: Any, action: str) -> list[str]:
     action = str(action or "").upper()
+    rule_types = {"BLOCK", "REQUIRE"}
+    if action == "CREATE":
+        # CREATE scoring is entirely determined by BOOST hits. Require an
+        # explicit boolean for each BOOST too so a valid structural event is not
+        # rejected merely because the model forgot to mention a true boost in
+        # rule_hits. The conditions and scores still come only from Notion.
+        rule_types.add("BOOST")
     return [
         rule.rule_id
         for rule in ruleset.rules
-        if rule.rule_type in {"BLOCK", "REQUIRE"}
+        if rule.rule_type in rule_types
         and rule.decision_scope in {"ALL", action}
     ]
 
@@ -77,12 +84,12 @@ def policy_prompt_system() -> str:
 
 MANDATORY POLICY CHECKLIST:
 - For every CREATE and UPDATE operation, return `rule_checks` as an object whose keys are exact Notion Rule IDs and values are JSON booleans.
-- CREATE must explicitly check every ID in this list: {create_checks}
-- UPDATE must explicitly check every ID in this list: {update_checks}
+- CREATE must explicitly check every applicable policy-control ID in this list, including every BOOST used for CREATE scoring: {create_checks}
+- UPDATE must explicitly check every BLOCK/REQUIRE ID in this list: {update_checks}
 - `true` means the rule condition is satisfied by the referenced article(s); `false` means it is not.
-- You MUST evaluate every listed BLOCK and REQUIRE rule one-by-one. Do not omit a rule merely because you think it is obviously false.
-- `rule_hits` must include every rule whose `rule_checks` value is true, plus any true BOOST rules.
-- A missing BLOCK/REQUIRE check makes the operation invalid and the application will convert it to NOOP.
+- You MUST evaluate every listed rule one-by-one. Do not omit a rule merely because you think it is obviously false.
+- `rule_hits` must include every rule whose `rule_checks` value is true. The application treats the explicit checklist as authoritative for listed rules.
+- A missing listed check makes the operation invalid and the application will convert it to NOOP.
 - Example: a JSW monthly production release with no restart/completion/capacity milestone must set BLK_UPDATE_SINGLE_PERIOD_STATS=true even if it mentions an ongoing BF upgrade.
 """.rstrip()
     return base + ruleset.prompt_fragment() + checklist
