@@ -15,6 +15,13 @@ from src.intelligence_policy import apply_policy_patch
 
 apply_policy_patch()
 
+# Persist CREATE/UPDATE/NOOP classification on source article pages and skip
+# already-classified articles on subsequent runs. Apply before importing main so
+# pipeline globals resolve to the patched functions at runtime.
+from src.intelligence_processing import apply_processing_patch
+
+apply_processing_patch()
+
 from src.intelligence_pipeline import main
 
 
