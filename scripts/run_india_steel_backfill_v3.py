@@ -9,6 +9,13 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+# Apply the shared Intelligence safety layer before v2 imports function references
+# from src.intelligence_pipeline. This ensures the historical backfill and daily
+# runner use exactly the same update/create guards.
+from src.intelligence_safety import apply_safety_patch
+
+apply_safety_patch()
+
 from scripts import run_india_steel_backfill_v2 as v2
 from src.intelligence_pipeline import Article
 
