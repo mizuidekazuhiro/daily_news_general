@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 from scripts.run_regional_steel_backfill import explicit_region_evidence, get_region_profile
@@ -138,3 +142,23 @@ def test_existing_insights_are_scoped_to_active_region():
     ]
     selected = filter_existing_for_region(existing, profile)
     assert [x.insight_key for x in selected] == ["japan-only", "cross-border"]
+
+
+def test_filtered_wrapper_can_run_as_script_without_module_import_failure():
+    root = Path(__file__).resolve().parents[1]
+    env = os.environ.copy()
+    env.pop("NOTION_TOKEN", None)
+    env.pop("OPENAI_API_KEY", None)
+    proc = subprocess.run(
+        [sys.executable, str(root / "scripts" / "run_regional_steel_backfill_filtered.py")],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+        check=False,
+    )
+    assert proc.returncode != 0
+    combined = proc.stdout + proc.stderr
+    assert "ModuleNotFoundError" not in combined
+    assert "NOTION_TOKEN and OPENAI_API_KEY are required" in combined
