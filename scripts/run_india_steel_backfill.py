@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sys
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -49,8 +50,27 @@ STEEL_TOPIC_MARKERS = (
     "鉄鉱石", "pellet", "ペレット", "sinter", "焼結", "scrap", "鉄スクラップ",
     "rebar", "tmt", "形鋼", "hot rolled", "cold rolled", "galvan", "steel plant",
     "green steel", "decarbon", "脱炭素", "capacity expansion", "bf/bof",
+    "billet", "slab", "crude steel", "stainless steel", "specialty steel",
 )
 INDIA_MARKERS = ("india", "indian", "インド")
+INDIA_STEEL_LABELS = {
+    "インド鉄鋼業",
+    "JSW Steel India",
+    "ArcelorMittal Nippon Steel India",
+    "SAIL",
+    "Jindal Steel",
+}
+NOISE_SOURCES = {"AD HOC NEWS"}
+NOISE_TITLE_PATTERNS = (
+    r"\bstock\s*\(",
+    r"\bstock:\s*",
+    r"\bnet worth\b",
+    r"\bbest .*steel stocks\b",
+    r"\bmarket size\b",
+    r"\bmarket analysis, forecast, size\b",
+    r"\bstate street discloses\b",
+    r"\bwhy google discover changes\b",
+)
 
 
 def env(name: str, default: str) -> str:
@@ -79,10 +99,24 @@ def contains_any(text: str, markers: tuple[str, ...]) -> bool:
     return any(marker.lower() in low for marker in markers)
 
 
+def title_is_noise(title: str, source_name: str) -> bool:
+    if str(source_name or "").strip() in NOISE_SOURCES:
+        return True
+    low = str(title or "").lower()
+    return any(re.search(pattern, low, flags=re.IGNORECASE) for pattern in NOISE_TITLE_PATTERNS)
+
+
 def metadata_is_india_steel(*, title: str, country: list[str], tags: list[str]) -> bool:
     joined_tags = " | ".join(tags)
     india = "India" in country or contains_any(joined_tags, INDIA_MARKERS) or contains_any(title, INDIA_MARKERS)
     steel = contains_any(joined_tags, STEEL_LABEL_MARKERS + STEEL_TOPIC_MARKERS) or contains_any(title, STEEL_LABEL_MARKERS + STEEL_TOPIC_MARKERS)
+    return india and steel
+
+
+def content_is_india_steel(*, title: str, body: str, label: str = "", primary_country: str = "") -> bool:
+    sample = " | ".join([str(title or ""), str(body or "")[:3000]])
+    india = primary_country == "India" or label in INDIA_STEEL_LABELS or contains_any(sample, INDIA_MARKERS)
+    steel = label in INDIA_STEEL_LABELS or contains_any(sample, STEEL_TOPIC_MARKERS)
     return india and steel
 
 
@@ -104,34 +138,45 @@ def load_general(notion: NotionClient, db_id: str, cutoff: date, min_score: floa
         props = row.get("properties") or {}
         page_id = _hyphenate_id(str(row.get("id") or ""))
         title = _prop_text(props, "Name")
+        source_name = _prop_text(props, "Source")
+        label = _prop_text(props, "Label")
+        primary_country = _prop_text(props, "PrimaryCountry")
         country = [x for x in _prop_multi(props, "Country") if x in ALLOWED_COUNTRIES]
         tags = [x for x in [
-            _prop_text(props, "Label"),
+            label,
             _prop_text(props, "Type"),
-            _prop_text(props, "PrimaryCountry"),
+            primary_country,
             *_prop_multi(props, "Sector"),
         ] if x]
-        if not page_id or not metadata_is_india_steel(title=title, country=country, tags=tags):
+        if not page_id or title_is_noise(title, source_name):
             continue
+        if not metadata_is_india_steel(title=title, country=country, tags=tags):
+            continue
+
         preview = _prop_text(props, "BodyPreview")
         body = preview
-        if not _is_useful_text(body):
+        content_ok = _is_useful_text(body) and content_is_india_steel(
+            title=title, body=body, label=label, primary_country=primary_country
+        )
+        if not content_ok:
             try:
-                body = notion.get_page_text(page_id, body_chars)
+                full_body = notion.get_page_text(page_id, body_chars)
+                if _is_useful_text(full_body):
+                    body = full_body
             except Exception as exc:
                 logging.warning("general_body_fetch_failed page_id=%s error=%s", page_id, exc)
         if not _is_useful_text(body):
             continue
-        # Last-resort content check catches labels that are broad/non-steel.
-        if not contains_any(" | ".join([title, *tags, body[:1200]]), STEEL_LABEL_MARKERS + STEEL_TOPIC_MARKERS):
+        if not content_is_india_steel(title=title, body=body, label=label, primary_country=primary_country):
             continue
+
         out.append(Article(
             source="general",
             page_id=page_id,
             title=title,
             published_at=_prop_date(props, "PublishedAt"),
             importance_score=_prop_number(props, "ImportanceScore"),
-            source_name=_prop_text(props, "Source"),
+            source_name=source_name,
             country=country,
             tags=tags,
             body=_truncate(body, body_chars),
@@ -163,17 +208,22 @@ def load_nikkei(notion: NotionClient, db_id: str, cutoff: date, min_score: float
         country = [x for x in tags if x in ALLOWED_COUNTRIES]
         if not page_id or not metadata_is_india_steel(title=title, country=country, tags=tags):
             continue
+
         summary = _prop_text(props, "Summary")
         body = summary
-        if not _is_useful_text(body):
+        if not (_is_useful_text(body) and content_is_india_steel(title=title, body=body)):
             try:
-                body = notion.get_page_text(page_id, body_chars)
+                full_body = notion.get_page_text(page_id, body_chars)
+                if _is_useful_text(full_body):
+                    body = full_body
             except Exception as exc:
                 logging.warning("nikkei_body_fetch_failed page_id=%s error=%s", page_id, exc)
         if not _is_useful_text(body):
             continue
-        if not contains_any(" | ".join([title, *tags, body[:1200]]), STEEL_LABEL_MARKERS + STEEL_TOPIC_MARKERS):
+        # Nikkei rule tags can produce false positives. Require actual article text to contain both India and steel evidence.
+        if not content_is_india_steel(title=title, body=body):
             continue
+
         out.append(Article(
             source="nikkei",
             page_id=page_id,
@@ -257,14 +307,14 @@ def main() -> int:
         batch = remaining[:batch_size]
         existing = _load_existing_insights(notion, intelligence_db, max_existing)
         prompt_payload = {
-            "scope": "India steel industry only. Exclude unrelated Indian industrial/news items even if metadata matched.",
+            "scope": "India steel industry only. Exclude unrelated industrial/news items, generic investment/stock commentary and generic market-research pages.",
             "run_date_jst": today_jst().isoformat(),
             "new_articles": [a.to_prompt() for a in batch],
             "existing_insights": [x.to_prompt() for x in existing],
         }
         raw = openai_client.generate_json(
             model=model,
-            system_prompt=_prompt_system() + "\n13. This is an India-steel historical backfill. Prefer durable company/project/policy/raw-material insights; noop generic stock commentary, duplicate rewrites, and unrelated industrial news.",
+            system_prompt=_prompt_system() + "\n13. This is an India-steel historical backfill. Prefer durable company/project/policy/raw-material insights; noop generic stock commentary, duplicate rewrites, and unrelated industrial news.\n14. Do not combine independently trackable themes merely because they involve the same company. For example, a capacity roadmap and a distinct steelmaking technology project should normally be separate insights.\n15. Account for every input article: include it in a create/update operation if it contributes durable intelligence, otherwise include an explicit noop operation referencing it.",
             user_prompt=json.dumps(prompt_payload, ensure_ascii=False),
             max_output_tokens=max_output_tokens,
             temperature=0.2,
@@ -301,7 +351,8 @@ def main() -> int:
     summary["complete"] = remaining_count == 0
     write_json(logs / "india_steel_backfill_summary.json", summary)
     logging.info("backfill_complete=%s processed=%s remaining=%s created=%s updated=%s noops=%s", summary["complete"], summary["processed_articles"], remaining_count, summary["created"], summary["updated"], summary["noops"])
-    if not summary["complete"]:
+    # A one-batch dry run is intentionally incomplete; incomplete live runs are failures.
+    if not summary["complete"] and not dry_run:
         raise RuntimeError(f"Backfill stopped with {remaining_count} articles remaining; increase max batches")
     return 0
 
