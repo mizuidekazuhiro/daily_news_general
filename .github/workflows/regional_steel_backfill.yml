@@ -1,0 +1,134 @@
+name: Regional Steel Intelligence Backfill
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      region:
+        description: "Region profile"
+        required: true
+        default: "Japan"
+        type: choice
+        options:
+          - Japan
+          - India
+          - China
+          - United States
+          - EU
+          - Vietnam
+          - Thailand
+          - Indonesia
+          - Malaysia
+          - Philippines
+          - Korea
+          - MENA
+      dry_run:
+        description: "Validate without Intelligence-row writes"
+        required: true
+        default: "true"
+        type: choice
+        options: ["true", "false"]
+      lookback_days:
+        description: "Historical lookback days"
+        required: true
+        default: "180"
+        type: string
+      min_score:
+        description: "Minimum importance score"
+        required: true
+        default: "4"
+        type: string
+      batch_size:
+        description: "Articles per GPT batch"
+        required: true
+        default: "12"
+        type: string
+
+jobs:
+  backfill:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.head_commit.message, '[regional-steel-backfill-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      INTELLIGENCE_NIKKEI_DB_ID: "354dec27-c9aa-803e-bef1-f446abac9b2e"
+      INTELLIGENCE_GENERAL_DB_ID: "2eddec27-c9aa-8022-9699-c36467fd9477"
+      INTELLIGENCE_RULES_DB_ID: "875d5e34-33cb-4363-bac4-5a6abdee5e98"
+      INTELLIGENCE_RULES_REQUIRED: "true"
+      REGIONAL_STEEL_BACKFILL_MODEL: "gpt-5-mini"
+      REGIONAL_STEEL_BACKFILL_LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '180' }}
+      REGIONAL_STEEL_BACKFILL_MIN_SCORE: ${{ github.event_name == 'workflow_dispatch' && inputs.min_score || '4' }}
+      REGIONAL_STEEL_BACKFILL_BATCH_SIZE: ${{ github.event_name == 'workflow_dispatch' && inputs.batch_size || '12' }}
+      REGIONAL_STEEL_BACKFILL_MAX_EXISTING: "500"
+      REGIONAL_STEEL_BACKFILL_BODY_CHARS: "6000"
+      REGIONAL_STEEL_BACKFILL_MAX_OUTPUT_TOKENS: "10000"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve regional trigger
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            region='${{ inputs.region }}'
+            dry='${{ inputs.dry_run }}'
+            max_batches='50'
+          else
+            msg='${{ github.event.head_commit.message }}'
+            region=''
+            dry=''
+            for pair in \
+              'Japan:japan' 'India:india' 'China:china' 'United States:us' 'EU:eu' \
+              'Vietnam:vietnam' 'Thailand:thailand' 'Indonesia:indonesia' 'Malaysia:malaysia' \
+              'Philippines:philippines' 'Korea:korea' 'MENA:mena'; do
+              name="${pair%%:*}"
+              slug="${pair##*:}"
+              if [[ "$msg" == *"[regional-steel-backfill-${slug}-dry]"* ]]; then
+                region="$name"; dry='true'; break
+              fi
+              if [[ "$msg" == *"[regional-steel-backfill-${slug}-live]"* ]]; then
+                region="$name"; dry='false'; break
+              fi
+            done
+            if [[ -z "$region" ]]; then
+              echo 'No recognized regional steel backfill marker'; exit 1
+            fi
+            if [[ "$dry" == 'true' ]]; then max_batches='1'; else max_batches='50'; fi
+          fi
+          echo "REGIONAL_STEEL_BACKFILL_REGION=$region" >> "$GITHUB_ENV"
+          echo "REGIONAL_STEEL_BACKFILL_DRY_RUN=$dry" >> "$GITHUB_ENV"
+          echo "REGIONAL_STEEL_BACKFILL_MAX_BATCHES=$max_batches" >> "$GITHUB_ENV"
+          echo "region=$region dry_run=$dry max_batches=$max_batches"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile regional backfill runner
+        run: python -m py_compile scripts/setup_intelligence_database.py scripts/run_regional_steel_backfill.py src/intelligence_pipeline.py src/intelligence_safety.py src/intelligence_policy.py src/intelligence_rules.py src/intelligence_processing.py
+
+      - name: Resolve Intelligence database
+        run: |
+          db_id=$(python scripts/setup_intelligence_database.py)
+          echo "NOTION_INTELLIGENCE_DB_ID=${db_id}" >> "$GITHUB_ENV"
+          echo "Resolved Intelligence DB: ${db_id}"
+
+      - name: Run regional steel backfill
+        run: python scripts/run_regional_steel_backfill.py
+
+      - name: Upload regional backfill logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: regional-steel-backfill-logs
+          path: |
+            logs/*_steel_backfill*.json
