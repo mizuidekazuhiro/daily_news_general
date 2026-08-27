@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any, Dict
 
 from openai import OpenAI
@@ -10,9 +11,25 @@ class OpenAIJsonError(RuntimeError):
     pass
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.getenv(name)
+    return default if value is None or not value.strip() else float(value)
+
+
+def _env_int(name: str, default: int) -> int:
+    value = os.getenv(name)
+    return default if value is None or not value.strip() else int(value)
+
+
 class OpenAIJsonClient:
     def __init__(self, api_key: str):
-        self.client = OpenAI(api_key=api_key)
+        timeout_seconds = _env_float("OPENAI_REQUEST_TIMEOUT_SECONDS", 180.0)
+        max_retries = _env_int("OPENAI_MAX_RETRIES", 1)
+        self.client = OpenAI(
+            api_key=api_key,
+            timeout=timeout_seconds,
+            max_retries=max_retries,
+        )
 
     def _responses_kwargs(
         self,
