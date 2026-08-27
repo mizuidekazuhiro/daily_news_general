@@ -40,6 +40,8 @@ jobs:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       INTELLIGENCE_NIKKEI_DB_ID: "354dec27-c9aa-803e-bef1-f446abac9b2e"
       INTELLIGENCE_GENERAL_DB_ID: "2eddec27-c9aa-8022-9699-c36467fd9477"
+      INTELLIGENCE_RULES_DB_ID: "875d5e34-33cb-4363-bac4-5a6abdee5e98"
+      INTELLIGENCE_RULES_REQUIRED: "true"
       INDIA_STEEL_BACKFILL_MODEL: "gpt-5-mini"
       INDIA_STEEL_BACKFILL_LOOKBACK_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.lookback_days || '180' }}
       INDIA_STEEL_BACKFILL_MIN_SCORE: ${{ github.event_name == 'workflow_dispatch' && inputs.min_score || '4' }}
@@ -63,7 +65,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Compile backfill runner
-        run: python -m py_compile scripts/setup_intelligence_database.py scripts/run_india_steel_backfill.py scripts/run_india_steel_backfill_v2.py scripts/run_india_steel_backfill_v3.py src/intelligence_pipeline.py
+        run: python -m py_compile scripts/setup_intelligence_database.py scripts/run_india_steel_backfill.py scripts/run_india_steel_backfill_v2.py scripts/run_india_steel_backfill_v3.py src/intelligence_pipeline.py src/intelligence_safety.py src/intelligence_policy.py src/intelligence_rules.py
 
       - name: Resolve Intelligence database
         run: |

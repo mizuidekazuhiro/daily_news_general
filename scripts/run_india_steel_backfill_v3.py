@@ -16,6 +16,12 @@ from src.intelligence_safety import apply_safety_patch
 
 apply_safety_patch()
 
+# Business-judgment rules are loaded from Notion at prompt/normalization time.
+# Apply this after the safety patch so policy wraps (rather than replaces) safety.
+from src.intelligence_policy import apply_policy_patch
+
+apply_policy_patch()
+
 from scripts import run_india_steel_backfill_v2 as v2
 from src.intelligence_pipeline import Article
 

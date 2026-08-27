@@ -5,22 +5,30 @@ on:
     paths:
       - 'src/intelligence_pipeline.py'
       - 'src/intelligence_safety.py'
+      - 'src/intelligence_policy.py'
+      - 'src/intelligence_rules.py'
       - 'scripts/run_intelligence_pipeline.py'
       - 'scripts/run_india_steel_backfill_v3.py'
       - 'tests/test_intelligence_pipeline.py'
       - 'tests/test_intelligence_safety.py'
+      - 'tests/test_intelligence_rules.py'
       - '.github/workflows/intelligence.yml'
+      - '.github/workflows/india_steel_backfill_v3.yml'
       - '.github/workflows/intelligence_tests.yml'
   push:
     branches: [main]
     paths:
       - 'src/intelligence_pipeline.py'
       - 'src/intelligence_safety.py'
+      - 'src/intelligence_policy.py'
+      - 'src/intelligence_rules.py'
       - 'scripts/run_intelligence_pipeline.py'
       - 'scripts/run_india_steel_backfill_v3.py'
       - 'tests/test_intelligence_pipeline.py'
       - 'tests/test_intelligence_safety.py'
+      - 'tests/test_intelligence_rules.py'
       - '.github/workflows/intelligence.yml'
+      - '.github/workflows/india_steel_backfill_v3.yml'
       - '.github/workflows/intelligence_tests.yml'
 
 jobs:
@@ -41,16 +49,20 @@ jobs:
           pip install pytest pyyaml
 
       - name: Compile Intelligence modules
-        run: python -m py_compile src/intelligence_pipeline.py src/intelligence_safety.py scripts/run_intelligence_pipeline.py scripts/run_india_steel_backfill_v3.py
+        run: python -m py_compile src/intelligence_pipeline.py src/intelligence_safety.py src/intelligence_policy.py src/intelligence_rules.py scripts/run_intelligence_pipeline.py scripts/run_india_steel_backfill_v3.py
 
       - name: Validate Intelligence workflow YAML
         run: |
           python - <<'PY'
           from pathlib import Path
           import yaml
-          yaml.safe_load(Path('.github/workflows/intelligence.yml').read_text(encoding='utf-8'))
-          print('validated: .github/workflows/intelligence.yml')
+          for path in [
+              '.github/workflows/intelligence.yml',
+              '.github/workflows/india_steel_backfill_v3.yml',
+          ]:
+              yaml.safe_load(Path(path).read_text(encoding='utf-8'))
+              print(f'validated: {path}')
           PY
 
       - name: Run Intelligence unit tests
-        run: pytest -q tests/test_intelligence_pipeline.py tests/test_intelligence_safety.py
+        run: pytest -q tests/test_intelligence_pipeline.py tests/test_intelligence_safety.py tests/test_intelligence_rules.py
