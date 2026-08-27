@@ -1,0 +1,2 @@
+Temporary dry-run trigger for the Notion-managed Intelligence Rules integration validation on 2026-08-27.
+No Intelligence row writes are expected from this trigger.
