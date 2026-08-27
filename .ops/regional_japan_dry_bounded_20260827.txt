@@ -1,0 +1,1 @@
+Trigger bounded Japan regional steel Intelligence dry run after adding explicit OpenAI request timeout and reducing output token budget.
