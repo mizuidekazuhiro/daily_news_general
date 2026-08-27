@@ -63,7 +63,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Compile backfill runner
-        run: python -m py_compile scripts/setup_intelligence_database.py scripts/run_india_steel_backfill.py src/intelligence_pipeline.py
+        run: python -m py_compile scripts/setup_intelligence_database.py scripts/run_india_steel_backfill.py scripts/run_india_steel_backfill_v2.py src/intelligence_pipeline.py
 
       - name: Resolve Intelligence database
         run: |
@@ -72,7 +72,7 @@ jobs:
           echo "Resolved Intelligence DB: ${db_id}"
 
       - name: Run India steel backfill
-        run: python scripts/run_india_steel_backfill.py
+        run: python scripts/run_india_steel_backfill_v2.py
 
       - name: Upload backfill logs
         if: always()
