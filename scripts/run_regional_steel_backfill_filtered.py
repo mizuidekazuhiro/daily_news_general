@@ -6,6 +6,8 @@ from scripts import run_regional_steel_backfill as regional
 from src.intelligence_pipeline import Article
 
 
+_ORIGINAL_REGION_EVIDENCE = regional.explicit_region_evidence
+
 STEEL_CONTEXT_RE = re.compile(
     r"(?:"
     r"\bsteel(?:making|works)?\b|\bblast\s+furnace\b|\belectric\s+arc\s+furnace\b|\bEAF\b|"
@@ -36,7 +38,7 @@ def explicit_steel_evidence(article: Article) -> bool:
 
 
 def explicit_region_and_steel_evidence(article: Article, profile: regional.RegionProfile) -> bool:
-    return regional.explicit_region_evidence(article, profile) and explicit_steel_evidence(article)
+    return _ORIGINAL_REGION_EVIDENCE(article, profile) and explicit_steel_evidence(article)
 
 
 def main() -> int:
