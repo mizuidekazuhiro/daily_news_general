@@ -36,18 +36,33 @@ apply_processing_patch()
 from scripts import run_india_steel_backfill_v2 as v2
 from src.intelligence_pipeline import Article, NotionClient
 
-INDIA_EVIDENCE_RE = re.compile(r"(?:\bindia\b|\bindian\b|インド)", re.IGNORECASE)
+# India scope must refer to Indian operations/market/project context, not merely
+# a nationality phrase such as "Tata's Indian owners" in an overseas story.
+INDIA_OPERATIONAL_RE = re.compile(
+    r"(?:"
+    r"\b(?:in|into|across|within|from|to)\s+india\b|"
+    r"\bindia(?:n)?\s+(?:operations?|business|capacity|production|output|plant|plants|mill|mills|"
+    r"steel|steelmaking|market|demand|supply|project|projects|investment|investments|capex|facility|"
+    r"facilities|mine|mines|mining|scrap|imports?|exports?|policy|tariff|dut(?:y|ies)|government|"
+    r"customers?|automotive|infrastructure|expansion|manufacturing|sector|industry)\b|"
+    r"\b(?:odisha|orissa|jharkhand|gujarat|maharashtra|andhra\s+pradesh|karnataka|punjab|"
+    r"chhattisgarh|west\s+bengal|tamil\s+nadu|uttar\s+pradesh|telangana|rajasthan|"
+    r"jamshedpur|kalinganagar|hazira|vijayanagar|dolvi|salem|ludhiana|bokaro|bhilai|"
+    r"rayalaseema|rajayyapeta|anakapalli|keonjhar|paradeep|dhinkia|gadchiroli|sambalpur)\b|"
+    r"インド(?:国内|事業|市場|生産|製鉄|鉄鋼|工場|投資|設備|能力|政策|需要|供給)"
+    r")",
+    re.IGNORECASE,
+)
+
 _original_load_general = v2.load_general
 _original_load_nikkei = v2.load_nikkei
 _original_generate_operations = v2.generate_operations
 
 
 def explicit_india_evidence_v3(article: Article) -> bool:
-    """Require India as a real word; avoid false matches such as Indiana."""
-    if any(tag in v2.INDIA_STEEL_LABELS for tag in article.tags):
-        return True
-    text = f"{article.title}\n{article.body[:3000]}"
-    return bool(INDIA_EVIDENCE_RE.search(text))
+    """Require operational/geographic India context, not incidental nationality."""
+    text = f"{article.title}\n{article.body[:5000]}"
+    return bool(INDIA_OPERATIONAL_RE.search(text))
 
 
 def load_general_v3(
@@ -98,7 +113,8 @@ def load_nikkei_v3(
         body_chars,
     )
     articles = filter_intelligence_entry_candidates(articles, min_score)
-    return filter_unprocessed_articles(notion, db_id, articles)
+    articles = filter_unprocessed_articles(notion, db_id, articles)
+    return [article for article in articles if explicit_india_evidence_v3(article)]
 
 
 def expand_short_refs_v3(raw: Any, ref_map: dict[str, Article]) -> Any:
