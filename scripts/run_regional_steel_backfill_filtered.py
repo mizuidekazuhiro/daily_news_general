@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import os
 import re
+from typing import Any
 
 from scripts import run_regional_steel_backfill as regional
 from src.intelligence_pipeline import Article
 
 
 _ORIGINAL_REGION_EVIDENCE = regional.explicit_region_evidence
+_ORIGINAL_LOAD_EXISTING = regional._load_existing_insights
 
 STEEL_CONTEXT_RE = re.compile(
     r"(?:"
@@ -41,11 +44,21 @@ def explicit_region_and_steel_evidence(article: Article, profile: regional.Regio
     return _ORIGINAL_REGION_EVIDENCE(article, profile) and explicit_steel_evidence(article)
 
 
+def filter_existing_for_region(existing: list[Any], profile: regional.RegionProfile) -> list[Any]:
+    return [insight for insight in existing if profile.name in (getattr(insight, "country", None) or [])]
+
+
+def load_existing_for_active_region(notion: Any, db_id: str, max_existing: int) -> list[Any]:
+    existing = _ORIGINAL_LOAD_EXISTING(notion, db_id, max_existing)
+    profile = regional.get_region_profile(os.getenv("REGIONAL_STEEL_BACKFILL_REGION", "Japan"))
+    return filter_existing_for_region(existing, profile)
+
+
 def main() -> int:
-    # The underlying runner resolves this global at execution time, so the
-    # wrapper can add a deterministic steel gate without duplicating the
-    # regional pipeline implementation.
+    # The underlying runner resolves these globals at execution time, so the
+    # wrapper can add deterministic scope gates without duplicating the pipeline.
     regional.explicit_region_evidence = explicit_region_and_steel_evidence
+    regional._load_existing_insights = load_existing_for_active_region
     return regional.main()
 
 
