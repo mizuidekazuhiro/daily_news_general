@@ -117,7 +117,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Compile regional backfill runner
-        run: python -m py_compile scripts/setup_intelligence_database.py scripts/run_regional_steel_backfill.py src/intelligence_pipeline.py src/intelligence_safety.py src/intelligence_policy.py src/intelligence_rules.py src/intelligence_processing.py src/openai_json_client.py
+        run: python -m py_compile scripts/setup_intelligence_database.py scripts/run_regional_steel_backfill.py scripts/run_regional_steel_backfill_filtered.py src/intelligence_pipeline.py src/intelligence_safety.py src/intelligence_policy.py src/intelligence_rules.py src/intelligence_processing.py src/openai_json_client.py
 
       - name: Resolve Intelligence database
         shell: bash
@@ -131,7 +131,7 @@ jobs:
           fi
 
       - name: Run regional steel backfill
-        run: python scripts/run_regional_steel_backfill.py
+        run: python scripts/run_regional_steel_backfill_filtered.py
 
       - name: Upload regional backfill logs
         if: always()

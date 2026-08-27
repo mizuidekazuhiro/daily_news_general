@@ -1,10 +1,22 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from scripts.run_regional_steel_backfill import explicit_region_evidence, get_region_profile
+from scripts.run_regional_steel_backfill_filtered import (
+    explicit_region_and_steel_evidence,
+    explicit_steel_evidence,
+    filter_existing_for_region,
+)
 from src.intelligence_pipeline import Article
 
 
-def _article(title: str, body: str, country: list[str] | None = None) -> Article:
+def _article(
+    title: str,
+    body: str,
+    country: list[str] | None = None,
+    tags: list[str] | None = None,
+) -> Article:
     return Article(
         source="general",
         page_id="11111111-1111-1111-1111-111111111111",
@@ -13,7 +25,7 @@ def _article(title: str, body: str, country: list[str] | None = None) -> Article
         importance_score=5.0,
         source_name="test",
         country=country or [],
-        tags=["Steel"],
+        tags=tags or [],
         body=body,
         notion_url="",
     )
@@ -57,3 +69,59 @@ def test_india_profile_still_rejects_indian_owner_nationality_only():
         ["India", "EU"],
     )
     assert not explicit_region_evidence(article, profile)
+
+
+def test_steel_gate_accepts_japan_eaf_project():
+    profile = get_region_profile("Japan")
+    article = _article(
+        "日本製鉄、九州製鉄所に大型電炉",
+        "日本国内の製鉄所で高炉から電炉へ転換し、年間約200万トンの鋼材を生産する。",
+        ["Japan"],
+    )
+    assert explicit_steel_evidence(article)
+    assert explicit_region_and_steel_evidence(article, profile)
+
+
+def test_steel_gate_rejects_unrelated_japan_factory_expansion():
+    profile = get_region_profile("Japan")
+    article = _article(
+        "JX金属、半導体材料の国内生産を10倍へ",
+        "日本国内の工場で光通信向け半導体材料の生産能力を増強する。AIデータセンター需要に対応する。",
+        ["Japan"],
+        ["Japan", "Capacity Expansion", "Data Center"],
+    )
+    assert explicit_region_evidence(article, profile)
+    assert not explicit_steel_evidence(article)
+    assert not explicit_region_and_steel_evidence(article, profile)
+
+
+def test_steel_gate_accepts_raw_material_story():
+    profile = get_region_profile("Japan")
+    article = _article(
+        "Japan steelmakers secure coking coal supply",
+        "Japanese steel industry buyers signed a long-term coking coal supply agreement for blast-furnace operations in Japan.",
+        ["Japan"],
+    )
+    assert explicit_region_and_steel_evidence(article, profile)
+
+
+def test_steel_tag_hint_can_preserve_sparse_steel_article():
+    article = _article(
+        "Major low-carbon project receives support",
+        "The project will build new equipment and start commercial operations in 2028.",
+        ["Japan"],
+        ["Green Steel"],
+    )
+    assert explicit_steel_evidence(article)
+
+
+def test_existing_insights_are_scoped_to_active_region():
+    profile = get_region_profile("Japan")
+    existing = [
+        SimpleNamespace(insight_key="india-only", country=["India"]),
+        SimpleNamespace(insight_key="japan-only", country=["Japan"]),
+        SimpleNamespace(insight_key="cross-border", country=["Japan", "United States"]),
+        SimpleNamespace(insight_key="empty", country=[]),
+    ]
+    selected = filter_existing_for_region(existing, profile)
+    assert [x.insight_key for x in selected] == ["japan-only", "cross-border"]
