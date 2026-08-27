@@ -1,0 +1,2 @@
+One-time live trigger for India steel historical backfill using Notion Intelligence Rules v1.1 and the code-enforced Intelligence safety layer.
+Created 2026-08-27; remove after run completion.
