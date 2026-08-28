@@ -7,8 +7,8 @@ from typing import Any
 import src.intelligence_safety_legacy as _legacy
 
 # v2 compatibility layer over the proven v1 safety implementation.  Keep the
-# stable identity/topic/source guards in one place while tightening two generic
-# grounding edges found during the India acceptance audit.
+# stable identity/topic/source guards in one place while tightening generic
+# grounding edges found during regional acceptance audits.
 
 _WORD_VALUES: dict[str, Decimal] = {
     "one": Decimal("1"),
@@ -66,6 +66,37 @@ def _numeric_variants(value: str) -> set[str]:
 
 
 _legacy._numeric_variants = _numeric_variants
+
+
+def _source_text_with_date_aliases(articles: list[Any]) -> str:
+    """Ground an ISO timestamp and its calendar-date representation equally.
+
+    Article metadata can carry `2026-04-20T09:35:00...` while a model cites the
+    same verified date as `2026-04-20`.  The strict numeric tokenizer correctly
+    refuses to start/end inside alphanumeric identifiers, so the day immediately
+    before the ISO `T` would otherwise disappear from source numeric variants.
+    Add only the exact YYYY-MM-DD prefix as an alias; unrelated dates or numbers
+    remain unsupported.
+    """
+    parts: list[str] = []
+    for article in articles:
+        published = str(getattr(article, "published_at", "") or "")
+        match = re.match(r"^(\d{4}-\d{2}-\d{2})(?:[T\s].*)?$", published)
+        date_alias = match.group(1) if match else ""
+        parts.append(
+            "\n".join(
+                [
+                    str(getattr(article, "title", "") or ""),
+                    str(getattr(article, "body", "") or ""),
+                    published,
+                    date_alias,
+                ]
+            )
+        )
+    return _legacy._normalise_text("\n".join(parts))
+
+
+_legacy._source_text = _source_text_with_date_aliases
 
 # A material project-state upgrade must be evidenced in substantive article
 # body text, not merely a headline, SEO title or navigation snippet.  These are
