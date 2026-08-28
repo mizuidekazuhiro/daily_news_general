@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from html import escape
 from pathlib import Path
 from string import Template
@@ -11,7 +12,7 @@ def _esc(value: Any) -> str:
 
 
 def _safe_title(article: dict[str, Any]) -> str:
-    title = str(article.get("title") or "").strip()
+    title = str(article.get("title") or article.get("source_title") or article.get("page_title") or "").strip()
     return title if title else "(no title)"
 
 
@@ -32,6 +33,65 @@ def _notion_link(article: dict[str, Any]) -> str:
     if not notion_url:
         return ""
     return f'<span style="color:#999;">｜</span><a href="{_esc(notion_url)}" class="notion-link">Notionで開く</a>'
+
+
+def _load_json_list(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        rows = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+
+def _saved_articles_from_logs(logs_dir: Path = Path("logs")) -> tuple[bool, list[dict[str, Any]]]:
+    """Return articles confirmed to exist in Notion for this issue/run.
+
+    New/updated articles come from successful save results. Articles that already
+    existed in Notion come from the scoring inventory. The boolean indicates
+    whether production log sources were available; when False, renderer callers
+    may fall back to the explicitly supplied article list (useful in tests).
+    """
+    save_path = logs_dir / "nikkei_save_results.json"
+    scored_path = logs_dir / "nikkei_articles_scored.json"
+    logs_available = save_path.exists() or scored_path.exists()
+    if not logs_available:
+        return False, []
+
+    merged: dict[str, dict[str, Any]] = {}
+
+    for row in _load_json_list(scored_path):
+        if str(row.get("source") or "").strip() != "notion_existing":
+            continue
+        url = str(row.get("url") or "").strip()
+        key = url or f"page:{str(row.get('page_id') or '').strip()}"
+        if not key:
+            continue
+        merged[key] = {
+            "title": row.get("title") or row.get("source_title") or row.get("page_title") or "",
+            "url": url,
+            "page_id": row.get("page_id") or "",
+            "notion_url": row.get("notion_url") or "",
+            "source": "notion_existing",
+        }
+
+    for row in _load_json_list(save_path):
+        if not bool(row.get("ok")):
+            continue
+        url = str(row.get("url") or "").strip()
+        key = url or f"page:{str(row.get('page_id') or '').strip()}"
+        if not key:
+            continue
+        merged[key] = {
+            "title": row.get("title") or "",
+            "url": url,
+            "page_id": row.get("page_id") or "",
+            "notion_url": row.get("notion_url") or "",
+            "source": row.get("action") or "saved",
+        }
+
+    return True, list(merged.values())
 
 
 def _summary_and_implications_text(article: dict[str, Any]) -> str:
@@ -87,7 +147,10 @@ def render_final_report_html(
 ) -> str:
     del target_date
     sections = []
-    articles = all_articles or []
+    fallback_articles = all_articles or []
+    logs_available, saved_articles = _saved_articles_from_logs()
+    articles = saved_articles if logs_available else fallback_articles
+
     for sec in report.get("article_sections", []):
         what_happened = _non_empty_text(sec.get("what_happened"))
         why_it_matters = _non_empty_text(sec.get("why_it_matters"))
@@ -121,6 +184,17 @@ def render_final_report_html(
     for article in articles:
         all_items.append(f'<li class="all-list-item">{_title_link(article)}{_notion_link(article)}</li>')
 
+    all_articles_section = ""
+    if articles:
+        all_articles_section = (
+            '<section class="section-card saved-articles-card">'
+            f'<h3 class="section-title">■ 保存記事一覧（{len(articles)}件）</h3>'
+            '<div class="saved-articles-note">重要記事以外も含め、Notionに保存済みの記事を全件掲載しています。</div>'
+            '<ol class="all-list">'
+            + "".join(all_items)
+            + '</ol></section>'
+        )
+
     tpl = Template(template_path.read_text(encoding="utf-8"))
     watchlist = report.get("watchlist")
     watch_items = [str(x).strip() for x in watchlist if str(x).strip()] if isinstance(watchlist, list) else []
@@ -147,6 +221,7 @@ def render_final_report_html(
         brief_items=brief_html,
         article_items="".join(sections),
         watchlist_section=watchlist_section,
+        all_articles_section=all_articles_section,
         all_article_count=len(articles),
         all_article_items="".join(all_items),
         executive_summary_block=executive_summary_block,
