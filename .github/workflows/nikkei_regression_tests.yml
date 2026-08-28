@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
     paths:
+      - 'scripts/nikkei_extract_issue_links.py'
       - 'scripts/nikkei_score_articles.py'
       - 'scripts/run_nikkei_final_report.py'
       - 'src/report_selection.py'
@@ -12,6 +13,7 @@ on:
       - 'templates/nikkei_final_report_email.html'
       - '.github/workflows/nikkei_morning.yml'
       - '.github/workflows/nikkei_evening.yml'
+      - 'tests/test_nikkei_edition_and_dedupe.py'
       - 'tests/test_nikkei_score_articles.py'
       - 'tests/test_nikkei_final_report_integration.py'
       - 'tests/test_nikkei_final_report_renderer.py'
@@ -49,6 +51,7 @@ jobs:
       - name: Run Nikkei regression tests
         run: |
           pytest -q \
+            tests/test_nikkei_edition_and_dedupe.py \
             tests/test_nikkei_score_articles.py \
             tests/test_nikkei_final_report_integration.py \
             tests/test_nikkei_final_report_renderer.py \
