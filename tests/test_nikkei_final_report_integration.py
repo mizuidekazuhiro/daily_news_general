@@ -62,7 +62,7 @@ def test_workflow_scope_and_single_schedule_retry():
         assert 'run_nikkei_final_report.py' in wf
         assert 'Run Nikkei pipeline with publication retries' in wf
         assert 'sleep 1200' in wf
-    assert '17 21 * * 0-6' in morning
+    assert ('17 21 * * 0-6' in morning) or ('17 21 * * *' in morning)
     assert '17,37,57 21' not in morning
     assert '47 6 * * 0-6' in evening
     assert '7,27 7' not in evening
