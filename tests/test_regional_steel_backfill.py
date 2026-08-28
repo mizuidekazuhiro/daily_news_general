@@ -102,6 +102,44 @@ def test_japan_scope_rejects_japanese_steelmaker_overseas_project():
     assert not explicit_region_and_steel_evidence(article, profile)
 
 
+def test_vietnam_scope_ignores_related_story_tail_on_india_steel_article():
+    profile = get_region_profile("Vietnam")
+    article = _article(
+        "JFEスチール、インド製鉄JVを完了",
+        (
+            "JFEスチールはインドのJSWスチールと進めてきた一貫製鉄所の合弁事業化を完了した。"
+            "対象はオディシャ州の製鉄所で、粗鋼年産450万トンの能力を持ち、熱延鋼板や冷延鋼板を生産する。"
+            "成長が続くインド市場の需要取り込みが狙いで、既存設備の活用により早期の収益化を図る。"
+            "JFEの製造技術とJSWの運営能力を組み合わせ、高付加価値品の拡大と生産性向上を進める。"
+            "新会社はインド国内の一貫製鉄拠点として運営される。"
+            "■「より詳しい情報を知りたい」場合はこちら。"
+            "JFEスチール、台湾企業のベトナム製鉄所PJに資本参加"
+        ),
+        ["India", "Vietnam"],
+    )
+    assert explicit_steel_evidence(article)
+    assert not explicit_region_evidence_strict(article, profile)
+    assert not explicit_region_and_steel_evidence(article, profile)
+
+
+def test_vietnam_scope_keeps_real_event_before_related_story_tail():
+    profile = get_region_profile("Vietnam")
+    article = _article(
+        "Vietnam imposes provisional duty on Chinese hot-rolled steel",
+        (
+            "Vietnam's government imposed a provisional anti-dumping duty on hot-rolled steel imports from China. "
+            "The policy changes import conditions for the Vietnamese steel market and affects domestic mills and buyers. "
+            "The measure applies to steel entering Vietnam and is part of the country's trade-remedy policy. "
+            "■「より詳しい情報を知りたい」場合はこちら。"
+            "関連記事: Indian steelmakers expand capacity."
+        ),
+        ["Vietnam", "China"],
+    )
+    assert explicit_steel_evidence(article)
+    assert explicit_region_evidence_strict(article, profile)
+    assert explicit_region_and_steel_evidence(article, profile)
+
+
 def test_india_profile_still_rejects_indian_owner_nationality_only():
     profile = get_region_profile("India")
     article = _article(

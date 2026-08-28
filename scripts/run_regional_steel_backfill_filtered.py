@@ -14,7 +14,6 @@ from scripts import run_regional_steel_backfill as regional
 from src.intelligence_pipeline import Article
 
 
-_ORIGINAL_REGION_EVIDENCE = regional.explicit_region_evidence
 _ORIGINAL_LOAD_EXISTING = regional._load_existing_insights
 
 STEEL_CONTEXT_RE = re.compile(
@@ -28,6 +27,20 @@ STEEL_CONTEXT_RE = re.compile(
     r"フェロクロム|クロマイト|鉄筋|ビレット|スラブ|熱延|冷延|めっき鋼|厚板|鋼管|線材|H形鋼|形鋼"
     r")",
     re.IGNORECASE,
+)
+
+# Scraped pages can append related-story titles or navigation to the article
+# body.  Geography/steel words in that tail are not evidence about the event.
+# Cut only on recognizable navigation markers and only after substantive text
+# has begun, so legitimate article copy remains available for classification.
+NAVIGATION_TAIL_RE = re.compile(
+    r"(?:"
+    r"■\s*[「『]?より詳しい情報を知りたい|"
+    r"(?:^|\n)\s*(?:関連記事|関連情報|あわせて読みたい|おすすめ記事)\s*(?:[:：]|$)|"
+    r"\bRelated\s+(?:Articles|Stories)\b|"
+    r"\bRead\s+More\b"
+    r")",
+    re.IGNORECASE | re.MULTILINE,
 )
 
 # Japan must be the physical/commercial event geography. A phrase such as
@@ -49,16 +62,23 @@ JAPAN_EVENT_RE = re.compile(
 )
 
 
+def primary_article_text(article: Article) -> str:
+    body = str(article.body or "")[:5000]
+    match = NAVIGATION_TAIL_RE.search(body)
+    if match and match.start() >= 200:
+        body = body[: match.start()]
+    return f"{article.title}\n{body}"
+
+
 def explicit_steel_evidence(article: Article) -> bool:
-    text = f"{article.title}\n{article.body[:5000]}"
-    return bool(STEEL_CONTEXT_RE.search(text))
+    return bool(STEEL_CONTEXT_RE.search(primary_article_text(article)))
 
 
 def explicit_region_evidence_strict(article: Article, profile: regional.RegionProfile) -> bool:
-    text = f"{article.title}\n{article.body[:5000]}"
+    text = primary_article_text(article)
     if profile.name == "Japan":
         return bool(JAPAN_EVENT_RE.search(text))
-    return _ORIGINAL_REGION_EVIDENCE(article, profile)
+    return bool(profile.evidence_re.search(text))
 
 
 def explicit_region_and_steel_evidence(article: Article, profile: regional.RegionProfile) -> bool:
