@@ -77,6 +77,9 @@ def test_policy_can_allow_other_event_without_legacy_durable_keyword_guard(monke
                 "rule_checks": {
                     "REQ_CREATE_DURABLE": True,
                     "REQ_CREATE_CONCRETE_CHANGE": True,
+                    "BST_RAW_MATERIALS": True,
+                    "BST_MATERIAL_IMPACT": True,
+                    "BST_SOURCE_STRENGTH": True,
                 },
                 "rule_reason": "Concrete durable raw-material rights event.",
             }]
@@ -130,6 +133,8 @@ def test_policy_block_rule_converts_create_to_noop():
                 "rule_checks": {
                     "REQ_CREATE_DURABLE": True,
                     "REQ_CREATE_CONCRETE_CHANGE": True,
+                    "BST_MATERIAL_IMPACT": True,
+                    "BST_SOURCE_STRENGTH": True,
                     "BLK_COMMENTARY_ONLY": True,
                 },
             }]
