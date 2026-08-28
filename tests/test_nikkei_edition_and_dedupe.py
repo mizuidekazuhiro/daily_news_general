@@ -67,5 +67,6 @@ def test_article_id_dedupe_between_ng_and_article_path():
     assert deduped[0]["text"] == "new body"
 
 
-def test_mail_default_enabled():
-    assert mod.DEFAULTS["NIKKEI_SEND_FINAL_REPORT_MAIL"] is True
+def test_mail_default_enabled(monkeypatch):
+    monkeypatch.delenv("NIKKEI_SEND_FINAL_REPORT_MAIL", raising=False)
+    assert mod._env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL", True) is True
