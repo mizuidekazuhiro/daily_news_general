@@ -32,7 +32,9 @@ STEEL_CONTEXT_RE = re.compile(
 
 # Japan must be the physical/commercial event geography. A phrase such as
 # "Japanese steelmaker" or a Japanese company name does not make an overseas
-# project a Japan Insight.
+# project a Japan Insight. Japanese `国内...` is not sufficient on its own
+# because, in an overseas story, it refers to that foreign country's domestic
+# market/production rather than Japan.
 JAPAN_EVENT_RE = re.compile(
     r"(?:"
     r"\b(?:in|into|across|within|from|to)\s+japan\b|"
@@ -41,7 +43,6 @@ JAPAN_EVENT_RE = re.compile(
     r"\b(?:kimitsu|kashima|chiba|keihin|kurashiki|fukuyama|nagoya|wakayama|oita|hirohata|muroran|kakogawa|"
     r"kyushu\s+works?|east\s+nippon\s+works?|west\s+nippon\s+works?)\b|"
     r"日本(?:国内|市場|政府|鉄鋼業|鉄鋼市場|製鉄所|工場|事業|生産|需要|供給|投資|設備|能力|政策)|"
-    r"国内(?:製鉄所|鉄鋼|市場|需要|供給|生産|設備|能力|投資|事業|工場)|"
     r"(?:君津|鹿島|千葉|京浜|倉敷|福山|名古屋|和歌山|大分|広畑|室蘭|神戸|加古川|九州)(?:製鉄所|地区|工場|事業所)"
     r")",
     re.IGNORECASE,
