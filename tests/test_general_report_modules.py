@@ -95,7 +95,9 @@ def test_html_and_notion_helpers(tmp_path: Path):
     assert html.count('class="article-card"') == 2
     assert 'class="paragraph-block"' in html and 'class="paragraph-body"' in html
     assert 'class="notion-link"' in html
-    assert 'class="all-list-item"' not in html
+    assert "■ 保存記事一覧（1件）" in html
+    assert 'class="all-list-item"' in html
+    assert '<a href="https://all1">all1</a>' in html
     assert '<a href="https://x">t</a>' in html and '■ A1｜' in html
 
     rep["watchlist"] = []
