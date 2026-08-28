@@ -14,9 +14,33 @@ EXCLUDE_TITLE_REGEX=os.getenv('NIKKEI_EXCLUDE_TITLE_REGEX','').strip(); USE_DIRE
 ENABLE_PRE=os.getenv('NIKKEI_ENABLE_PRE_TITLE_FILTER','true').lower()=='true'; PRE_REGEX=os.getenv('NIKKEI_PRE_EXCLUDE_TITLE_REGEX','').strip(); PRE_SHORT=os.getenv('NIKKEI_PRE_EXCLUDE_SHORT_TITLES','true').lower()=='true'; PRE_HR=os.getenv('NIKKEI_PRE_EXCLUDE_HR_LIKE_TITLES','true').lower()=='true'
 JST=timezone(timedelta(hours=9))
 EDITION_MARKERS = {"morning": "M", "evening": "E"}
+DEFAULT_SCHEDULE_LOCAL_TIMES = {"morning": "06:17", "evening": "15:47"}
 DEFAULT_PAT=[r'野球',r'阪神',r'広島',r'日ハム',r'国内女子',r'国内男子',r'ゴルフ',r'大リーグ',r'競馬',r'天皇賞',r'欧州CL',r'NBA',r'J3',r'ラグビー',r'車いすラグビー',r'PO1回戦',r'首位スタート',r'決勝打',r'逆転弾',r'若冲',r'歌人',r'小説家',r'連載',r'澤田瞳子',r'江戸を隠してふところに',r'はじまりの横浜',r'熱国之巻',r'戦艦大和',r'VRでウルトラセブン',r'美術館',r'絵巻物',r'福田美術館',r'死去',r'悼む',r'訃報',r'おくやみ',r'^\d{1,2}日$',r'^市場情報$',r'^30日の相場表変更$',r'^自社株取得枠設定$']
 
-def target_date_yyyymmdd(): return TARGET_DATE if TARGET_DATE and TARGET_DATE!='auto' else datetime.now(JST).strftime('%Y%m%d')
+def resolve_target_date(*, target_date: str, edition: str, now_jst: datetime, event_name: str = '', schedule_local_time: str = '') -> str:
+    raw=(target_date or '').strip()
+    if raw and raw!='auto':
+        return raw
+    effective=now_jst
+    if (event_name or '').strip()=='schedule':
+        local_time=(schedule_local_time or '').strip() or DEFAULT_SCHEDULE_LOCAL_TIMES.get((edition or '').strip().lower(),'')
+        try:
+            hour_text,minute_text=local_time.split(':',1)
+            nominal=now_jst.replace(hour=int(hour_text),minute=int(minute_text),second=0,microsecond=0)
+            if now_jst < nominal:
+                effective=now_jst-timedelta(days=1)
+        except (AttributeError,TypeError,ValueError):
+            pass
+    return effective.strftime('%Y%m%d')
+
+def target_date_yyyymmdd():
+    return resolve_target_date(
+        target_date=TARGET_DATE,
+        edition=EDITION,
+        now_jst=datetime.now(JST),
+        event_name=os.getenv('GITHUB_EVENT_NAME',''),
+        schedule_local_time=os.getenv('NIKKEI_SCHEDULE_LOCAL_TIME',''),
+    )
 def build_direct_issue_url(): return PAPER_URL_TEMPLATE.format(edition=EDITION,date=target_date_yyyymmdd())
 def wait_page(p):
     for s in ('domcontentloaded','load'):
