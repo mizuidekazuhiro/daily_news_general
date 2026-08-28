@@ -90,7 +90,7 @@ on:
         options: ["true","false"]
   schedule:
     # One scheduled run. The job itself retries at +20/+40 minutes if the paper is not ready.
-    - cron: "17 21 * * 0-6"
+    - cron: "17 21 * * *"
 
 jobs:
   nikkei-morning:
