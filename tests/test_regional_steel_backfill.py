@@ -67,6 +67,30 @@ def test_japan_scope_does_not_match_japanese_company_name_alone():
     assert not explicit_region_evidence_strict(article, profile)
 
 
+def test_japan_scope_rejects_overseas_domestic_production_wording():
+    profile = get_region_profile("Japan")
+    article = _article(
+        "JSW、インドで大型電炉",
+        "インド鉄鋼大手JSWスチールはアンドラプラデシュ州で大型電炉を建設する。需要に応えるため国内生産を増強する。JSWは日本を含めた海外の鉄鋼大手との連携も強める。",
+        ["India", "Japan"],
+    )
+    assert explicit_steel_evidence(article)
+    assert not explicit_region_evidence_strict(article, profile)
+    assert not explicit_region_and_steel_evidence(article, profile)
+
+
+def test_japan_scope_rejects_macro_story_where_domestic_market_is_japan_context_only():
+    profile = get_region_profile("Japan")
+    article = _article(
+        "ドル円新常態 企業の海外志向、鮮明に",
+        "日本企業が成長機会を海外に求めている。国内市場の縮小を背景に、JFEスチールはインド鉄鋼大手JSWスチールの子会社への出資を決めた。投資先はインドである。",
+        ["India", "Japan"],
+    )
+    assert explicit_steel_evidence(article)
+    assert not explicit_region_evidence_strict(article, profile)
+    assert not explicit_region_and_steel_evidence(article, profile)
+
+
 def test_japan_scope_rejects_japanese_steelmaker_overseas_project():
     profile = get_region_profile("Japan")
     article = _article(
