@@ -104,7 +104,7 @@ jobs:
             if [[ -z "$region" ]]; then
               echo 'No recognized regional steel backfill marker'; exit 1
             fi
-            if [[ "$dry" == 'true' ]]; then max_batches='1'; else max_batches='50'; fi
+            if [[ "$dry" == 'true' ]]; then max_batches='6'; else max_batches='50'; fi
           fi
           echo "REGIONAL_STEEL_BACKFILL_REGION=$region" >> "$GITHUB_ENV"
           echo "REGIONAL_STEEL_BACKFILL_DRY_RUN=$dry" >> "$GITHUB_ENV"
