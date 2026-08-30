@@ -42,9 +42,15 @@ def _find_sent_mailbox(conn: imaplib.IMAP4_SSL) -> str | None:
         match = re.match(r'^\((?P<flags>.*?)\)\s+"(?P<delim>[^"]*)"\s+(?P<name>.+)$', text)
         if not match:
             continue
-        name = match.group("name").strip()
-        return name
+        return match.group("name").strip()
     return None
+
+
+def _gmail_raw_criteria(subject_token: str) -> bytes:
+    token = subject_token.replace('"', "")
+    raw_query = f'in:sent newer_than:2d subject:"{token}"'
+    quoted_query = '"' + raw_query.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return quoted_query.encode("utf-8")
 
 
 def already_sent(subject_token: str) -> bool:
@@ -65,13 +71,11 @@ def already_sent(subject_token: str) -> bool:
         if status != "OK":
             print("delivery_guard: sent mailbox select failed; fail-open")
             return False
-        query = f'in:sent newer_than:2d subject:"{subject_token}"'
-        status, data = conn.search(None, "X-GM-RAW", query)
+        status, data = conn.search(None, "X-GM-RAW", _gmail_raw_criteria(subject_token))
         if status != "OK" or not data:
             print("delivery_guard: Gmail search failed; fail-open")
             return False
-        ids = data[0].split()
-        return bool(ids)
+        return bool(data[0].split())
     finally:
         try:
             conn.logout()
