@@ -2,19 +2,40 @@ name: general-news
 on:
   workflow_dispatch:
   schedule:
-    - cron: "30 21 * * *"
+    # Three staggered attempts. Gmail sent-mail guard makes these idempotent.
+    # UTC -> JST: 20:07=05:07, 20:37=05:37, 21:07=06:07
+    - cron: "7 20 * * *"
+    - cron: "37 20 * * *"
+    - cron: "7 21 * * *"
+
+concurrency:
+  group: general-news-morning
+  cancel-in-progress: false
 
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check whether today's digest was already sent
+        id: delivery_guard
+        env:
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_USER: ${{ secrets.MAIL_FROM }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+        run: python scripts/check_mail_delivery_guard.py --kind main
+
       - uses: actions/setup-python@v5
+        if: steps.delivery_guard.outputs.skip != 'true'
         with:
           python-version: '3.11'
       - run: pip install -r requirements.txt
+        if: steps.delivery_guard.outputs.skip != 'true'
       - run: python -m playwright install chromium
+        if: steps.delivery_guard.outputs.skip != 'true'
       - name: Run digest
+        if: steps.delivery_guard.outputs.skip != 'true'
         env:
           NIKKEI_ENABLED: ${{ secrets.NIKKEI_ENABLED }}
           NIKKEI_EMAIL: ${{ secrets.NIKKEI_EMAIL }}
@@ -29,7 +50,7 @@ jobs:
           MAIL_TO: ${{ secrets.MAIL_TO }}
         run: python news_digest.py
       - name: Upload logs
-        if: always()
+        if: always() && steps.delivery_guard.outputs.skip != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: run-logs
