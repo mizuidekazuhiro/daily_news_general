@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import email
 import imaplib
 import os
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
+from email.header import decode_header, make_header
 from zoneinfo import ZoneInfo
 
 JST = ZoneInfo("Asia/Tokyo")
@@ -40,17 +42,38 @@ def _find_sent_mailbox(conn: imaplib.IMAP4_SSL) -> str | None:
         if "\\Sent" not in text:
             continue
         match = re.match(r'^\((?P<flags>.*?)\)\s+"(?P<delim>[^"]*)"\s+(?P<name>.+)$', text)
-        if not match:
-            continue
-        return match.group("name").strip()
+        if match:
+            return match.group("name").strip()
     return None
 
 
-def _gmail_raw_criteria(subject_token: str) -> bytes:
-    token = subject_token.replace('"', "")
-    raw_query = f'in:sent newer_than:2d subject:"{token}"'
-    quoted_query = '"' + raw_query.replace("\\", "\\\\").replace('"', '\\"') + '"'
-    return quoted_query.encode("utf-8")
+def _decode_subject(header_bytes: bytes) -> str:
+    try:
+        msg = email.message_from_bytes(header_bytes)
+        return str(make_header(decode_header(msg.get("Subject", "")))).strip()
+    except Exception:
+        return ""
+
+
+def _recent_sent_subjects(conn: imaplib.IMAP4_SSL, limit: int = 250) -> list[str]:
+    since = (datetime.now(JST) - timedelta(days=2)).strftime("%d-%b-%Y")
+    status, data = conn.search(None, "SINCE", since)
+    if status != "OK" or not data:
+        return []
+    message_ids = data[0].split()[-limit:]
+    subjects: list[str] = []
+    for message_id in reversed(message_ids):
+        status, parts = conn.fetch(message_id, "(BODY.PEEK[HEADER.FIELDS (SUBJECT)])")
+        if status != "OK" or not parts:
+            continue
+        header_bytes = b""
+        for part in parts:
+            if isinstance(part, tuple) and len(part) >= 2 and isinstance(part[1], bytes):
+                header_bytes += part[1]
+        subject = _decode_subject(header_bytes)
+        if subject:
+            subjects.append(subject)
+    return subjects
 
 
 def already_sent(subject_token: str) -> bool:
@@ -71,11 +94,10 @@ def already_sent(subject_token: str) -> bool:
         if status != "OK":
             print("delivery_guard: sent mailbox select failed; fail-open")
             return False
-        status, data = conn.search(None, "X-GM-RAW", _gmail_raw_criteria(subject_token))
-        if status != "OK" or not data:
-            print("delivery_guard: Gmail search failed; fail-open")
-            return False
-        return bool(data[0].split())
+        for subject in _recent_sent_subjects(conn):
+            if subject.startswith(subject_token):
+                return True
+        return False
     finally:
         try:
             conn.logout()
