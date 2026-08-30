@@ -52,4 +52,5 @@ jobs:
             -f save_final_report_to_notion=true \
             -f final_report_article_text_chars=1800 \
             -f send_final_report_mail=true \
-            -f allow_fallback_final_report_mail=true
+            -f allow_fallback_final_report_mail=true \
+            -f soft_not_ready=true
