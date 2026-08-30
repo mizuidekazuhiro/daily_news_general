@@ -2,20 +2,40 @@ name: special-news-delivery
 
 on:
   schedule:
-    - cron: '0 21 * * *' # JST 06:00
+    # UTC -> JST: 19:43=04:43, 20:43=05:43, 21:43=06:43
+    - cron: '43 19 * * *'
+    - cron: '43 20 * * *'
+    - cron: '43 21 * * *'
   workflow_dispatch:
+
+concurrency:
+  group: special-news-morning
+  cancel-in-progress: false
 
 jobs:
   send-special-news:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check whether today's specialist-paper digest was already sent
+        id: delivery_guard
+        env:
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_USER: ${{ secrets.MAIL_FROM }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          SPECIAL_NEWS_MAIL_SUBJECT_PREFIX: ${{ vars.SPECIAL_NEWS_MAIL_SUBJECT_PREFIX }}
+        run: python scripts/check_mail_delivery_guard.py --kind special
+
       - uses: actions/setup-python@v5
+        if: steps.delivery_guard.outputs.skip != 'true'
         with:
           python-version: '3.11'
       - name: Install dependencies
+        if: steps.delivery_guard.outputs.skip != 'true'
         run: pip install -r requirements.txt
       - name: Run special news delivery
+        if: steps.delivery_guard.outputs.skip != 'true'
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           MAIL_FROM: ${{ secrets.MAIL_FROM }}

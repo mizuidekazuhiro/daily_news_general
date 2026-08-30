@@ -1,0 +1,55 @@
+name: Nikkei Morning Early Dispatcher
+
+on:
+  schedule:
+    # Early staggered dispatches; existing 06:17 JST schedule remains the final fallback.
+    # UTC -> JST: 19:47=04:47, 20:27=05:27, 21:07=06:07
+    - cron: '47 19 * * *'
+    - cron: '27 20 * * *'
+    - cron: '7 21 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: nikkei-morning-early-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check whether today's Nikkei morning report was already sent
+        id: delivery_guard
+        env:
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_USER: ${{ secrets.MAIL_FROM }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+        run: python scripts/check_mail_delivery_guard.py --kind nikkei_morning
+
+      - name: Dispatch Nikkei morning workflow
+        if: steps.delivery_guard.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh workflow run nikkei_morning.yml --ref main \
+            -f target_date=auto \
+            -f max_articles=0 \
+            -f skip_existing=true \
+            -f pre_title_filter=true \
+            -f block_heavy_resources=true \
+            -f enable_scoring=true \
+            -f run_final_report=true \
+            -f report_top_rank=5 \
+            -f article_gpt_min_importance_score=3 \
+            -f enable_article_gpt_enrichment=false \
+            -f enable_final_report_gpt=true \
+            -f save_final_report_to_notion=true \
+            -f final_report_article_text_chars=1800 \
+            -f send_final_report_mail=true \
+            -f allow_fallback_final_report_mail=true
