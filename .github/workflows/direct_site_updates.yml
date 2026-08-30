@@ -2,20 +2,40 @@ name: Direct Site Updates
 
 on:
   schedule:
-    - cron: '0 22 * * *' # JST 07:00
+    # UTC -> JST: 20:53=05:53, 21:23=06:23, 21:53=06:53
+    - cron: '53 20 * * *'
+    - cron: '23 21 * * *'
+    - cron: '53 21 * * *'
   workflow_dispatch:
+
+concurrency:
+  group: direct-site-updates-morning
+  cancel-in-progress: false
 
 jobs:
   direct-site-updates:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Check whether today's direct-site update mail was already sent
+        id: delivery_guard
+        env:
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_USER: ${{ secrets.MAIL_FROM }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          DIRECT_SITE_MAIL_SUBJECT_PREFIX: ${{ vars.DIRECT_SITE_MAIL_SUBJECT_PREFIX }}
+        run: python scripts/check_mail_delivery_guard.py --kind direct
+
       - uses: actions/setup-python@v5
+        if: steps.delivery_guard.outputs.skip != 'true'
         with:
           python-version: '3.11'
       - name: Install dependencies
+        if: steps.delivery_guard.outputs.skip != 'true'
         run: pip install -r requirements.txt
       - name: Run direct site updates job
+        if: steps.delivery_guard.outputs.skip != 'true'
         env:
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
