@@ -2,10 +2,11 @@ name: special-news-delivery
 
 on:
   schedule:
-    # UTC -> JST: 19:43=04:43, 20:43=05:43, 21:43=06:43
-    - cron: '43 19 * * *'
+    # Wait until after the specialist papers' normal early-morning publication window.
+    # UTC -> JST: 20:13=05:13, 20:43=05:43, 21:13=06:13
+    - cron: '13 20 * * *'
     - cron: '43 20 * * *'
-    - cron: '43 21 * * *'
+    - cron: '13 21 * * *'
   workflow_dispatch:
 
 concurrency:
