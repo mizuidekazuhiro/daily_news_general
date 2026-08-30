@@ -10,9 +10,10 @@ on:
 jobs:
   verify-sent-detection:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
-      - name: Check today's already-sent main news
+      - name: Check today's already-sent main news with standard IMAP
         id: guard
         env:
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
