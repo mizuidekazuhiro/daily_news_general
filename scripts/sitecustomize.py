@@ -54,6 +54,13 @@ def _find_sent_mailbox(conn: imaplib.IMAP4_SSL) -> str | None:
     return None
 
 
+def _gmail_raw_criteria(subject_token: str) -> bytes:
+    token = subject_token.replace('"', "")
+    raw_query = f'in:sent newer_than:2d subject:"{token}"'
+    quoted_query = '"' + raw_query.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return quoted_query.encode("utf-8")
+
+
 def _already_sent(subject: str) -> bool:
     user = (os.getenv("MAIL_USER") or os.getenv("MAIL_FROM") or "").strip()
     password = (os.getenv("MAIL_PASSWORD") or "").strip()
@@ -65,8 +72,7 @@ def _already_sent(subject: str) -> bool:
         mailbox = _find_sent_mailbox(conn)
         if not mailbox or conn.select(mailbox, readonly=True)[0] != "OK":
             return False
-        token = _search_token(subject).replace('"', "")
-        status, data = conn.search(None, "X-GM-RAW", f'in:sent newer_than:2d subject:"{token}"')
+        status, data = conn.search(None, "X-GM-RAW", _gmail_raw_criteria(_search_token(subject)))
         return status == "OK" and bool(data and data[0].split())
     except Exception:
         return False
