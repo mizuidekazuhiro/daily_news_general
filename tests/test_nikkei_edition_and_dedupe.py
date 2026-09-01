@@ -70,3 +70,21 @@ def test_article_id_dedupe_between_ng_and_article_path():
 def test_mail_default_enabled(monkeypatch):
     monkeypatch.delenv("NIKKEI_SEND_FINAL_REPORT_MAIL", raising=False)
     assert mod._env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL", True) is True
+
+
+def test_morning_workflow_serializes_and_rechecks_delivery():
+    workflow = Path(".github/workflows/nikkei_morning.yml").read_text(encoding="utf-8")
+    assert "group: nikkei-morning" in workflow
+    assert "cancel-in-progress: false" in workflow
+    assert "id: delivery_guard" in workflow
+    assert "python scripts/check_mail_delivery_guard.py --kind nikkei_morning" in workflow
+    assert "steps.delivery_guard.outputs.skip != 'true'" in workflow
+
+
+def test_early_dispatch_skips_when_morning_workflow_is_active():
+    workflow = Path(".github/workflows/nikkei_morning_early_dispatch.yml").read_text(encoding="utf-8")
+    assert "id: active_guard" in workflow
+    assert "gh run list" in workflow
+    assert "--workflow nikkei_morning.yml" in workflow
+    assert "select(.status != \"completed\")" in workflow
+    assert "steps.active_guard.outputs.skip != 'true'" in workflow

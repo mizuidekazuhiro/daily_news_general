@@ -31,8 +31,33 @@ jobs:
           MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
         run: python scripts/check_mail_delivery_guard.py --kind nikkei_morning
 
-      - name: Dispatch Nikkei morning workflow
+      - name: Check whether Nikkei morning workflow is already active
+        id: active_guard
         if: steps.delivery_guard.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          active_count="$(
+            gh run list \
+              --repo "${GH_REPO}" \
+              --workflow nikkei_morning.yml \
+              --limit 50 \
+              --json status \
+              --jq '[.[] | select(.status != "completed")] | length'
+          )"
+          echo "active_count=${active_count}"
+          if [ "${active_count}" -gt 0 ]; then
+            echo "skip=true" >> "${GITHUB_OUTPUT}"
+            echo "Nikkei morning workflow already queued/in progress; skip duplicate dispatch."
+          else
+            echo "skip=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Dispatch Nikkei morning workflow
+        if: steps.delivery_guard.outputs.skip != 'true' && steps.active_guard.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}

@@ -98,6 +98,12 @@ on:
     # One scheduled run. The job itself retries at +20/+40 minutes if the paper is not ready.
     - cron: "17 21 * * *"
 
+# All automatic/auto-date morning runs share one lock. A duplicate run waits for the
+# current one to finish, then the delivery guard below turns it into a no-op.
+concurrency:
+  group: nikkei-morning
+  cancel-in-progress: false
+
 jobs:
   nikkei-morning:
     runs-on: ubuntu-latest
@@ -157,18 +163,31 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
-      - run: |
+
+      - name: Check whether today's Nikkei morning report was already sent
+        id: delivery_guard
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.target_date == 'auto' && inputs.send_final_report_mail == 'true') }}
+        run: python scripts/check_mail_delivery_guard.py --kind nikkei_morning
+
+      - name: Install dependencies
+        if: steps.delivery_guard.outputs.skip != 'true'
+        run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           python -m playwright install --with-deps chromium
-      - run: |
+
+      - name: Restore Nikkei session state
+        if: steps.delivery_guard.outputs.skip != 'true'
+        run: |
           mkdir -p .storage
           python - <<'P'
           import os
           from pathlib import Path
           Path('.storage/nikkei_storage_state.json').write_text(os.environ['NIKKEI_SESSION_STATE_JSON'],encoding='utf-8')
           P
+
       - name: Run Nikkei pipeline with publication retries
+        if: steps.delivery_guard.outputs.skip != 'true'
         shell: bash
         run: |
           set -u
@@ -215,8 +234,10 @@ jobs:
             echo "Paper not ready or transient pipeline failure; retrying in 20 minutes."
             sleep 1200
           done
+
       - name: Check final report skip marker
         id: fr_skip
+        if: steps.delivery_guard.outputs.skip != 'true'
         run: |
           python - <<'P'
           import json
@@ -231,11 +252,13 @@ jobs:
           with open(Path('${GITHUB_OUTPUT}'), 'a', encoding='utf-8') as f:
             f.write(f"skip={str(skip).lower()}\n")
           P
-      - run: python scripts/run_nikkei_final_report.py
-        if: ${{ (github.event_name != 'workflow_dispatch' || inputs.run_final_report == 'true') && steps.fr_skip.outputs.skip != 'true' }}
+
+      - name: Run Nikkei final report
+        run: python scripts/run_nikkei_final_report.py
+        if: ${{ steps.delivery_guard.outputs.skip != 'true' && (github.event_name != 'workflow_dispatch' || inputs.run_final_report == 'true') && steps.fr_skip.outputs.skip != 'true' }}
 
       - name: Upload Nikkei debug logs
-        if: always()
+        if: ${{ always() && steps.delivery_guard.outputs.skip != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: nikkei-debug-logs
