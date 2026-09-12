@@ -48,4 +48,7 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_SPECIAL_NEWS_DB_ID: ${{ secrets.NOTION_SPECIAL_NEWS_DB_ID }}
           NOTION_SPECIAL_NEWS_ENABLED: ${{ vars.NOTION_SPECIAL_NEWS_ENABLED }}
-        run: python news_digest.py --job special
+          NOTION_DIRECT_SITES_ENABLED: ${{ secrets.NOTION_DIRECT_SITES_ENABLED }}
+          NOTION_DIRECT_SITES_DB_ID: ${{ secrets.NOTION_DIRECT_SITES_DB_ID }}
+          MAIL_USER: ${{ secrets.MAIL_FROM }}
+        run: python special_news_unified.py
