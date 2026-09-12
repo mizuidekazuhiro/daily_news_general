@@ -51,6 +51,7 @@ SPECIAL_NEWS_WINDOW_HOURS = int(os.getenv("SPECIAL_NEWS_WINDOW_HOURS", "24"))
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
 NOTION_SPECIAL_NEWS_DB_ID = os.getenv("NOTION_SPECIAL_NEWS_DB_ID", "")
 SPECIAL_NEWS_NOTION_ENABLED_DEFAULT = False
+SPECIAL_NEWS_ALLOW_LOCAL_CONFIG_FALLBACK = os.getenv("SPECIAL_NEWS_ALLOW_LOCAL_CONFIG_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"}
 ENV_BOOL_TRUE_VALUES = {"true", "1", "yes", "on"}
 ENV_BOOL_FALSE_VALUES = {"false", "0", "no", "off"}
 DEFAULT_SPECIAL_DATE_RULE = {
@@ -1021,8 +1022,11 @@ def fetch_special_news_config_from_notion() -> Optional[List[Dict[str, Any]]]:
         logging.info("Special-news config source: local file (Notion disabled)")
         return None
     if not NOTION_TOKEN or not NOTION_SPECIAL_NEWS_DB_ID:
-        logging.warning("Notion special-news enabled but credentials are missing; fallback to local config")
-        return None
+        message = "Notion special-news enabled but credentials are missing"
+        if SPECIAL_NEWS_ALLOW_LOCAL_CONFIG_FALLBACK:
+            logging.warning("%s; fallback to local config", message)
+            return None
+        raise RuntimeError(message)
     url = f"https://api.notion.com/v1/databases/{NOTION_SPECIAL_NEWS_DB_ID}/query"
     rows: List[Dict[str, Any]] = []
     cursor: Optional[str] = None
@@ -1050,11 +1054,15 @@ def fetch_special_news_config_from_notion() -> Optional[List[Dict[str, Any]]]:
             if not cursor:
                 break
     except Exception as exc:
-        logging.error("Failed to fetch Notion special-news config: %s; fallback to local config", exc)
-        return None
+        if SPECIAL_NEWS_ALLOW_LOCAL_CONFIG_FALLBACK:
+            logging.error("Failed to fetch Notion special-news config: %s; fallback to local config", exc)
+            return None
+        raise RuntimeError(f"Notion special-news config unavailable: {exc}") from exc
     if not rows:
-        logging.warning("Notion special-news DB has no rows; fallback to local config")
-        return None
+        if SPECIAL_NEWS_ALLOW_LOCAL_CONFIG_FALLBACK:
+            logging.warning("Notion special-news DB has no rows; fallback to local config")
+            return None
+        raise RuntimeError("Notion special-news DB has no rows")
     media_rows = []
     for idx, row in enumerate(rows):
         props = row.get("properties", {})
@@ -1113,8 +1121,12 @@ def load_special_news_media_config() -> Dict[str, Any]:
     if notion_rows:
         # 優先順位: 環境変数 > Notion > コード既定値
         subject_prefix = resolve_special_subject_prefix(SPECIAL_NEWS_MAIL_SUBJECT_PREFIX, notion_rows[0].get("subject_prefix"))
-        delivery_enabled = notion_rows[0].get("delivery_enabled", True)
-        max_items_total = notion_rows[0].get("max_items_total", SPECIAL_NEWS_MAX_ITEMS_TOTAL)
+        delivery_enabled = any(bool(row.get("delivery_enabled", True)) for row in notion_rows)
+        max_items_total = min(
+            safe_int(row.get("max_items_total"), SPECIAL_NEWS_MAX_ITEMS_TOTAL)
+            for row in notion_rows
+            if row.get("delivery_enabled", True)
+        ) if delivery_enabled else SPECIAL_NEWS_MAX_ITEMS_TOTAL
         return {
             "source": "notion",
             "media": sorted(notion_rows, key=lambda x: x["display_order"]),
@@ -1137,7 +1149,7 @@ def load_special_news_media_config() -> Dict[str, Any]:
             display_order=m.get("display_order"),
             max_items=m.get("max_items"),
             subject_prefix=m.get("subject_prefix"),
-            delivery_enabled=payload.get("delivery_enabled", True),
+            delivery_enabled=m.get("delivery_enabled", payload.get("delivery_enabled", True)),
             max_items_total=payload.get("max_items_total", SPECIAL_NEWS_MAX_ITEMS_TOTAL),
             date_source_type=m.get("date_source_type"),
             date_parse_pattern=m.get("date_parse_pattern"),
@@ -1312,6 +1324,7 @@ def collect_special_news_articles(now_jst: Optional[datetime] = None, apply_limi
             "subject_prefix": media.get("subject_prefix", SPECIAL_NEWS_MAIL_SUBJECT_PREFIX),
             "alert_ids": media.get("alert_ids", []),
             "max_items": per_media_limit,
+            "delivery_enabled": bool(media.get("delivery_enabled", True)),
         })
     results = sorted(results, key=lambda x: x["display_order"])
     total = 0
