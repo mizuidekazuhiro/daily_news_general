@@ -759,7 +759,7 @@ def collect_site_items(cfg: Dict[str, Any], now_dt: datetime, apply_limit: bool 
     if fetch_mode == "direct_then_search" and (direct_status in {"403", "404", "error", "not_attempted"} or direct_links == 0):
         should_try_search = True
     if should_try_search:
-        search_rows = search_candidates(cfg, now_dt, max_results=collection_limit or 100)
+        search_rows = search_candidates(cfg, now_dt, collection_limit or 100)
         for cand in search_rows:
             normalized_url = normalize_url(cand["url"])
             if normalized_url in site_seen_urls:
