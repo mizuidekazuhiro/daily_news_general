@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo
 
 JST = ZoneInfo("Asia/Tokyo")
 DEFAULT_SENT_LEDGER_DB_ID = "79ff3b471013426ab857dc2085fa9086"
-SENT_LEDGER_DB_ID = os.getenv("NOTION_SPECIAL_SENT_DB_ID", DEFAULT_SENT_LEDGER_DB_ID).strip()
+SENT_LEDGER_DB_ID = (os.getenv("NOTION_SPECIAL_SENT_DB_ID") or DEFAULT_SENT_LEDGER_DB_ID).strip()
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "").strip()
 
 
