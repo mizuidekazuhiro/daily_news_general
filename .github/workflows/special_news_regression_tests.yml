@@ -9,6 +9,7 @@ on:
       - "tests/test_special_news_unified.py"
       - "tests/test_special_news.py"
       - "tests/test_direct_site_updates.py"
+      - "tests/test_japanmetal_live.py"
       - ".github/workflows/special_news_delivery.yml"
       - ".github/workflows/direct_site_updates.yml"
       - ".github/workflows/special_news_regression_tests.yml"
@@ -28,3 +29,5 @@ jobs:
         run: python -m py_compile special_news_unified.py news_digest.py direct_site_updates.py
       - name: Run specialist-news regression tests
         run: pytest -q tests/test_special_news_unified.py tests/test_special_news.py tests/test_direct_site_updates.py
+      - name: Verify Japanmetal public archive structure
+        run: pytest -q tests/test_japanmetal_live.py
