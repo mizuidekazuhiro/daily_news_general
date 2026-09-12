@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
 JST = ZoneInfo("Asia/Tokyo")
-DEFAULT_SENT_LEDGER_DB_ID = "79ff3b471013426ab857dc2085fa9086"
-SENT_LEDGER_DB_ID = (os.getenv("NOTION_SPECIAL_SENT_DB_ID") or DEFAULT_SENT_LEDGER_DB_ID).strip()
+LEDGER_TITLE = "SpecialistNewsSentLedger"
+DEFAULT_PARENT_PAGE_ID = "2eddec27c9aa8098a6a9e50104794f7a"
+SENT_LEDGER_DB_ID = (os.getenv("NOTION_SPECIAL_SENT_DB_ID") or "").strip()
+SENT_LEDGER_PARENT_PAGE_ID = (os.getenv("NOTION_SPECIAL_SENT_PARENT_PAGE_ID") or DEFAULT_PARENT_PAGE_ID).strip()
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "").strip()
+_RESOLVED_DB_ID: str | None = None
 
 
 def _headers() -> dict[str, str]:
@@ -30,6 +34,95 @@ def _request_json(url: str, method: str, payload: dict[str, Any] | None = None) 
         return json.loads(response.read().decode("utf-8"))
 
 
+def _database_title(payload: dict[str, Any]) -> str:
+    return "".join(part.get("plain_text", "") for part in payload.get("title", []))
+
+
+def _database_is_accessible(database_id: str) -> bool:
+    try:
+        _request_json(f"https://api.notion.com/v1/databases/{database_id}", "GET")
+        return True
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False
+        raise
+
+
+def _search_ledger_database() -> str:
+    payload = _request_json(
+        "https://api.notion.com/v1/search",
+        "POST",
+        {
+            "query": LEDGER_TITLE,
+            "filter": {"property": "object", "value": "database"},
+            "page_size": 100,
+        },
+    )
+    for row in payload.get("results", []):
+        if _database_title(row).strip() == LEDGER_TITLE:
+            return str(row.get("id") or "").replace("-", "")
+    return ""
+
+
+def _create_ledger_database() -> str:
+    if not SENT_LEDGER_PARENT_PAGE_ID:
+        raise RuntimeError("NOTION_SPECIAL_SENT_PARENT_PAGE_ID is empty")
+    payload = _request_json(
+        "https://api.notion.com/v1/databases",
+        "POST",
+        {
+            "parent": {"type": "page_id", "page_id": SENT_LEDGER_PARENT_PAGE_ID},
+            "title": [{"type": "text", "text": {"content": LEDGER_TITLE}}],
+            "properties": {
+                "ArticleKey": {"title": {}},
+                "Media": {
+                    "select": {
+                        "options": [
+                            {"name": "鉄鋼新聞", "color": "blue"},
+                            {"name": "日刊産業新聞", "color": "green"},
+                        ]
+                    }
+                },
+                "CanonicalURL": {"url": {}},
+                "Headline": {"rich_text": {}},
+                "PublishedAt": {"date": {}},
+                "SentAt": {"date": {}},
+                "DeliveryRunId": {"rich_text": {}},
+                "Source": {
+                    "select": {
+                        "options": [
+                            {"name": "direct", "color": "blue"},
+                            {"name": "alert", "color": "yellow"},
+                        ]
+                    }
+                },
+            },
+        },
+    )
+    database_id = str(payload.get("id") or "").replace("-", "")
+    if not database_id:
+        raise RuntimeError("Notion sent-ledger creation returned no database id")
+    return database_id
+
+
+def resolve_ledger_db_id() -> str:
+    global _RESOLVED_DB_ID
+    if _RESOLVED_DB_ID:
+        return _RESOLVED_DB_ID
+
+    if SENT_LEDGER_DB_ID and _database_is_accessible(SENT_LEDGER_DB_ID):
+        _RESOLVED_DB_ID = SENT_LEDGER_DB_ID.replace("-", "")
+        return _RESOLVED_DB_ID
+
+    existing = _search_ledger_database()
+    if existing:
+        _RESOLVED_DB_ID = existing
+        return existing
+
+    _RESOLVED_DB_ID = _create_ledger_database()
+    return _RESOLVED_DB_ID
+
+
 def _title_value(prop: dict[str, Any] | None) -> str:
     if not prop:
         return ""
@@ -37,10 +130,9 @@ def _title_value(prop: dict[str, Any] | None) -> str:
 
 
 def load_sent_keys(days: int = 30) -> set[str]:
-    if not SENT_LEDGER_DB_ID:
-        raise RuntimeError("NOTION_SPECIAL_SENT_DB_ID is empty")
+    database_id = resolve_ledger_db_id()
     cutoff = (datetime.now(JST) - timedelta(days=days)).date().isoformat()
-    url = f"https://api.notion.com/v1/databases/{SENT_LEDGER_DB_ID}/query"
+    url = f"https://api.notion.com/v1/databases/{database_id}/query"
     keys: set[str] = set()
     cursor: str | None = None
     while True:
@@ -97,8 +189,7 @@ def record_sent_articles(
     sent_at: datetime,
     delivery_run_id: str,
 ) -> int:
-    if not SENT_LEDGER_DB_ID:
-        raise RuntimeError("NOTION_SPECIAL_SENT_DB_ID is empty")
+    database_id = resolve_ledger_db_id()
     created = 0
     endpoint = "https://api.notion.com/v1/pages"
     for media in media_results:
@@ -130,7 +221,7 @@ def record_sent_articles(
                 endpoint,
                 "POST",
                 {
-                    "parent": {"database_id": SENT_LEDGER_DB_ID},
+                    "parent": {"database_id": database_id},
                     "properties": properties,
                 },
             )
