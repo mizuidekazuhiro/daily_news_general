@@ -298,6 +298,43 @@ def normalize_url(url: str) -> str:
     return urllib.parse.urlunsplit((scheme, netloc, path.rstrip("/") or "/", query, ""))
 
 
+def extract_published_date_from_url(url: str) -> str:
+    """Return YYYY-MM-DD when a publisher encodes the publication date in its article URL."""
+    try:
+        path = urllib.parse.urlsplit(url).path
+    except ValueError:
+        return ""
+    match = re.search(r"/news-[th](\d{4})(\d{2})(\d{2})\d*[.]html$", path, flags=re.IGNORECASE)
+    if not match:
+        return ""
+    year, month, day = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    try:
+        return datetime(year, month, day).strftime("%Y-%m-%d")
+    except ValueError:
+        return ""
+
+
+def list_page_urls_for_run(cfg: Dict[str, Any], now_dt: datetime) -> List[str]:
+    """Expand stable list URLs with date archives for publishers whose category page is incomplete to bots."""
+    configured = list(cfg.get("ListPageUrls") or [])
+    is_japanmetal_steel = any(
+        urllib.parse.urlsplit(url).netloc.lower().endswith("japanmetal.com")
+        and urllib.parse.urlsplit(url).path.rstrip("/") == "/cat/news-t"
+        for url in configured
+    )
+    if not is_japanmetal_steel:
+        return configured
+
+    local_date = now_dt.astimezone(cfg["timezone"]).date()
+    archive_urls = [
+        f"https://www.japanmetal.com/{day.strftime('%Y/%m/%d')}"
+        for day in (local_date, local_date - timedelta(days=1))
+    ]
+    # Date archives are intentionally first: they are bounded to one publication day
+    # and avoid unrelated/stale links that can appear in shared category-page sidebars.
+    return archive_urls + [url for url in configured if url not in archive_urls]
+
+
 def _find_text_by_selector(node: BeautifulSoup, selector: str) -> str:
     if not selector:
         return ""
@@ -317,9 +354,9 @@ def parse_date_text(raw_text: str, tz: ZoneInfo, granularity: str) -> Optional[d
     if not text:
         return None
     patterns = [
-        (r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})\s+(\d{1,2}):(\d{2})", True),
+        (r"(\d{4})[./-](\d{1,2})[./-](\d{1,2})\s+(\d{1,2}):(\d{2})", True),
         (r"(\d{4})年(\d{1,2})月(\d{1,2})日\s*(\d{1,2}):(\d{2})?", True),
-        (r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})", False),
+        (r"(\d{4})[./-](\d{1,2})[./-](\d{1,2})", False),
         (r"(\d{4})年(\d{1,2})月(\d{1,2})日", False),
         (r"(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})", False),
         (r"([A-Za-z]+)\s+(\d{1,2}),\s*(\d{4})", False),
@@ -449,6 +486,10 @@ def extract_candidates_from_list_page(
             date_text = _extract_date_by_regex(block, cfg["ListDatePattern"])
             if date_text:
                 date_source = "list_regex"
+        if not date_text:
+            date_text = extract_published_date_from_url(absolute_url)
+            if date_text:
+                date_source = "url"
 
         out.append({"title": title, "url": absolute_url, "date_text": date_text, "date_source": date_source})
     logging.info(
@@ -575,8 +616,16 @@ def collect_site_items(cfg: Dict[str, Any], now_dt: datetime) -> List[SiteItem]:
     direct_status = "not_attempted"
     direct_links = 0
 
-    logging.info("site name=%s configured_url_count=%s configured_urls=%s", cfg["SiteName"], len(cfg["ListPageUrls"]), cfg["ListPageUrls"])
-    for list_url in (cfg["ListPageUrls"] if should_try_direct else []):
+    run_list_urls = list_page_urls_for_run(cfg, now_dt) if should_try_direct else []
+    logging.info(
+        "site name=%s configured_url_count=%s configured_urls=%s run_url_count=%s run_urls=%s",
+        cfg["SiteName"],
+        len(cfg["ListPageUrls"]),
+        cfg["ListPageUrls"],
+        len(run_list_urls),
+        run_list_urls,
+    )
+    for list_url in run_list_urls:
         current_url = list_url
         for _ in range(cfg["MaxPages"]):
             if current_url in pages_visited:
