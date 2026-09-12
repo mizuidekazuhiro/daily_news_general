@@ -48,8 +48,19 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_ARTICLE_DB_ID: ${{ secrets.NOTION_ARTICLE_DB_ID }}
           NOTION_SPECIAL_NEWS_DB_ID: ${{ secrets.NOTION_SPECIAL_NEWS_DB_ID }}
-          NOTION_SPECIAL_NEWS_ENABLED: ${{ vars.NOTION_SPECIAL_NEWS_ENABLED }}
-          NOTION_DIRECT_SITES_ENABLED: ${{ secrets.NOTION_DIRECT_SITES_ENABLED }}
+          NOTION_SPECIAL_NEWS_ENABLED: "true"
+          SPECIAL_NEWS_ALLOW_LOCAL_CONFIG_FALLBACK: "false"
+          NOTION_DIRECT_SITES_ENABLED: "true"
+          DIRECT_SITE_ALLOW_LOCAL_CONFIG_FALLBACK: "false"
           NOTION_DIRECT_SITES_DB_ID: ${{ secrets.NOTION_DIRECT_SITES_DB_ID }}
           MAIL_USER: ${{ secrets.MAIL_FROM }}
         run: python special_news_unified.py
+
+      - name: Notify specialist-news failure
+        if: ${{ failure() }}
+        env:
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_USER: ${{ secrets.MAIL_FROM }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          SPECIAL_NEWS_FAILURE_MAIL_TO: ${{ secrets.SPECIAL_NEWS_FAILURE_MAIL_TO }}
+        run: python scripts/send_special_news_failure_mail.py
