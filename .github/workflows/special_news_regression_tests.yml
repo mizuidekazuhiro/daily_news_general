@@ -35,7 +35,8 @@ jobs:
         run: pytest -q tests/test_special_news_unified.py tests/test_special_news_sent_ledger.py tests/test_special_news.py tests/test_direct_site_updates.py
       - name: Verify Japanmetal public archive structure
         run: pytest -q tests/test_japanmetal_live.py
-      - name: Verify Notion sent-ledger connectivity
+      - name: Verify dedicated Notion sent-ledger connectivity
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_SPECIAL_SENT_DB_ID: "f16be6ad-2c7c-4b1b-9e3e-1d63c36a39d7"
         run: python -c "import special_news_sent_ledger as l; print(f'ledger_keys={len(l.load_sent_keys(30))}')"
