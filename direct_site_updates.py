@@ -1,4 +1,5 @@
 import json
+import feedparser
 import logging
 import os
 import re
@@ -326,13 +327,16 @@ def list_page_urls_for_run(cfg: Dict[str, Any], now_dt: datetime) -> List[str]:
         return configured
 
     local_date = now_dt.astimezone(cfg["timezone"]).date()
+    feed_url = "https://www.japanmetal.com/cat/news-t/feed"
     archive_urls = [
         f"https://www.japanmetal.com/{day.strftime('%Y/%m/%d')}"
         for day in (local_date, local_date - timedelta(days=1))
     ]
-    # Date archives are intentionally first: they are bounded to one publication day
-    # and avoid unrelated/stale links that can appear in shared category-page sidebars.
-    return archive_urls + [url for url in configured if url not in archive_urls]
+    # Prefer the publisher's own category RSS. Date archives and the broad category
+    # page remain fallbacks for feed delay or future feed-format changes.
+    ordered = [feed_url] + archive_urls + configured
+    seen = set()
+    return [url for url in ordered if not (url in seen or seen.add(url))]
 
 
 def _find_text_by_selector(node: BeautifulSoup, selector: str) -> str:
@@ -443,9 +447,49 @@ def extract_candidates_from_list_page(
     page_url: str,
     cfg: Dict[str, Any],
 ) -> List[Dict[str, Any]]:
-    soup = BeautifulSoup(html, "html.parser")
     raw_pattern = str(cfg.get("ArticleUrlPattern", ""))
     normalized_pattern = normalize_article_url_pattern(raw_pattern)
+
+    if urllib.parse.urlsplit(page_url).path.rstrip("/").endswith("/cat/news-t/feed"):
+        parsed = feedparser.parse(html)
+        out: List[Dict[str, Any]] = []
+        seen = set()
+        for entry in parsed.entries:
+            link = str(entry.get("link") or "").strip()
+            title = str(entry.get("title") or "").strip()
+            if not link or not title:
+                continue
+            if normalized_pattern and not re.search(normalized_pattern, link):
+                continue
+            normalized = normalize_url(link)
+            if normalized in seen:
+                continue
+            seen.add(normalized)
+            date_text = extract_published_date_from_url(link)
+            if not date_text:
+                published = str(entry.get("published") or entry.get("updated") or "").strip()
+                date_text = published
+                date_source = "rss"
+            else:
+                date_source = "url"
+            out.append(
+                {
+                    "title": title,
+                    "url": link,
+                    "date_text": date_text,
+                    "date_source": date_source,
+                }
+            )
+        logging.info(
+            "site name=%s source=publisher_rss extracted links count=%s feed=%s bozo=%s",
+            cfg["SiteName"],
+            len(out),
+            page_url,
+            getattr(parsed, "bozo", False),
+        )
+        return out
+
+    soup = BeautifulSoup(html, "html.parser")
     anchors = soup.select(cfg["ArticleLinkSelector"]) if cfg["ArticleLinkSelector"] else soup.select("a[href]")
     href_samples: List[str] = []
     absolute_samples: List[str] = []
