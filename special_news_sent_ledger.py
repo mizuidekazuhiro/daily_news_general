@@ -13,7 +13,6 @@ JST = ZoneInfo("Asia/Tokyo")
 DEFAULT_ARTICLES_DB_ID = "2eddec27-c9aa-8022-9699-c36467fd9477"
 ARTICLES_DB_ID = (
     os.getenv("NOTION_ARTICLE_DB_ID")
-    or os.getenv("NOTION_SPECIAL_SENT_DB_ID")
     or DEFAULT_ARTICLES_DB_ID
 ).strip()
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "").strip()
