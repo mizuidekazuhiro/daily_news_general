@@ -23,7 +23,7 @@ def test_article_identity_unwraps_google_redirect_for_japanmetal():
     assert mod.article_identity(wrapped) == "japanmetal:20260911150723"
 
 
-def test_merge_prefers_direct_for_steel_and_alert_for_industry():
+def test_merge_prefers_direct_for_both_specialist_papers():
     steel_direct = {
         "title": "Direct steel title",
         "link": "https://www.japanmetaldaily.com/articles/-/267141",
@@ -63,8 +63,8 @@ def test_merge_prefers_direct_for_steel_and_alert_for_industry():
     assert by_media["鉄鋼新聞"][0]["source"] == "direct"
 
     assert len(by_media["日刊産業新聞"]) == 1
-    assert by_media["日刊産業新聞"][0]["title"] == "Alert industry title"
-    assert by_media["日刊産業新聞"][0]["source"] == "alert"
+    assert by_media["日刊産業新聞"][0]["title"] == "Direct industry title"
+    assert by_media["日刊産業新聞"][0]["source"] == "direct"
     assert by_media["日刊産業新聞"][0]["link"] == "https://www.japanmetal.com/news-t20260911150723.html"
 
 

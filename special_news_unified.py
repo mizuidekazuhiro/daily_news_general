@@ -20,7 +20,7 @@ SENT_HISTORY_LIMIT = int(os.getenv("SPECIAL_NEWS_SENT_HISTORY_LIMIT", "250"))
 TARGET_MEDIA = ("日刊産業新聞", "鉄鋼新聞")
 SOURCE_PRIORITY = {
     "鉄鋼新聞": ("direct", "alert"),
-    "日刊産業新聞": ("alert", "direct"),
+    "日刊産業新聞": ("direct", "alert"),
 }
 LEGACY_SUBJECT_PREFIXES = ("【専門紙記事一覧】", "鉄鋼サイト更新一覧")
 
