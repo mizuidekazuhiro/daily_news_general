@@ -6,7 +6,7 @@ import special_news_sent_ledger as ledger
 
 def test_load_sent_keys_reads_article_keys(monkeypatch):
     monkeypatch.setattr(ledger, "NOTION_TOKEN", "token")
-    monkeypatch.setattr(ledger, "SENT_LEDGER_DB_ID", "db")
+    monkeypatch.setattr(ledger, "resolve_ledger_db_id", lambda: "db")
     calls = []
 
     def fake_request(url, method, payload=None):
@@ -40,7 +40,7 @@ def test_load_sent_keys_reads_article_keys(monkeypatch):
 
 def test_record_sent_articles_writes_only_after_caller_invokes_it(monkeypatch):
     monkeypatch.setattr(ledger, "NOTION_TOKEN", "token")
-    monkeypatch.setattr(ledger, "SENT_LEDGER_DB_ID", "db")
+    monkeypatch.setattr(ledger, "resolve_ledger_db_id", lambda: "db")
     payloads = []
 
     def fake_request(url, method, payload=None):
@@ -72,3 +72,15 @@ def test_record_sent_articles_writes_only_after_caller_invokes_it(monkeypatch):
     assert props["Media"]["select"]["name"] == "鉄鋼新聞"
     assert props["Source"]["select"]["name"] == "direct"
     assert props["SentAt"]["date"]["start"].startswith("2026-09-12T07:30")
+
+
+
+def test_resolve_ledger_creates_database_when_not_found(monkeypatch):
+    monkeypatch.setattr(ledger, "NOTION_TOKEN", "token")
+    monkeypatch.setattr(ledger, "SENT_LEDGER_DB_ID", "")
+    monkeypatch.setattr(ledger, "_RESOLVED_DB_ID", None)
+    monkeypatch.setattr(ledger, "_search_ledger_database", lambda: "")
+    monkeypatch.setattr(ledger, "_create_ledger_database", lambda: "created-db")
+
+    assert ledger.resolve_ledger_db_id() == "created-db"
+    assert ledger.resolve_ledger_db_id() == "created-db"
