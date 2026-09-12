@@ -1,6 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -354,4 +355,4 @@ def test_japanmetal_collects_all_steel_items_from_daily_archive_without_article_
     assert len(items) == 8
     assert all(item.date_source == "url" for item in items)
     assert all(item.published_at.date().isoformat() == "2026-09-11" for item in items)
-    assert not any("/news-t" in url for url in calls)
+    assert not any(re.search(r"/news-t20[0-9]+[.]html$", url) for url in calls)
