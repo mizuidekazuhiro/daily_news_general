@@ -267,13 +267,14 @@ def _direct_results(now_jst: datetime) -> tuple[dict[str, list[dict[str, Any]]],
         name = canonical_media_name(str(cfg.get("SiteName") or ""))
         if name not in TARGET_MEDIA or not cfg.get("Enabled"):
             continue
+        items = direct_site_updates.collect_site_items(cfg, now_jst, apply_limit=False)
         if not cfg.get("DeliveryEnabled", True):
             news_digest.logging.info(
-                "Unified special-news direct source skipped media=%s reason=delivery_disabled",
+                "Unified special-news direct source monitored media=%s items=%s delivery_enabled=false",
                 name,
+                len(items),
             )
             continue
-        items = direct_site_updates.collect_site_items(cfg, now_jst, apply_limit=False)
         limits[name] = int(cfg.get("MaxItemsPerSite") or 20)
         out[name].extend(
             {
