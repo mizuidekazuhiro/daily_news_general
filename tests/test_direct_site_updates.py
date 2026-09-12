@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
+import direct_site_updates as dsu
 from direct_site_updates import (
     collect_site_items,
     dedupe_and_limit,
@@ -449,3 +450,129 @@ def test_direct_send_mail_raises_when_recipients_missing(monkeypatch):
 
     with pytest.raises(RuntimeError, match="recipients are empty"):
         send_mail("subject", "<p>body</p>")
+
+
+
+def test_load_sites_fails_closed_when_notion_enabled(monkeypatch):
+    monkeypatch.setattr(dsu, "NOTION_DIRECT_SITES_ENABLED", True)
+    monkeypatch.setattr(dsu, "DIRECT_SITE_ALLOW_LOCAL_CONFIG_FALLBACK", False)
+    monkeypatch.setattr(
+        dsu,
+        "load_sites_from_notion",
+        lambda: (_ for _ in ()).throw(TimeoutError("notion down")),
+    )
+    monkeypatch.setattr(
+        dsu,
+        "load_sites_from_json",
+        lambda: (_ for _ in ()).throw(AssertionError("local fallback must not run")),
+    )
+
+    with pytest.raises(RuntimeError, match="direct-site Notion config unavailable"):
+        dsu.load_sites()
+
+
+def test_load_sites_allows_explicit_local_fallback(monkeypatch):
+    monkeypatch.setattr(dsu, "NOTION_DIRECT_SITES_ENABLED", True)
+    monkeypatch.setattr(dsu, "DIRECT_SITE_ALLOW_LOCAL_CONFIG_FALLBACK", True)
+    monkeypatch.setattr(
+        dsu,
+        "load_sites_from_notion",
+        lambda: (_ for _ in ()).throw(TimeoutError("notion down")),
+    )
+    monkeypatch.setattr(
+        dsu,
+        "load_sites_from_json",
+        lambda: [normalize_site_row({"SiteName": "local"})],
+    )
+
+    source, rows = dsu.load_sites()
+
+    assert source == "local_json"
+    assert [row["SiteName"] for row in rows] == ["local"]
+
+
+def test_direct_diagnostic_mode_never_sends_mail(monkeypatch):
+    cfg = normalize_site_row(
+        {
+            "SiteName": "鉄鋼新聞",
+            "Enabled": True,
+            "DeliveryEnabled": True,
+            "DisplayOrder": 1,
+        }
+    )
+    monkeypatch.setattr(dsu, "DIRECT_SITE_DIAGNOSTIC_ONLY", True)
+    monkeypatch.setattr(dsu, "load_sites", lambda: ("notion", [cfg]))
+    monkeypatch.setattr(dsu, "collect_site_items", lambda *args, **kwargs: [])
+    sent = {"called": False}
+    monkeypatch.setattr(
+        dsu,
+        "send_mail",
+        lambda *args, **kwargs: sent.__setitem__("called", True),
+    )
+
+    dsu.main()
+
+    assert sent["called"] is False
+
+
+def test_direct_delivery_excludes_delivery_disabled_sites(monkeypatch):
+    disabled = normalize_site_row(
+        {
+            "SiteName": "disabled",
+            "Enabled": True,
+            "DeliveryEnabled": False,
+            "DisplayOrder": 1,
+        }
+    )
+    enabled = normalize_site_row(
+        {
+            "SiteName": "enabled",
+            "Enabled": True,
+            "DeliveryEnabled": True,
+            "DisplayOrder": 2,
+        }
+    )
+    tz = ZoneInfo("Asia/Tokyo")
+    item_disabled = SiteItem(
+        "disabled",
+        "disabled article",
+        "https://example.com/disabled",
+        datetime(2026, 9, 12, tzinfo=tz),
+        "2026-09-12",
+        "url",
+    )
+    item_enabled = SiteItem(
+        "enabled",
+        "enabled article",
+        "https://example.com/enabled",
+        datetime(2026, 9, 12, tzinfo=tz),
+        "2026-09-12",
+        "url",
+    )
+    monkeypatch.setattr(dsu, "DIRECT_SITE_DIAGNOSTIC_ONLY", False)
+    monkeypatch.setattr(dsu, "load_sites", lambda: ("notion", [disabled, enabled]))
+    monkeypatch.setattr(
+        dsu,
+        "collect_site_items",
+        lambda cfg, *args, **kwargs: [item_disabled] if cfg["SiteName"] == "disabled" else [item_enabled],
+    )
+    captured = {}
+
+    def fake_send(subject, html):
+        captured["subject"] = subject
+        captured["html"] = html
+        return True
+
+    monkeypatch.setattr(dsu, "send_mail", fake_send)
+    monkeypatch.setattr(
+        dsu,
+        "render_email",
+        lambda template, sections, total, now: "|".join(
+            item.title for _, items in sections for item in items
+        ),
+    )
+
+    dsu.main()
+
+    assert "enabled article" in captured["html"]
+    assert "disabled article" not in captured["html"]
