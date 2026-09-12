@@ -19,6 +19,8 @@ from direct_site_updates import (
     parse_list_page_urls,
     search_candidates,
     enrich_date_from_article,
+    extract_published_date_from_url,
+    list_page_urls_for_run,
 )
 
 
@@ -252,3 +254,104 @@ def test_missing_search_api_key_no_crash(monkeypatch):
     now = datetime(2026, 5, 1, 0, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
     monkeypatch.setattr("direct_site_updates.SEARCH_API_KEY", "")
     assert search_candidates(cfg, now) == []
+
+
+
+def test_parse_date_text_accepts_japanmetal_dot_format():
+    tz = ZoneInfo("Asia/Tokyo")
+    dt = parse_date_text("2026.09.11", tz, "date")
+    assert dt is not None
+    assert dt.date().isoformat() == "2026-09-11"
+
+
+def test_extract_published_date_from_japanmetal_url():
+    assert (
+        extract_published_date_from_url(
+            "https://www.japanmetal.com/news-t20260911150723.html"
+        )
+        == "2026-09-11"
+    )
+
+
+def test_japanmetal_candidate_uses_url_date_when_list_pattern_is_stale():
+    cfg = normalize_site_row(
+        {
+            "SiteName": "日刊産業新聞",
+            "ArticleUrlPattern": r"/news-t[0-9]+[.]html",
+            "ListDatePattern": r"[0-9]{2}年[0-9]{2}月[0-9]{2}日",
+            "DateGranularity": "date",
+        }
+    )
+    html = """
+    <article>
+      <div class="date">2026.09.11</div>
+      <h2><a href="/news-t20260911150723.html">岸和田製鋼　圧延設備更新が完工</a></h2>
+    </article>
+    """
+    rows = extract_candidates_from_list_page(
+        html,
+        "https://www.japanmetal.com/cat/news-t",
+        cfg,
+    )
+    assert len(rows) == 1
+    assert rows[0]["date_text"] == "2026-09-11"
+    assert rows[0]["date_source"] == "url"
+
+
+def test_japanmetal_run_urls_prefer_today_and_yesterday_archives():
+    cfg = normalize_site_row(
+        {
+            "SiteName": "日刊産業新聞",
+            "ListPageUrls": "https://www.japanmetal.com/cat/news-t",
+            "DateTimezone": "Asia/Tokyo",
+        }
+    )
+    now = datetime(2026, 9, 12, 7, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    urls = list_page_urls_for_run(cfg, now)
+    assert urls[:2] == [
+        "https://www.japanmetal.com/2026/09/12",
+        "https://www.japanmetal.com/2026/09/11",
+    ]
+    assert urls[2] == "https://www.japanmetal.com/cat/news-t"
+
+
+def test_japanmetal_collects_all_steel_items_from_daily_archive_without_article_fetch(monkeypatch):
+    cfg = normalize_site_row(
+        {
+            "SiteName": "日刊産業新聞",
+            "ListPageUrls": "https://www.japanmetal.com/cat/news-t",
+            "ArticleUrlPattern": r"/news-t[0-9]+[.]html",
+            "ListDatePattern": r"[0-9]{2}年[0-9]{2}月[0-9]{2}日",
+            "DateGranularity": "date",
+            "TargetDateMode": "calendar_day",
+            "DateTimezone": "Asia/Tokyo",
+            "MaxItemsPerSite": 20,
+            "FetchArticleBody": True,
+        }
+    )
+    now = datetime(2026, 9, 12, 7, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    links = "\n".join(
+        f'<h2><a href="/news-t20260911{150723 + i}.html">steel-{i}</a></h2>'
+        for i in range(8)
+    )
+    archive_html = f"<html><body>{links}</body></html>"
+
+    calls = []
+
+    def fake_fetch(url):
+        calls.append(url)
+        if url.endswith("/2026/09/12"):
+            return "<html></html>", 200, url
+        if url.endswith("/2026/09/11"):
+            return archive_html, 200, url
+        if url.endswith("/cat/news-t"):
+            return archive_html, 200, url
+        raise AssertionError(f"unexpected article fetch: {url}")
+
+    monkeypatch.setattr("direct_site_updates.fetch_html", fake_fetch)
+    items = collect_site_items(cfg, now)
+
+    assert len(items) == 8
+    assert all(item.date_source == "url" for item in items)
+    assert all(item.published_at.date().isoformat() == "2026-09-11" for item in items)
+    assert not any("/news-t" in url for url in calls)
