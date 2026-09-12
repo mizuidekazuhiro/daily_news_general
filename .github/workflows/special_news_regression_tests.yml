@@ -9,6 +9,7 @@ on:
       - "direct_site_updates.py"
       - "templates/special_news_email.html"
       - "scripts/send_special_news_failure_mail.py"
+      - "scripts/debug_notion_access.py"
       - "tests/test_special_news_unified.py"
       - "tests/test_special_news_sent_ledger.py"
       - "tests/test_special_news.py"
