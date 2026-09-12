@@ -3,6 +3,7 @@ from zoneinfo import ZoneInfo
 import json
 import re
 import sys
+import pytest
 from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
@@ -22,6 +23,7 @@ from direct_site_updates import (
     enrich_date_from_article,
     extract_published_date_from_url,
     list_page_urls_for_run,
+    send_mail,
 )
 
 
@@ -387,3 +389,63 @@ def test_japanmetal_collects_all_steel_items_from_daily_archive_without_article_
     assert all(item.date_source == "url" for item in items)
     assert all(item.published_at.date().isoformat() == "2026-09-11" for item in items)
     assert not any(re.search(r"/news-t20[0-9]+[.]html$", url) for url in calls)
+
+
+
+def test_dedupe_applies_per_site_limit_after_sorting():
+    cfg = normalize_site_row(
+        {
+            "SiteName": "A",
+            "DisplayOrder": 1,
+            "MaxItemsPerSite": 1,
+            "MaxItemsTotal": 10,
+            "DeliveryEnabled": True,
+        }
+    )
+    tz = ZoneInfo("Asia/Tokyo")
+    older = SiteItem("A", "older", "https://example.com/old", datetime(2026, 9, 10, tzinfo=tz), "2026-09-10 00:00", "url")
+    newer = SiteItem("A", "newer", "https://example.com/new", datetime(2026, 9, 12, tzinfo=tz), "2026-09-12 00:00", "url")
+
+    sections, _ = dedupe_and_limit([cfg], {"A": [older, newer]})
+
+    assert [item.title for item in sections[0][1]] == ["newer"]
+
+
+def test_collect_site_items_can_skip_acquisition_limit(monkeypatch):
+    cfg = normalize_site_row(
+        {
+            "SiteName": "sample",
+            "ListPageUrls": "https://example.com/list",
+            "ArticleUrlPattern": r"/news/[0-9]+",
+            "DateGranularity": "date",
+            "TargetDateMode": "calendar_day",
+            "MaxItemsPerSite": 1,
+            "FetchArticleBody": False,
+        }
+    )
+    now = datetime(2026, 9, 12, 7, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
+    html = """
+      <a href="/news/1">one</a><span>2026-09-12</span>
+      <a href="/news/2">two</a><span>2026-09-12</span>
+    """
+
+    monkeypatch.setattr("direct_site_updates.fetch_html", lambda url: (html, 200, url))
+    monkeypatch.setattr(
+        "direct_site_updates.extract_candidates_from_list_page",
+        lambda html, page_url, cfg: [
+            {"title": "one", "url": "https://example.com/news/1", "date_text": "2026-09-12", "date_source": "list_regex"},
+            {"title": "two", "url": "https://example.com/news/2", "date_text": "2026-09-12", "date_source": "list_regex"},
+        ],
+    )
+
+    assert len(collect_site_items(cfg, now, apply_limit=False)) == 2
+    assert len(collect_site_items(cfg, now, apply_limit=True)) == 1
+
+
+def test_direct_send_mail_raises_when_recipients_missing(monkeypatch):
+    monkeypatch.setattr("direct_site_updates.DIRECT_SITE_MAIL_TO", "")
+    monkeypatch.setattr("direct_site_updates.DIRECT_SITE_MAIL_CC", "")
+    monkeypatch.setattr("direct_site_updates.DIRECT_SITE_MAIL_BCC", "")
+
+    with pytest.raises(RuntimeError, match="recipients are empty"):
+        send_mail("subject", "<p>body</p>")
