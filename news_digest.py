@@ -1348,26 +1348,39 @@ def render_special_news_html(target_date: datetime, media_results: Optional[List
     section_html = []
     for media in safe_media_results:
         media_name = str(media.get("media_name") or "(媒体名未設定)")
-        items = media.get("items") or []
-        valid_items = [i for i in items if isinstance(i, dict)]
-        lis = "".join(
-            f'<li><a href="{escape(str(i.get("link") or "#"))}">{escape(str(i.get("title") or "(タイトルなし)"))}</a>'
-            f'<span class="meta">（{escape(str(i.get("published") or "日時不明"))}）</span></li>'
-            for i in valid_items
-        )
-        if not lis:
-            lis = "<li>対象日に該当記事はありませんでした。</li>"
+        items = [i for i in (media.get("items") or []) if isinstance(i, dict)]
+        if not items:
+            continue
+        item_rows = []
+        for index, item in enumerate(items, start=1):
+            title = escape(str(item.get("title") or "(タイトルなし)"))
+            link = escape(str(item.get("link") or "#"))
+            published = escape(str(item.get("published") or "日時不明"))
+            item_rows.append(
+                "<tr>"
+                f"<td valign='top' style='width:24px;padding:0 8px 12px 0;font-size:12px;line-height:1.6;color:#9ca3af;'>{index}.</td>"
+                "<td valign='top' style='padding:0 0 12px 0;'>"
+                f"<a href='{link}' style='color:#174ea6;text-decoration:none;font-size:14px;line-height:1.55;font-weight:600;word-break:break-word;'>{title}</a>"
+                f"<div style='margin-top:3px;font-size:11px;line-height:1.45;color:#6b7280;'>{published}</div>"
+                "</td>"
+                "</tr>"
+            )
         section_html.append(
-            f"<section><h3>{escape(media_name)}</h3>"
-            f"<p class='count'>件数: {len(valid_items)}件</p><ol>{lis}</ol></section>"
+            "<div style='margin:0 0 18px 0;'>"
+            "<div style='display:flex;align-items:center;margin-bottom:9px;'>"
+            f"<div style='font-size:16px;line-height:1.4;font-weight:700;color:#111827;border-left:4px solid #2563eb;padding-left:9px;'>{escape(media_name)}</div>"
+            f"<div style='margin-left:8px;font-size:11px;line-height:1.4;color:#6b7280;'>{len(items)}件</div>"
+            "</div>"
+            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' border='0' style='width:100%;'>"
+            + "".join(item_rows)
+            + "</table></div>"
         )
-    if not section_html:
-        section_html.append("<section><h3>対象媒体</h3><p>対象日に該当記事はありませんでした。</p></section>")
     return template.safe_substitute(
         target_date=target_date.strftime("%Y-%m-%d"),
         total_items=str(total_items),
-        media_sections="\n".join(section_html),
+        media_sections="".join(section_html),
     )
+
 def build_special_news_subject(target_date: datetime, media_results: List[Dict[str, Any]], subject_prefix: Optional[str] = None) -> str:
     prefix = resolve_special_subject_prefix(SPECIAL_NEWS_MAIL_SUBJECT_PREFIX, subject_prefix)
     media_names = "・".join(m.get("media_name", "") for m in media_results if m.get("media_name"))
