@@ -4,9 +4,11 @@ on:
   pull_request:
     paths:
       - "special_news_unified.py"
+      - "special_news_sent_ledger.py"
       - "news_digest.py"
       - "direct_site_updates.py"
       - "tests/test_special_news_unified.py"
+      - "tests/test_special_news_sent_ledger.py"
       - "tests/test_special_news.py"
       - "tests/test_direct_site_updates.py"
       - "tests/test_japanmetal_live.py"
@@ -26,8 +28,12 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt pytest
       - name: Compile specialist-news modules
-        run: python -m py_compile special_news_unified.py news_digest.py direct_site_updates.py
+        run: python -m py_compile special_news_unified.py special_news_sent_ledger.py news_digest.py direct_site_updates.py
       - name: Run specialist-news regression tests
-        run: pytest -q tests/test_special_news_unified.py tests/test_special_news.py tests/test_direct_site_updates.py
+        run: pytest -q tests/test_special_news_unified.py tests/test_special_news_sent_ledger.py tests/test_special_news.py tests/test_direct_site_updates.py
       - name: Verify Japanmetal public archive structure
         run: pytest -q tests/test_japanmetal_live.py
+      - name: Verify Notion sent-ledger connectivity
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: python -c "import special_news_sent_ledger as l; print(f'ledger_keys={len(l.load_sent_keys(30))}')"

@@ -1234,7 +1234,7 @@ def extract_entries_for_special_window(
             "published": published_text,
         })
     return filtered
-def collect_special_news_articles(now_jst: Optional[datetime] = None) -> Dict[str, Any]:
+def collect_special_news_articles(now_jst: Optional[datetime] = None, apply_limits: bool = True) -> Dict[str, Any]:
     now_jst = now_jst or datetime.now(JST)
     logging.info("Special-news job started")
     logging.info(
@@ -1295,21 +1295,33 @@ def collect_special_news_articles(now_jst: Optional[datetime] = None) -> Dict[st
                 continue
             seen.add(key)
             unique.append(item)
-        limited = unique[:media.get("max_items", SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA)]
-        logging.info("Special-news media=%s fetched=%s filtered=%s", media["media_name"], len(all_entries), len(limited))
+        per_media_limit = media.get("max_items", SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA)
+        output_items = unique[:per_media_limit] if apply_limits else unique
+        logging.info(
+            "Special-news media=%s fetched=%s filtered=%s apply_limits=%s configured_limit=%s",
+            media["media_name"],
+            len(all_entries),
+            len(output_items),
+            apply_limits,
+            per_media_limit,
+        )
         results.append({
             "media_name": media["media_name"],
-            "items": limited,
+            "items": output_items,
             "display_order": media["display_order"],
             "subject_prefix": media.get("subject_prefix", SPECIAL_NEWS_MAIL_SUBJECT_PREFIX),
             "alert_ids": media.get("alert_ids", []),
+            "max_items": per_media_limit,
         })
     results = sorted(results, key=lambda x: x["display_order"])
     total = 0
-    for media_result in results:
-        remain = max(0, max_items_total - total)
-        media_result["items"] = media_result["items"][:remain]
-        total += len(media_result["items"])
+    if apply_limits:
+        for media_result in results:
+            remain = max(0, max_items_total - total)
+            media_result["items"] = media_result["items"][:remain]
+            total += len(media_result["items"])
+    else:
+        total = sum(len(media_result["items"]) for media_result in results)
     return {
         "delivery_enabled": delivery_enabled,
         "media_results": results,

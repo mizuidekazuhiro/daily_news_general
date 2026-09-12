@@ -5,6 +5,7 @@ import imaplib
 import os
 import re
 import urllib.parse
+import uuid
 from datetime import datetime, timedelta
 from email.header import decode_header, make_header
 from html import unescape
@@ -13,10 +14,13 @@ from zoneinfo import ZoneInfo
 
 import direct_site_updates
 import news_digest
+import special_news_sent_ledger
 
 JST = ZoneInfo("Asia/Tokyo")
 SENT_HISTORY_DAYS = int(os.getenv("SPECIAL_NEWS_SENT_HISTORY_DAYS", "7"))
 SENT_HISTORY_LIMIT = int(os.getenv("SPECIAL_NEWS_SENT_HISTORY_LIMIT", "250"))
+LEDGER_HISTORY_DAYS = int(os.getenv("SPECIAL_NEWS_LEDGER_HISTORY_DAYS", "30"))
+GMAIL_SAFETY_NET = os.getenv("SPECIAL_NEWS_GMAIL_SAFETY_NET", "true").strip().lower() in {"1", "true", "yes", "on"}
 TARGET_MEDIA = ("日刊産業新聞", "鉄鋼新聞")
 SOURCE_PRIORITY = {
     "鉄鋼新聞": ("direct", "alert"),
@@ -138,7 +142,7 @@ def _extract_article_keys(text: str) -> set[str]:
     return keys
 
 
-def load_recent_sent_article_keys(days: int = SENT_HISTORY_DAYS) -> set[str]:
+def load_recent_gmail_article_keys(days: int = SENT_HISTORY_DAYS) -> set[str]:
     user = (os.getenv("MAIL_USER") or news_digest.MAIL_FROM or "").strip()
     password = (news_digest.MAIL_PASSWORD or "").strip()
     if not user or not password:
@@ -209,27 +213,56 @@ def load_recent_sent_article_keys(days: int = SENT_HISTORY_DAYS) -> set[str]:
             pass
 
 
-def _alert_results(now_jst: datetime) -> dict[str, list[dict[str, Any]]]:
-    result = news_digest.collect_special_news_articles(now_jst)
+def load_effective_sent_keys() -> set[str]:
+    ledger_keys = special_news_sent_ledger.load_sent_keys(LEDGER_HISTORY_DAYS)
+    news_digest.logging.info(
+        "Unified special-news ledger loaded keys=%s history_days=%s",
+        len(ledger_keys),
+        LEDGER_HISTORY_DAYS,
+    )
+    gmail_keys: set[str] = set()
+    if GMAIL_SAFETY_NET:
+        try:
+            gmail_keys = load_recent_gmail_article_keys()
+        except Exception as exc:
+            news_digest.logging.warning(
+                "Unified special-news Gmail safety net unavailable; continuing with Notion ledger only: %s",
+                exc,
+            )
+    combined = ledger_keys | gmail_keys
+    news_digest.logging.info(
+        "Unified special-news sent-state ledger=%s gmail_safety=%s combined=%s",
+        len(ledger_keys),
+        len(gmail_keys),
+        len(combined),
+    )
+    return combined
+
+
+def _alert_results(now_jst: datetime) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int]]:
+    result = news_digest.collect_special_news_articles(now_jst, apply_limits=False)
     if not result.get("delivery_enabled", True):
-        return {}
+        return {}, {}
     out: dict[str, list[dict[str, Any]]] = {}
+    limits: dict[str, int] = {}
     for media in result.get("media_results", []):
         name = canonical_media_name(str(media.get("media_name") or ""))
         if name not in TARGET_MEDIA:
             continue
         out[name] = [dict(item) for item in (media.get("items") or []) if isinstance(item, dict)]
-    return out
+        limits[name] = int(media.get("max_items") or news_digest.SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA)
+    return out, limits
 
-
-def _direct_results(now_jst: datetime) -> dict[str, list[dict[str, Any]]]:
+def _direct_results(now_jst: datetime) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int]]:
     _, sites = direct_site_updates.load_sites()
     out: dict[str, list[dict[str, Any]]] = {name: [] for name in TARGET_MEDIA}
+    limits: dict[str, int] = {}
     for cfg in sorted(sites, key=lambda row: row.get("DisplayOrder", 9999)):
         name = canonical_media_name(str(cfg.get("SiteName") or ""))
         if name not in TARGET_MEDIA or not cfg.get("Enabled"):
             continue
-        items = direct_site_updates.collect_site_items(cfg, now_jst)
+        items = direct_site_updates.collect_site_items(cfg, now_jst, apply_limit=False)
+        limits[name] = int(cfg.get("MaxItemsPerSite") or 20)
         out[name].extend(
             {
                 "title": item.title,
@@ -238,7 +271,25 @@ def _direct_results(now_jst: datetime) -> dict[str, list[dict[str, Any]]]:
             }
             for item in items
         )
-    return out
+    return out, limits
+
+def _published_sort_key(item: dict[str, Any]) -> datetime:
+    raw = str(item.get("published") or "").strip()
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d"):
+        try:
+            return datetime.strptime(raw, fmt)
+        except ValueError:
+            continue
+    return datetime.min
+
+
+def _source_keys(items: list[dict[str, Any]]) -> set[str]:
+    keys: set[str] = set()
+    for item in items:
+        key = article_identity(str(item.get("link") or ""), str(item.get("title") or ""))
+        if key:
+            keys.add(key)
+    return keys
 
 
 def merge_sources(
@@ -246,14 +297,23 @@ def merge_sources(
     direct_results: dict[str, list[dict[str, Any]]],
     sent_keys: set[str],
     max_items_total: int = 50,
+    media_limits: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     sources = {"alert": alert_results, "direct": direct_results}
+    media_limits = media_limits or {}
     media_results: list[dict[str, Any]] = []
     total = 0
 
     for media_name in TARGET_MEDIA:
+        direct_items = sources["direct"].get(media_name, [])
+        alert_items = sources["alert"].get(media_name, [])
+        direct_keys = _source_keys(direct_items)
+        alert_keys = _source_keys(alert_items)
+        overlap_keys = direct_keys & alert_keys
+
         merged: list[dict[str, Any]] = []
         seen: set[str] = set()
+        sent_removed = 0
         for source_name in SOURCE_PRIORITY[media_name]:
             for raw in sources[source_name].get(media_name, []):
                 title = str(raw.get("title") or "").strip()
@@ -263,6 +323,7 @@ def merge_sources(
                     continue
                 seen.add(key)
                 if key in sent_keys:
+                    sent_removed += 1
                     news_digest.logging.info(
                         "Unified special-news skipped already-sent media=%s source=%s key=%s title=%s",
                         media_name,
@@ -281,9 +342,30 @@ def merge_sources(
                     }
                 )
 
+        merged.sort(key=_published_sort_key, reverse=True)
+        before_limit = len(merged)
+        per_media_limit = max(1, int(media_limits.get(media_name, news_digest.SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA)))
+        merged = merged[:per_media_limit]
         remain = max(0, max_items_total - total)
         merged = merged[:remain]
         total += len(merged)
+
+        news_digest.logging.info(
+            "Unified source diff media=%s direct=%s alert=%s overlap=%s direct_only=%s alert_only=%s "
+            "sent_removed=%s merged_before_limit=%s delivered=%s media_limit=%s global_remaining_after=%s",
+            media_name,
+            len(direct_keys),
+            len(alert_keys),
+            len(overlap_keys),
+            len(direct_keys - alert_keys),
+            len(alert_keys - direct_keys),
+            sent_removed,
+            before_limit,
+            len(merged),
+            per_media_limit,
+            max(0, max_items_total - total),
+        )
+
         media_results.append(
             {
                 "media_name": media_name,
@@ -296,17 +378,21 @@ def merge_sources(
 
     return media_results
 
-
 def run() -> None:
     now_jst = datetime.now(JST)
-    sent_keys = load_recent_sent_article_keys()
-    alert = _alert_results(now_jst)
-    direct = _direct_results(now_jst)
+    sent_keys = load_effective_sent_keys()
+    alert, alert_limits = _alert_results(now_jst)
+    direct, direct_limits = _direct_results(now_jst)
+    media_limits = {
+        media: alert_limits.get(media) or direct_limits.get(media) or news_digest.SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA
+        for media in TARGET_MEDIA
+    }
     media_results = merge_sources(
         alert,
         direct,
         sent_keys,
         max_items_total=news_digest.SPECIAL_NEWS_MAX_ITEMS_TOTAL,
+        media_limits=media_limits,
     )
     total_items = sum(len(m.get("items") or []) for m in media_results)
 
@@ -315,6 +401,8 @@ def run() -> None:
     bcc_list = news_digest.parse_mail_recipients(news_digest.SPECIAL_NEWS_MAIL_BCC)
     if not (to_list or cc_list or bcc_list):
         raise RuntimeError("special-news recipients are empty")
+    if not news_digest.MAIL_FROM or not news_digest.MAIL_PASSWORD:
+        raise RuntimeError("special-news SMTP credentials are missing")
 
     html_body = news_digest.render_special_news_html(now_jst, media_results, total_items)
     subject = news_digest.build_special_news_subject(now_jst, media_results)
@@ -322,6 +410,8 @@ def run() -> None:
         f"専門紙記事一覧\n対象日: {now_jst.strftime('%Y-%m-%d')}\n"
         f"新着総件数: {total_items}件"
     )
+    delivery_run_id = f"{now_jst.strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex[:8]}"
+
     news_digest.send_mail_generic(
         html_body,
         subject,
@@ -330,10 +420,20 @@ def run() -> None:
         bcc_list,
         text_fallback=text_fallback,
     )
+    recorded = special_news_sent_ledger.record_sent_articles(
+        media_results,
+        sent_at=datetime.now(JST),
+        delivery_run_id=delivery_run_id,
+    )
+    if recorded != total_items:
+        raise RuntimeError(
+            f"sent-ledger record count mismatch: expected={total_items} recorded={recorded}"
+        )
     news_digest.logging.info(
-        "Unified special-news email delivered successfully total_items=%s sent_history_keys=%s",
+        "Unified special-news email delivered successfully total_items=%s ledger_recorded=%s run_id=%s",
         total_items,
-        len(sent_keys),
+        recorded,
+        delivery_run_id,
     )
 
 

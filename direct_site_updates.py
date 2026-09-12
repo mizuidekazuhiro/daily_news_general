@@ -591,7 +591,7 @@ def enrich_date_from_article(candidate: Dict[str, Any], cfg: Dict[str, Any]) -> 
     return candidate
 
 
-def search_candidates(cfg: Dict[str, Any], now_dt: datetime) -> List[Dict[str, Any]]:
+def search_candidates(cfg: Dict[str, Any], now_dt: datetime, max_results: Optional[int] = None) -> List[Dict[str, Any]]:
     query = cfg.get("SearchQuery", "").strip()
     if not query:
         logging.warning("site name=%s search skipped reason=missing_search_query", cfg["SiteName"])
@@ -600,7 +600,7 @@ def search_candidates(cfg: Dict[str, Any], now_dt: datetime) -> List[Dict[str, A
         logging.warning("site name=%s search skipped reason=missing_search_api_key", cfg["SiteName"])
         return []
     url = "https://serpapi.com/search.json?" + urllib.parse.urlencode(
-        {"engine": "google", "q": query, "api_key": SEARCH_API_KEY, "num": cfg["MaxItemsPerSite"]}
+        {"engine": "google", "q": query, "api_key": SEARCH_API_KEY, "num": max_results or cfg["MaxItemsPerSite"]}
     )
     try:
         with urllib.request.urlopen(url, timeout=12) as response:
@@ -646,11 +646,12 @@ def search_candidates(cfg: Dict[str, Any], now_dt: datetime) -> List[Dict[str, A
     return accepted
 
 
-def collect_site_items(cfg: Dict[str, Any], now_dt: datetime) -> List[SiteItem]:
+def collect_site_items(cfg: Dict[str, Any], now_dt: datetime, apply_limit: bool = True) -> List[SiteItem]:
     if not cfg["Enabled"]:
         logging.info("site name=%s skipped reason=disabled", cfg["SiteName"])
         return []
     collected: List[SiteItem] = []
+    collection_limit: Optional[int] = cfg["MaxItemsPerSite"] if apply_limit else None
     site_seen_urls = set()
     pages_visited = set()
 
@@ -743,10 +744,10 @@ def collect_site_items(cfg: Dict[str, Any], now_dt: datetime) -> List[SiteItem]:
                     )
                 )
                 logging.info("site name=%s accepted url=%s", cfg["SiteName"], cand["url"])
-                if len(collected) >= cfg["MaxItemsPerSite"]:
+                if collection_limit is not None and len(collected) >= collection_limit:
                     break
 
-            if len(collected) >= cfg["MaxItemsPerSite"]:
+            if collection_limit is not None and len(collected) >= collection_limit:
                 break
 
             soup = BeautifulSoup(html, "html.parser")
@@ -758,7 +759,7 @@ def collect_site_items(cfg: Dict[str, Any], now_dt: datetime) -> List[SiteItem]:
     if fetch_mode == "direct_then_search" and (direct_status in {"403", "404", "error", "not_attempted"} or direct_links == 0):
         should_try_search = True
     if should_try_search:
-        search_rows = search_candidates(cfg, now_dt)
+        search_rows = search_candidates(cfg, now_dt, collection_limit or 100)
         for cand in search_rows:
             normalized_url = normalize_url(cand["url"])
             if normalized_url in site_seen_urls:
@@ -782,7 +783,7 @@ def collect_site_items(cfg: Dict[str, Any], now_dt: datetime) -> List[SiteItem]:
                     date_source=cand.get("date_source", "search"),
                 )
             )
-            if len(collected) >= cfg["MaxItemsPerSite"]:
+            if collection_limit is not None and len(collected) >= collection_limit:
                 break
     logging.info(
         "site name=%s fetch_mode=%s direct_fetch_attempted=%s direct_fetch_status=%s search_query=%s search_result_count=%s accepted_result_count=%s search_url_pattern=%s fetch_article_body=%s date_fallback_mode=%s final_item_count=%s",
@@ -799,8 +800,14 @@ def collect_site_items(cfg: Dict[str, Any], now_dt: datetime) -> List[SiteItem]:
         len(collected),
     )
 
-    logging.info("site name=%s final items per site=%s", cfg["SiteName"], len(collected))
-    return collected[: cfg["MaxItemsPerSite"]]
+    logging.info(
+        "site name=%s final items per site=%s apply_limit=%s configured_limit=%s",
+        cfg["SiteName"],
+        len(collected),
+        apply_limit,
+        cfg["MaxItemsPerSite"],
+    )
+    return collected[: cfg["MaxItemsPerSite"]] if apply_limit else collected
 
 
 def dedupe_and_limit(
@@ -816,8 +823,13 @@ def dedupe_and_limit(
     ordered: List[Tuple[Dict[str, Any], List[SiteItem]]] = []
     total = 0
     for cfg in sorted(sites, key=lambda r: r["DisplayOrder"]):
-        items = []
-        for item in site_items.get(cfg["SiteName"], []):
+        items: List[SiteItem] = []
+        candidates = sorted(
+            site_items.get(cfg["SiteName"], []),
+            key=lambda item: item.published_at,
+            reverse=True,
+        )
+        for item in candidates:
             ukey = normalize_url(item.url)
             tkey = re.sub(r"\s+", " ", item.title.strip().lower())
             if ukey in global_url_seen or tkey in global_title_seen:
@@ -827,7 +839,7 @@ def dedupe_and_limit(
             global_title_seen.add(tkey)
             items.append(item)
             total += 1
-            if total >= global_limit:
+            if len(items) >= cfg["MaxItemsPerSite"] or total >= global_limit:
                 break
         ordered.append((cfg, items))
         if total >= global_limit:
@@ -835,7 +847,6 @@ def dedupe_and_limit(
 
     logging.info("duplicates removed=%s", duplicates_removed)
     return ordered, duplicates_removed
-
 
 def render_email(template_path: Path, sections: List[Tuple[Dict[str, Any], List[SiteItem]]], total: int, now_dt: datetime) -> str:
     template = template_path.read_text(encoding="utf-8")
@@ -864,11 +875,9 @@ def send_mail(subject: str, html_body: str) -> bool:
     bcc_list = parse_recipients(DIRECT_SITE_MAIL_BCC)
     recipients = to_list + cc_list + bcc_list
     if not recipients:
-        logging.info("mail skipped reason=no_recipients")
-        return False
+        raise RuntimeError("direct-site recipients are empty")
     if not MAIL_FROM or not MAIL_PASSWORD:
-        logging.warning("mail skipped reason=missing_smtp_credentials")
-        return False
+        raise RuntimeError("direct-site SMTP credentials are missing")
 
     msg = MIMEText(html_body, "html", "utf-8")
     msg["Subject"] = subject
@@ -892,7 +901,7 @@ def main() -> None:
     active_sites = [s for s in sites if s.get("Enabled")]
     site_results: Dict[str, List[SiteItem]] = {}
     for cfg in sorted(active_sites, key=lambda r: r["DisplayOrder"]):
-        site_results[cfg["SiteName"]] = collect_site_items(cfg, now_dt)
+        site_results[cfg["SiteName"]] = collect_site_items(cfg, now_dt, apply_limit=False)
 
     sections, _ = dedupe_and_limit(active_sites, site_results)
     total = sum(len(items) for _, items in sections)
