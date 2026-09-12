@@ -249,6 +249,12 @@ def _alert_results(now_jst: datetime) -> tuple[dict[str, list[dict[str, Any]]], 
         name = canonical_media_name(str(media.get("media_name") or ""))
         if name not in TARGET_MEDIA:
             continue
+        if not media.get("delivery_enabled", True):
+            news_digest.logging.info(
+                "Unified special-news alert source skipped media=%s reason=delivery_disabled",
+                name,
+            )
+            continue
         out[name] = [dict(item) for item in (media.get("items") or []) if isinstance(item, dict)]
         limits[name] = int(media.get("max_items") or news_digest.SPECIAL_NEWS_DEFAULT_MAX_ITEMS_PER_MEDIA)
     return out, limits
@@ -260,6 +266,12 @@ def _direct_results(now_jst: datetime) -> tuple[dict[str, list[dict[str, Any]]],
     for cfg in sorted(sites, key=lambda row: row.get("DisplayOrder", 9999)):
         name = canonical_media_name(str(cfg.get("SiteName") or ""))
         if name not in TARGET_MEDIA or not cfg.get("Enabled"):
+            continue
+        if not cfg.get("DeliveryEnabled", True):
+            news_digest.logging.info(
+                "Unified special-news direct source skipped media=%s reason=delivery_disabled",
+                name,
+            )
             continue
         items = direct_site_updates.collect_site_items(cfg, now_jst, apply_limit=False)
         limits[name] = int(cfg.get("MaxItemsPerSite") or 20)
@@ -395,6 +407,11 @@ def run() -> None:
         media_limits=media_limits,
     )
     total_items = sum(len(m.get("items") or []) for m in media_results)
+    if total_items == 0:
+        news_digest.logging.info(
+            "Unified special-news delivery skipped reason=no_new_items"
+        )
+        return
 
     to_list = news_digest.parse_mail_recipients(news_digest.SPECIAL_NEWS_MAIL_TO)
     cc_list = news_digest.parse_mail_recipients(news_digest.SPECIAL_NEWS_MAIL_CC)
