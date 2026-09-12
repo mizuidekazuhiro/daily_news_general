@@ -133,20 +133,54 @@ def test_build_special_news_subject():
     assert "鉄鋼新聞・産業新聞" in subject
 
 
-def test_render_special_news_html_handles_css_and_zero_items():
+def test_render_special_news_html_uses_inline_email_safe_layout():
     jst = timezone(timedelta(hours=9))
     target = datetime(2026, 3, 12, 0, 0, tzinfo=jst)
-    html = render_special_news_html(target, [{"media_name": "鉄鋼新聞", "items": []}], 0)
-    assert "margin" in html
-    assert "対象日に該当記事はありませんでした" in html
+    html = render_special_news_html(
+        target,
+        [
+            {
+                "media_name": "鉄鋼新聞",
+                "items": [
+                    {
+                        "title": "日本製鉄、新設備を稼働",
+                        "link": "https://example.com/a",
+                        "published": "2026-03-12 05:30",
+                    }
+                ],
+            }
+        ],
+        1,
+    )
+    assert "専門紙ニュース" in html
+    assert "日本製鉄、新設備を稼働" in html
+    assert "2026-03-12 05:30" in html
+    assert "max-width:680px" in html
+    assert "<style" not in html.lower()
 
 
-def test_render_special_news_html_handles_empty_media_results():
+def test_render_special_news_html_omits_empty_media_sections():
     jst = timezone(timedelta(hours=9))
     target = datetime(2026, 3, 12, 0, 0, tzinfo=jst)
-    html = render_special_news_html(target, [], 0)
-    assert "対象媒体" in html
-    assert "対象日に該当記事はありませんでした" in html
+    html = render_special_news_html(
+        target,
+        [
+            {"media_name": "鉄鋼新聞", "items": []},
+            {
+                "media_name": "日刊産業新聞",
+                "items": [
+                    {
+                        "title": "産業新聞テスト",
+                        "link": "https://example.com/b",
+                        "published": "2026-03-12",
+                    }
+                ],
+            },
+        ],
+        1,
+    )
+    assert "鉄鋼新聞" not in html
+    assert "日刊産業新聞" in html
 
 
 def test_parse_env_bool_variants(monkeypatch):
@@ -650,3 +684,37 @@ def test_article_html_meta_fallback_uses_single_date_candidate():
     actual = parse_special_news_datetime_with_rule(entry, "日刊鉄鋼新聞", rule, html_cache)
     assert actual["ok"] is True
     assert actual["datetime"].astimezone(JST).strftime("%Y-%m-%d %H:%M") == "2026-03-16 05:00"
+
+
+
+def test_build_special_media_row_preserves_delivery_enabled_false():
+    row = build_special_media_row(
+        media_name="鉄鋼新聞",
+        enabled=True,
+        alert_ids=[],
+        alert_feeds_raw="https://example.com/feed",
+        display_order=1,
+        max_items=20,
+        subject_prefix=None,
+        delivery_enabled=False,
+        max_items_total=50,
+    )
+    assert row is not None
+    assert row["delivery_enabled"] is False
+
+
+def test_notion_special_config_fails_closed_when_enabled(monkeypatch):
+    monkeypatch.setattr(news_digest, "NOTION_TOKEN", "token")
+    monkeypatch.setattr(news_digest, "NOTION_SPECIAL_NEWS_DB_ID", "db")
+    monkeypatch.setattr(news_digest, "SPECIAL_NEWS_ALLOW_LOCAL_CONFIG_FALLBACK", False)
+    monkeypatch.setattr(news_digest, "parse_env_bool", lambda *_: True)
+    monkeypatch.setattr(
+        news_digest.urllib.request,
+        "urlopen",
+        lambda *args, **kwargs: (_ for _ in ()).throw(TimeoutError("notion down")),
+    )
+
+    import pytest
+
+    with pytest.raises(RuntimeError, match="Notion special-news config unavailable"):
+        news_digest.fetch_special_news_config_from_notion()

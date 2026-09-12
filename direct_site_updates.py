@@ -43,6 +43,8 @@ NOTION_DIRECT_SITES_ENABLED = os.getenv("NOTION_DIRECT_SITES_ENABLED", "false").
     "on",
 }
 SEARCH_API_KEY = os.getenv("SEARCH_API_KEY", "")
+DIRECT_SITE_ALLOW_LOCAL_CONFIG_FALLBACK = os.getenv("DIRECT_SITE_ALLOW_LOCAL_CONFIG_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"}
+DIRECT_SITE_DIAGNOSTIC_ONLY = os.getenv("DIRECT_SITE_DIAGNOSTIC_ONLY", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 
 @dataclass
@@ -244,14 +246,17 @@ def load_sites_from_json(config_path: Path = DEFAULT_CONFIG_PATH) -> List[Dict[s
 
 
 def load_sites() -> Tuple[str, List[Dict[str, Any]]]:
-    try:
-        notion_sites = load_sites_from_notion()
-        if notion_sites:
-            logging.info("config source=notion count=%s", len(notion_sites))
-            return "notion", notion_sites
-        raise RuntimeError("notion_empty")
-    except Exception as exc:
-        logging.warning("config source fallback to local because=%s", exc)
+    if NOTION_DIRECT_SITES_ENABLED:
+        try:
+            notion_sites = load_sites_from_notion()
+            if notion_sites:
+                logging.info("config source=notion count=%s", len(notion_sites))
+                return "notion", notion_sites
+            raise RuntimeError("notion_empty")
+        except Exception as exc:
+            if not DIRECT_SITE_ALLOW_LOCAL_CONFIG_FALLBACK:
+                raise RuntimeError(f"direct-site Notion config unavailable: {exc}") from exc
+            logging.warning("config source fallback to local because=%s", exc)
     local_sites = load_sites_from_json()
     logging.info("config source=local_json count=%s", len(local_sites))
     return "local_json", local_sites
@@ -898,13 +903,34 @@ def main() -> None:
     _, sites = load_sites()
     now_dt = datetime.now(ZoneInfo("Asia/Tokyo"))
 
-    active_sites = [s for s in sites if s.get("Enabled")]
+    monitored_sites = [s for s in sites if s.get("Enabled")]
+    deliverable_sites = [s for s in monitored_sites if s.get("DeliveryEnabled")]
     site_results: Dict[str, List[SiteItem]] = {}
-    for cfg in sorted(active_sites, key=lambda r: r["DisplayOrder"]):
+    for cfg in sorted(monitored_sites, key=lambda r: r["DisplayOrder"]):
         site_results[cfg["SiteName"]] = collect_site_items(cfg, now_dt, apply_limit=False)
 
-    sections, _ = dedupe_and_limit(active_sites, site_results)
+    for cfg in sorted(monitored_sites, key=lambda r: r["DisplayOrder"]):
+        logging.info(
+            "direct-site diagnostic site=%s enabled=%s delivery_enabled=%s items=%s",
+            cfg["SiteName"],
+            cfg.get("Enabled"),
+            cfg.get("DeliveryEnabled"),
+            len(site_results.get(cfg["SiteName"], [])),
+        )
+
+    if DIRECT_SITE_DIAGNOSTIC_ONLY:
+        logging.info(
+            "direct-site diagnostic complete monitored_sites=%s deliverable_sites=%s email_sent=false",
+            len(monitored_sites),
+            len(deliverable_sites),
+        )
+        return
+
+    sections, _ = dedupe_and_limit(deliverable_sites, site_results)
     total = sum(len(items) for _, items in sections)
+    if total == 0:
+        logging.info("direct-site delivery skipped reason=no_new_items")
+        return
 
     subject_prefix = DIRECT_SITE_MAIL_SUBJECT_PREFIX or next(
         (cfg["SubjectPrefix"] for cfg, items in sections if cfg.get("SubjectPrefix")),

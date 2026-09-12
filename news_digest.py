@@ -51,6 +51,7 @@ SPECIAL_NEWS_WINDOW_HOURS = int(os.getenv("SPECIAL_NEWS_WINDOW_HOURS", "24"))
 NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
 NOTION_SPECIAL_NEWS_DB_ID = os.getenv("NOTION_SPECIAL_NEWS_DB_ID", "")
 SPECIAL_NEWS_NOTION_ENABLED_DEFAULT = False
+SPECIAL_NEWS_ALLOW_LOCAL_CONFIG_FALLBACK = os.getenv("SPECIAL_NEWS_ALLOW_LOCAL_CONFIG_FALLBACK", "false").strip().lower() in {"1", "true", "yes", "on"}
 ENV_BOOL_TRUE_VALUES = {"true", "1", "yes", "on"}
 ENV_BOOL_FALSE_VALUES = {"false", "0", "no", "off"}
 DEFAULT_SPECIAL_DATE_RULE = {
@@ -1021,8 +1022,11 @@ def fetch_special_news_config_from_notion() -> Optional[List[Dict[str, Any]]]:
         logging.info("Special-news config source: local file (Notion disabled)")
         return None
     if not NOTION_TOKEN or not NOTION_SPECIAL_NEWS_DB_ID:
-        logging.warning("Notion special-news enabled but credentials are missing; fallback to local config")
-        return None
+        message = "Notion special-news enabled but credentials are missing"
+        if SPECIAL_NEWS_ALLOW_LOCAL_CONFIG_FALLBACK:
+            logging.warning("%s; fallback to local config", message)
+            return None
+        raise RuntimeError(message)
     url = f"https://api.notion.com/v1/databases/{NOTION_SPECIAL_NEWS_DB_ID}/query"
     rows: List[Dict[str, Any]] = []
     cursor: Optional[str] = None
@@ -1050,11 +1054,15 @@ def fetch_special_news_config_from_notion() -> Optional[List[Dict[str, Any]]]:
             if not cursor:
                 break
     except Exception as exc:
-        logging.error("Failed to fetch Notion special-news config: %s; fallback to local config", exc)
-        return None
+        if SPECIAL_NEWS_ALLOW_LOCAL_CONFIG_FALLBACK:
+            logging.error("Failed to fetch Notion special-news config: %s; fallback to local config", exc)
+            return None
+        raise RuntimeError(f"Notion special-news config unavailable: {exc}") from exc
     if not rows:
-        logging.warning("Notion special-news DB has no rows; fallback to local config")
-        return None
+        if SPECIAL_NEWS_ALLOW_LOCAL_CONFIG_FALLBACK:
+            logging.warning("Notion special-news DB has no rows; fallback to local config")
+            return None
+        raise RuntimeError("Notion special-news DB has no rows")
     media_rows = []
     for idx, row in enumerate(rows):
         props = row.get("properties", {})
@@ -1113,8 +1121,12 @@ def load_special_news_media_config() -> Dict[str, Any]:
     if notion_rows:
         # 優先順位: 環境変数 > Notion > コード既定値
         subject_prefix = resolve_special_subject_prefix(SPECIAL_NEWS_MAIL_SUBJECT_PREFIX, notion_rows[0].get("subject_prefix"))
-        delivery_enabled = notion_rows[0].get("delivery_enabled", True)
-        max_items_total = notion_rows[0].get("max_items_total", SPECIAL_NEWS_MAX_ITEMS_TOTAL)
+        delivery_enabled = any(bool(row.get("delivery_enabled", True)) for row in notion_rows)
+        max_items_total = min(
+            safe_int(row.get("max_items_total"), SPECIAL_NEWS_MAX_ITEMS_TOTAL)
+            for row in notion_rows
+            if row.get("delivery_enabled", True)
+        ) if delivery_enabled else SPECIAL_NEWS_MAX_ITEMS_TOTAL
         return {
             "source": "notion",
             "media": sorted(notion_rows, key=lambda x: x["display_order"]),
@@ -1137,7 +1149,7 @@ def load_special_news_media_config() -> Dict[str, Any]:
             display_order=m.get("display_order"),
             max_items=m.get("max_items"),
             subject_prefix=m.get("subject_prefix"),
-            delivery_enabled=payload.get("delivery_enabled", True),
+            delivery_enabled=m.get("delivery_enabled", payload.get("delivery_enabled", True)),
             max_items_total=payload.get("max_items_total", SPECIAL_NEWS_MAX_ITEMS_TOTAL),
             date_source_type=m.get("date_source_type"),
             date_parse_pattern=m.get("date_parse_pattern"),
@@ -1312,6 +1324,7 @@ def collect_special_news_articles(now_jst: Optional[datetime] = None, apply_limi
             "subject_prefix": media.get("subject_prefix", SPECIAL_NEWS_MAIL_SUBJECT_PREFIX),
             "alert_ids": media.get("alert_ids", []),
             "max_items": per_media_limit,
+            "delivery_enabled": bool(media.get("delivery_enabled", True)),
         })
     results = sorted(results, key=lambda x: x["display_order"])
     total = 0
@@ -1335,26 +1348,39 @@ def render_special_news_html(target_date: datetime, media_results: Optional[List
     section_html = []
     for media in safe_media_results:
         media_name = str(media.get("media_name") or "(媒体名未設定)")
-        items = media.get("items") or []
-        valid_items = [i for i in items if isinstance(i, dict)]
-        lis = "".join(
-            f'<li><a href="{escape(str(i.get("link") or "#"))}">{escape(str(i.get("title") or "(タイトルなし)"))}</a>'
-            f'<span class="meta">（{escape(str(i.get("published") or "日時不明"))}）</span></li>'
-            for i in valid_items
-        )
-        if not lis:
-            lis = "<li>対象日に該当記事はありませんでした。</li>"
+        items = [i for i in (media.get("items") or []) if isinstance(i, dict)]
+        if not items:
+            continue
+        item_rows = []
+        for index, item in enumerate(items, start=1):
+            title = escape(str(item.get("title") or "(タイトルなし)"))
+            link = escape(str(item.get("link") or "#"))
+            published = escape(str(item.get("published") or "日時不明"))
+            item_rows.append(
+                "<tr>"
+                f"<td valign='top' style='width:24px;padding:0 8px 12px 0;font-size:12px;line-height:1.6;color:#9ca3af;'>{index}.</td>"
+                "<td valign='top' style='padding:0 0 12px 0;'>"
+                f"<a href='{link}' style='color:#174ea6;text-decoration:none;font-size:14px;line-height:1.55;font-weight:600;word-break:break-word;'>{title}</a>"
+                f"<div style='margin-top:3px;font-size:11px;line-height:1.45;color:#6b7280;'>{published}</div>"
+                "</td>"
+                "</tr>"
+            )
         section_html.append(
-            f"<section><h3>{escape(media_name)}</h3>"
-            f"<p class='count'>件数: {len(valid_items)}件</p><ol>{lis}</ol></section>"
+            "<div style='margin:0 0 18px 0;'>"
+            "<div style='display:flex;align-items:center;margin-bottom:9px;'>"
+            f"<div style='font-size:16px;line-height:1.4;font-weight:700;color:#111827;border-left:4px solid #2563eb;padding-left:9px;'>{escape(media_name)}</div>"
+            f"<div style='margin-left:8px;font-size:11px;line-height:1.4;color:#6b7280;'>{len(items)}件</div>"
+            "</div>"
+            "<table role='presentation' width='100%' cellspacing='0' cellpadding='0' border='0' style='width:100%;'>"
+            + "".join(item_rows)
+            + "</table></div>"
         )
-    if not section_html:
-        section_html.append("<section><h3>対象媒体</h3><p>対象日に該当記事はありませんでした。</p></section>")
     return template.safe_substitute(
         target_date=target_date.strftime("%Y-%m-%d"),
         total_items=str(total_items),
-        media_sections="\n".join(section_html),
+        media_sections="".join(section_html),
     )
+
 def build_special_news_subject(target_date: datetime, media_results: List[Dict[str, Any]], subject_prefix: Optional[str] = None) -> str:
     prefix = resolve_special_subject_prefix(SPECIAL_NEWS_MAIL_SUBJECT_PREFIX, subject_prefix)
     media_names = "・".join(m.get("media_name", "") for m in media_results if m.get("media_name"))
