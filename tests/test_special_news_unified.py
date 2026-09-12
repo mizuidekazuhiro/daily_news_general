@@ -95,9 +95,18 @@ def test_workflows_route_automatic_delivery_through_unified_job():
     direct = Path(".github/workflows/direct_site_updates.yml").read_text(encoding="utf-8")
 
     assert "python special_news_unified.py" in special
-    assert "NOTION_DIRECT_SITES_DB_ID" in special
+    assert 'NOTION_SPECIAL_NEWS_ENABLED: "true"' in special
+    assert 'NOTION_DIRECT_SITES_ENABLED: "true"' in special
+    assert 'SPECIAL_NEWS_ALLOW_LOCAL_CONFIG_FALLBACK: "false"' in special
+    assert 'DIRECT_SITE_ALLOW_LOCAL_CONFIG_FALLBACK: "false"' in special
+    assert "Notify specialist-news failure" in special
+    assert "send_special_news_failure_mail.py" in special
+
     assert "schedule:" not in direct
     assert "workflow_dispatch:" in direct
+    assert 'DIRECT_SITE_DIAGNOSTIC_ONLY: "true"' in direct
+    assert "DIRECT_SITE_MAIL_TO" not in direct
+    assert "MAIL_PASSWORD" not in direct
 
 
 
@@ -179,9 +188,14 @@ def test_source_diff_log_reports_direct_alert_overlap(caplog):
 
 
 def test_run_fails_when_smtp_credentials_are_missing(monkeypatch):
+    item = {
+        "title": "new article",
+        "link": "https://www.japanmetaldaily.com/articles/-/999",
+        "published": "2026-09-12 06:00",
+    }
     monkeypatch.setattr(mod, "load_effective_sent_keys", lambda: set())
     monkeypatch.setattr(mod, "_alert_results", lambda now: ({"鉄鋼新聞": [], "日刊産業新聞": []}, {}))
-    monkeypatch.setattr(mod, "_direct_results", lambda now: ({"鉄鋼新聞": [], "日刊産業新聞": []}, {}))
+    monkeypatch.setattr(mod, "_direct_results", lambda now: ({"鉄鋼新聞": [item], "日刊産業新聞": []}, {}))
     monkeypatch.setattr(mod.news_digest, "SPECIAL_NEWS_MAIL_TO", "recipient@example.com")
     monkeypatch.setattr(mod.news_digest, "SPECIAL_NEWS_MAIL_CC", "")
     monkeypatch.setattr(mod.news_digest, "SPECIAL_NEWS_MAIL_BCC", "")
@@ -190,3 +204,113 @@ def test_run_fails_when_smtp_credentials_are_missing(monkeypatch):
 
     with pytest.raises(RuntimeError, match="SMTP credentials"):
         mod.run()
+
+
+
+def test_run_skips_email_and_ledger_when_no_new_items(monkeypatch, caplog):
+    monkeypatch.setattr(mod, "load_effective_sent_keys", lambda: set())
+    monkeypatch.setattr(
+        mod,
+        "_alert_results",
+        lambda now: ({"鉄鋼新聞": [], "日刊産業新聞": []}, {}),
+    )
+    monkeypatch.setattr(
+        mod,
+        "_direct_results",
+        lambda now: ({"鉄鋼新聞": [], "日刊産業新聞": []}, {}),
+    )
+    sent = {"mail": False, "ledger": False}
+    monkeypatch.setattr(
+        mod.news_digest,
+        "send_mail_generic",
+        lambda *args, **kwargs: sent.__setitem__("mail", True),
+    )
+    monkeypatch.setattr(
+        mod.special_news_sent_ledger,
+        "record_sent_articles",
+        lambda *args, **kwargs: sent.__setitem__("ledger", True),
+    )
+
+    caplog.set_level("INFO")
+    mod.run()
+
+    assert sent == {"mail": False, "ledger": False}
+    assert "delivery skipped reason=no_new_items" in caplog.text
+
+
+def test_alert_results_excludes_delivery_disabled_media(monkeypatch):
+    monkeypatch.setattr(
+        mod.news_digest,
+        "collect_special_news_articles",
+        lambda now, apply_limits=False: {
+            "delivery_enabled": True,
+            "media_results": [
+                {
+                    "media_name": "鉄鋼新聞",
+                    "delivery_enabled": False,
+                    "items": [{"title": "x", "link": "https://www.japanmetaldaily.com/articles/-/1"}],
+                    "max_items": 20,
+                },
+                {
+                    "media_name": "日刊産業新聞",
+                    "delivery_enabled": True,
+                    "items": [{"title": "y", "link": "https://www.japanmetal.com/news-t20260912001.html"}],
+                    "max_items": 20,
+                },
+            ],
+        },
+    )
+
+    results, limits = mod._alert_results(mod.datetime.now(mod.JST))
+
+    assert "鉄鋼新聞" not in results
+    assert "鉄鋼新聞" not in limits
+    assert len(results["日刊産業新聞"]) == 1
+
+
+def test_direct_results_monitors_but_does_not_deliver_disabled_media(monkeypatch):
+    disabled = {
+        "SiteName": "鉄鋼新聞",
+        "Enabled": True,
+        "DeliveryEnabled": False,
+        "DisplayOrder": 1,
+        "MaxItemsPerSite": 20,
+    }
+    enabled = {
+        "SiteName": "日刊産業新聞",
+        "Enabled": True,
+        "DeliveryEnabled": True,
+        "DisplayOrder": 2,
+        "MaxItemsPerSite": 20,
+    }
+    monkeypatch.setattr(mod.direct_site_updates, "load_sites", lambda: ("notion", [disabled, enabled]))
+    calls = []
+
+    class Item:
+        def __init__(self, title, url):
+            self.title = title
+            self.url = url
+            self.published_label = "2026-09-12"
+
+    def fake_collect(cfg, now, apply_limit=False):
+        calls.append(cfg["SiteName"])
+        return [Item(cfg["SiteName"], f"https://example.com/{cfg['SiteName']}")]
+
+    monkeypatch.setattr(mod.direct_site_updates, "collect_site_items", fake_collect)
+
+    results, limits = mod._direct_results(mod.datetime.now(mod.JST))
+
+    assert calls == ["鉄鋼新聞", "日刊産業新聞"]
+    assert results["鉄鋼新聞"] == []
+    assert len(results["日刊産業新聞"]) == 1
+    assert "鉄鋼新聞" not in limits
+
+
+def test_email_template_is_inline_styled_and_matches_unified_architecture():
+    template = Path("templates/special_news_email.html").read_text(encoding="utf-8")
+
+    assert "<style" not in template.lower()
+    assert "Google Alert を参照して自動生成" not in template
+    assert "公式サイトを主系" in template
+    assert 'name="viewport"' in template
+    assert "max-width:680px" in template
