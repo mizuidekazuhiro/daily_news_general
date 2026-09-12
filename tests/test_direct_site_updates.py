@@ -274,6 +274,29 @@ def test_extract_published_date_from_japanmetal_url():
     )
 
 
+def test_japanmetal_official_rss_extracts_article_links():
+    cfg = normalize_site_row(
+        {
+            "SiteName": "日刊産業新聞",
+            "ArticleUrlPattern": r"/news-t[0-9]+[.]html",
+            "DateGranularity": "date",
+        }
+    )
+    rss = """<rss><channel>
+      <item><title>岸和田製鋼</title><link>https://www.japanmetal.com/news-t20260911150723.html</link></item>
+      <item><title>非鉄記事</title><link>https://www.japanmetal.com/news-h20260911150722.html</link></item>
+    </channel></rss>"""
+    rows = extract_candidates_from_list_page(
+        rss,
+        "https://www.japanmetal.com/cat/news-t/feed",
+        cfg,
+    )
+    assert len(rows) == 1
+    assert rows[0]["title"] == "岸和田製鋼"
+    assert rows[0]["date_text"] == "2026-09-11"
+    assert rows[0]["date_source"] == "url"
+
+
 def test_japanmetal_candidate_uses_url_date_when_list_pattern_is_stale():
     cfg = normalize_site_row(
         {
@@ -309,11 +332,12 @@ def test_japanmetal_run_urls_prefer_today_and_yesterday_archives():
     )
     now = datetime(2026, 9, 12, 7, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
     urls = list_page_urls_for_run(cfg, now)
-    assert urls[:2] == [
+    assert urls[:3] == [
+        "https://www.japanmetal.com/cat/news-t/feed",
         "https://www.japanmetal.com/2026/09/12",
         "https://www.japanmetal.com/2026/09/11",
     ]
-    assert urls[2] == "https://www.japanmetal.com/cat/news-t"
+    assert urls[3] == "https://www.japanmetal.com/cat/news-t"
 
 
 def test_japanmetal_collects_all_steel_items_from_daily_archive_without_article_fetch(monkeypatch):
@@ -341,6 +365,13 @@ def test_japanmetal_collects_all_steel_items_from_daily_archive_without_article_
 
     def fake_fetch(url):
         calls.append(url)
+        if url.endswith("/cat/news-t/feed"):
+            rss_items = "".join(
+                f"<item><title>steel-{i}</title>"
+                f"<link>https://www.japanmetal.com/news-t20260911{150723 + i}.html</link></item>"
+                for i in range(8)
+            )
+            return f"<rss><channel>{rss_items}</channel></rss>", 200, url
         if url.endswith("/2026/09/12"):
             return "<html></html>", 200, url
         if url.endswith("/2026/09/11"):
