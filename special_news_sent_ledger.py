@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
-import urllib.request
+import time
 from datetime import datetime, timedelta
+
+import requests
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -28,10 +30,34 @@ def _headers() -> dict[str, str]:
 
 
 def _request_json(url: str, method: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    data = json.dumps(payload).encode("utf-8") if payload is not None else None
-    request = urllib.request.Request(url, method=method, headers=_headers(), data=data)
-    with urllib.request.urlopen(request, timeout=15) as response:
-        return json.loads(response.read().decode("utf-8"))
+    retryable_statuses = {429, 500, 502, 503, 504}
+    last_error: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            response = requests.request(
+                method,
+                url,
+                headers=_headers(),
+                json=payload,
+                timeout=(10, 180),
+            )
+            if response.status_code in retryable_statuses:
+                if attempt >= 3:
+                    response.raise_for_status()
+                retry_after = response.headers.get("Retry-After")
+                wait = float(retry_after) if retry_after else min(8.0, 2.0 ** (attempt - 1))
+                time.sleep(max(1.0, wait))
+                continue
+            response.raise_for_status()
+            return response.json()
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            last_error = exc
+            if attempt >= 3:
+                raise
+            time.sleep(min(8.0, 2.0 ** (attempt - 1)))
+    if last_error:
+        raise last_error
+    raise RuntimeError(f"Notion request failed without response: {method} {url}")
 
 
 def _rich_text_value(prop: dict[str, Any] | None) -> str:
