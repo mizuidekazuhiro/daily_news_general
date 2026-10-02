@@ -11,27 +11,61 @@ spec.loader.exec_module(mod)
 JST = timezone(timedelta(hours=9))
 
 
-def test_morning_detected_m101_continue():
-    s = edition_mismatch_summary(expected_edition="morning", issue_date="20261002", detected_ids=["20261002M101"], issue_url="u", direct_issue_url="d")
+def test_evening_m201_is_allowed_when_opened_url_is_evening():
+    s = edition_mismatch_summary(
+        expected_edition="evening",
+        issue_date="20261001",
+        detected_ids=["20261001M201"],
+        issue_url="https://www.nikkei.com/paper/evening/?b=20261001&d=0",
+        direct_issue_url="https://www.nikkei.com/paper/evening/?b=20261001&d=0",
+    )
     assert s["edition_check_result"] == "ok"
-    assert s["expected_edition_marker"] == "M1"
-    assert s["detected_edition_marker"] == "M1"
+    assert s["opened_issue_edition"] == "evening"
+    assert s["edition_check_basis"] == "opened_issue_url_path"
 
 
-def test_morning_detected_m201_stop():
-    s = edition_mismatch_summary(expected_edition="morning", issue_date="20261002", detected_ids=["20261002M201"], issue_url="u", direct_issue_url="d")
+def test_evening_e101_is_allowed_when_opened_url_is_evening():
+    s = edition_mismatch_summary(
+        expected_edition="evening",
+        issue_date="20261002",
+        detected_ids=["20261002E101"],
+        issue_url="https://www.nikkei.com/paper/evening/?b=20261002&d=0",
+        direct_issue_url="https://www.nikkei.com/paper/evening/?b=20261002&d=0",
+    )
+    assert s["edition_check_result"] == "ok"
+    assert s["detected_edition_id"] == "20261002E101"
+
+
+def test_evening_stops_if_final_url_is_morning_even_with_evening_like_id():
+    s = edition_mismatch_summary(
+        expected_edition="evening",
+        issue_date="20261002",
+        detected_ids=["20261002E101"],
+        issue_url="https://www.nikkei.com/paper/morning/?b=20261002&d=0",
+        direct_issue_url="https://www.nikkei.com/paper/evening/?b=20261002&d=0",
+    )
     assert s["edition_check_result"] == "edition_mismatch"
 
 
-def test_evening_detected_m201_continue():
-    s = edition_mismatch_summary(expected_edition="evening", issue_date="20261001", detected_ids=["20261001M201"], issue_url="u", direct_issue_url="d")
-    assert s["edition_check_result"] == "ok"
-    assert s["expected_edition_marker"] == "M2"
-    assert s["detected_edition_marker"] == "M2"
+def test_morning_stops_if_final_url_is_evening():
+    s = edition_mismatch_summary(
+        expected_edition="morning",
+        issue_date="20261002",
+        detected_ids=["20261002M101"],
+        issue_url="https://www.nikkei.com/paper/evening/?b=20261002&d=0",
+        direct_issue_url="https://www.nikkei.com/paper/morning/?b=20261002&d=0",
+    )
+    assert s["edition_check_result"] == "edition_mismatch"
 
 
-def test_evening_detected_m101_stop():
-    s = edition_mismatch_summary(expected_edition="evening", issue_date="20261001", detected_ids=["20261001M101"], issue_url="u", direct_issue_url="d")
+def test_missing_edition_in_final_url_fails_closed():
+    s = edition_mismatch_summary(
+        expected_edition="evening",
+        issue_date="20261002",
+        detected_ids=["20261002E101"],
+        issue_url="https://www.nikkei.com/paper/?b=20261002&d=0",
+        direct_issue_url="https://www.nikkei.com/paper/evening/?b=20261002&d=0",
+    )
     assert s["edition_check_result"] == "edition_mismatch"
 
 
