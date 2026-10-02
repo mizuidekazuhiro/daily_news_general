@@ -13,9 +13,8 @@ EDITION=os.getenv('NIKKEI_EDITION','morning').strip(); TARGET_DATE=os.getenv('NI
 EXCLUDE_TITLE_REGEX=os.getenv('NIKKEI_EXCLUDE_TITLE_REGEX','').strip(); USE_DIRECT_ISSUE_URL=os.getenv('NIKKEI_USE_DIRECT_ISSUE_URL','true').lower()=='true'; ALLOW_DIRECT_FALLBACK=os.getenv('NIKKEI_ALLOW_DIRECT_FALLBACK','false').lower()=='true'; PAPER_URL_TEMPLATE=os.getenv('NIKKEI_PAPER_URL_TEMPLATE','https://www.nikkei.com/paper/{edition}/?b={date}&d=0').strip()
 ENABLE_PRE=os.getenv('NIKKEI_ENABLE_PRE_TITLE_FILTER','true').lower()=='true'; PRE_REGEX=os.getenv('NIKKEI_PRE_EXCLUDE_TITLE_REGEX','').strip(); PRE_SHORT=os.getenv('NIKKEI_PRE_EXCLUDE_SHORT_TITLES','true').lower()=='true'; PRE_HR=os.getenv('NIKKEI_PRE_EXCLUDE_HR_LIKE_TITLES','true').lower()=='true'
 JST=timezone(timedelta(hours=9))
-# Nikkei editionID uses M1xx for the morning paper and M2xx for the evening paper.
-# The leading "M" is shared by both editions; it is not a morning/evening discriminator.
-EDITION_MARKERS = {"morning": "M1", "evening": "M2"}
+# editionID is retained for diagnostics only. Observed evening pages have emitted
+# both M201 and E101, so it is not a stable morning/evening discriminator.
 DEFAULT_SCHEDULE_LOCAL_TIMES = {"morning": "06:17", "evening": "15:47"}
 DEFAULT_PAT=[r'野球',r'阪神',r'広島',r'日ハム',r'国内女子',r'国内男子',r'ゴルフ',r'大リーグ',r'競馬',r'天皇賞',r'欧州CL',r'NBA',r'J3',r'ラグビー',r'車いすラグビー',r'PO1回戦',r'首位スタート',r'決勝打',r'逆転弾',r'若冲',r'歌人',r'小説家',r'連載',r'澤田瞳子',r'江戸を隠してふところに',r'はじまりの横浜',r'熱国之巻',r'戦艦大和',r'VRでウルトラセブン',r'美術館',r'絵巻物',r'福田美術館',r'死去',r'悼む',r'訃報',r'おくやみ',r'^\d{1,2}日$',r'^市場情報$',r'^30日の相場表変更$',r'^自社株取得枠設定$']
 
@@ -127,27 +126,37 @@ def get_b(url):
 def is_article(url):
     p=urlparse(url);q=parse_qs(p.query); return 'nikkei.com' in p.netloc and p.path=='/paper/article/' and 'ng' in q
 
-def expected_edition_marker(edition: str) -> str:
-    return EDITION_MARKERS.get((edition or "").strip().lower(), "")
-
 def find_detected_edition_ids(text: str, issue_date: str) -> list[str]:
     if not text or not issue_date:
         return []
     pat = re.compile(rf"editionID=({re.escape(issue_date)}[ME][0-9A-Za-z]+)", re.IGNORECASE)
     return list(dict.fromkeys(m.group(1) for m in pat.finditer(text)))
 
+def edition_from_issue_url(url: str) -> str:
+    path = (urlparse(url).path or "").lower()
+    for edition in ("morning", "evening"):
+        if f"/paper/{edition}/" in path:
+            return edition
+    return ""
+
 def edition_mismatch_summary(*, expected_edition: str, issue_date: str, detected_ids: list[str], issue_url: str, direct_issue_url: str) -> dict:
-    marker = expected_edition_marker(expected_edition)
+    expected = (expected_edition or "").strip().lower()
+    opened_edition = edition_from_issue_url(issue_url)
     detected_id = detected_ids[0] if detected_ids else ""
     detected_marker = detected_id[8:10] if len(detected_id) >= 10 else ""
-    mismatch = bool(marker and detected_marker and marker != detected_marker)
+    # Fail closed unless the final opened URL explicitly identifies the requested
+    # morning/evening route. editionID is diagnostic only because its family is
+    # not stable across published evening issues (observed M201 and E101).
+    mismatch = bool(expected and opened_edition != expected)
     return {
         "edition_check_result": "edition_mismatch" if mismatch else "ok",
         "skip_reason": "edition_mismatch" if mismatch else "",
         "expected_edition": expected_edition,
-        "expected_edition_marker": marker,
+        "expected_edition_marker": "",
         "detected_edition_id": detected_id,
         "detected_edition_marker": detected_marker,
+        "opened_issue_edition": opened_edition,
+        "edition_check_basis": "opened_issue_url_path",
         "opened_issue_url": issue_url,
         "direct_issue_url": direct_issue_url,
         "skip_final_report": mismatch,
