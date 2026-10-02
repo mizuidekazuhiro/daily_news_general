@@ -11,23 +11,27 @@ spec.loader.exec_module(mod)
 JST = timezone(timedelta(hours=9))
 
 
-def test_morning_detected_m_continue():
-    s = edition_mismatch_summary(expected_edition="morning", issue_date="20260505", detected_ids=["20260505M101"], issue_url="u", direct_issue_url="d")
+def test_morning_detected_m101_continue():
+    s = edition_mismatch_summary(expected_edition="morning", issue_date="20261002", detected_ids=["20261002M101"], issue_url="u", direct_issue_url="d")
     assert s["edition_check_result"] == "ok"
+    assert s["expected_edition_marker"] == "M1"
+    assert s["detected_edition_marker"] == "M1"
 
 
-def test_morning_detected_e_stop():
-    s = edition_mismatch_summary(expected_edition="morning", issue_date="20260505", detected_ids=["20260505E101"], issue_url="u", direct_issue_url="d")
+def test_morning_detected_m201_stop():
+    s = edition_mismatch_summary(expected_edition="morning", issue_date="20261002", detected_ids=["20261002M201"], issue_url="u", direct_issue_url="d")
     assert s["edition_check_result"] == "edition_mismatch"
 
 
-def test_evening_detected_e_continue():
-    s = edition_mismatch_summary(expected_edition="evening", issue_date="20260505", detected_ids=["20260505E101"], issue_url="u", direct_issue_url="d")
+def test_evening_detected_m201_continue():
+    s = edition_mismatch_summary(expected_edition="evening", issue_date="20261001", detected_ids=["20261001M201"], issue_url="u", direct_issue_url="d")
     assert s["edition_check_result"] == "ok"
+    assert s["expected_edition_marker"] == "M2"
+    assert s["detected_edition_marker"] == "M2"
 
 
-def test_evening_detected_m_stop():
-    s = edition_mismatch_summary(expected_edition="evening", issue_date="20260505", detected_ids=["20260505M101"], issue_url="u", direct_issue_url="d")
+def test_evening_detected_m101_stop():
+    s = edition_mismatch_summary(expected_edition="evening", issue_date="20261001", detected_ids=["20261001M101"], issue_url="u", direct_issue_url="d")
     assert s["edition_check_result"] == "edition_mismatch"
 
 
