@@ -148,7 +148,7 @@ def extract_article_id(url: str) -> str:
     ng = parse_qs(parsed.query).get("ng", [""])[0]
     if ng:
         return ng
-    m = re.search(r"/article/([A-Z0-9]+)/", parsed.path)
+    m = re.search(r"/article/([A-Z0-9]+)(?:/|$)", parsed.path)
     return m.group(1) if m else ""
 
 

@@ -108,7 +108,10 @@ def req(method, url, **kwargs):
 
 
 def ng(url):
-    return (parse_qs(urlparse(url).query).get('ng') or [''])[0]
+    parsed = urlparse(url)
+    legacy = (parse_qs(parsed.query).get('ng') or [''])[0]
+    match = re.search(r'/article/([A-Z0-9]+)(?:/|$)', parsed.path)
+    return legacy or (match[1] if match else '')
 
 
 def clean_text(t):
