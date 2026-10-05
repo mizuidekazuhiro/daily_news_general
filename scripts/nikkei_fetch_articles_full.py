@@ -41,7 +41,10 @@ DB = (os.getenv('NIKKEI_ARTICLES_DB_ID', '') or os.getenv('NOTION_ARTICLE_DB_ID'
 
 
 def extract_nikkei_ng_id(url: str) -> str:
-    return (parse_qs(urlparse(url).query).get('ng') or [''])[0]
+    parsed = urlparse(url)
+    legacy = (parse_qs(parsed.query).get('ng') or [''])[0]
+    match = re.search(r'/article/([A-Z0-9]+)(?:/|$)', parsed.path)
+    return legacy or (match[1] if match else '')
 
 
 def normalize_nikkei_article_key(url: str) -> str:
@@ -161,6 +164,7 @@ def has_body_text(existing: dict) -> bool:
 
 
 def classify_articles(articles, keys, existing_map, skip_existing, backfill_enabled):
+    existing_by_key = {normalize_nikkei_article_key(url): record for url, record in existing_map.items()}
     skipped = []
     targets = []
     existing_with_body = []
@@ -171,7 +175,10 @@ def classify_articles(articles, keys, existing_map, skip_existing, backfill_enab
         if not (skip_existing and is_existing):
             targets.append(a)
             continue
-        ex = existing_map.get(u, {})
+        ex = existing_map.get(u) or existing_by_key.get(normalize_nikkei_article_key(u), {})
+        if ex:
+            # Preserve the existing page/body for later inventory and backfill steps.
+            existing_map[u] = ex
         if backfill_enabled and not has_body_text(ex):
             existing_missing_body.append(a)
             targets.append(a)

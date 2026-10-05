@@ -123,8 +123,48 @@ def collect_links(p,b):
     return out
 def get_b(url):
     v=parse_qs(urlparse(url).query).get('b')or[]; return v[0] if v else ''
-def is_article(url):
-    p=urlparse(url);q=parse_qs(p.query); return 'nikkei.com' in p.netloc and p.path=='/paper/article/' and 'ng' in q
+def article_id(url):
+    p = urlparse(url)
+    legacy = parse_qs(p.query).get('ng', [''])[0]
+    if legacy:
+        return legacy
+    match = re.search(r'/article/([A-Z0-9]+)(?:/|$)', p.path)
+    return match[1] if match else ''
+
+
+def is_article(url, issue_date='', edition=''):
+    p = urlparse(url)
+    if p.scheme != 'https' or p.hostname != 'www.nikkei.com':
+        return False
+    if p.path == '/paper/article/':
+        return bool(parse_qs(p.query).get('ng', [''])[0])
+    match = re.fullmatch(r'/paper/(\d{8})(M101|M201|E101)/[A-Z0-9]+/article/([A-Z0-9]+)/?', p.path)
+    if not match or (issue_date and match[1] != issue_date):
+        return False
+    detected = 'morning' if match[2] == 'M101' else 'evening'
+    return not edition or detected == edition
+
+
+def extract_issue_articles(links, issue_url, issue_date, edition):
+    raw = 0
+    arts, excluded, seen = [], [], set()
+    for item in links:
+        if not is_article(item['url'], issue_date, edition):
+            continue
+        raw += 1
+        identity = article_id(item['url'])
+        if identity in seen:
+            continue
+        seen.add(identity)
+        rec = {'title': item['title'], 'url': item['url'], 'issue_url': issue_url,
+               'issue_date': issue_date, 'edition': edition}
+        reason = pre_exclude(item['title'])
+        if reason:
+            rec['exclude_reason'] = reason
+            excluded.append(rec)
+        else:
+            arts.append(rec)
+    return arts, excluded, raw
 
 def find_detected_edition_ids(text: str, issue_date: str) -> list[str]:
     if not text or not issue_date:
@@ -223,16 +263,7 @@ def main():
             print('article_count: 0')
             b.close(); return
         print(f'fallback_entry_used: {str(fallback_entry_used).lower()}'); print('final_issue_links_count:',len(links))
-        raw=0; arts=[]; seen=set()
-        for i in links:
-            if not is_article(i['url']): continue
-            raw+=1; ng=parse_qs(urlparse(i['url']).query).get('ng',[i['url']])[0]
-            if ng in seen: continue
-            seen.add(ng)
-            rec={'title':i['title'],'url':i['url'],'issue_url':issue_url,'issue_date':get_b(i['url']) or get_b(issue_url),'edition':EDITION}
-            reason=pre_exclude(i['title'])
-            if reason: rec['exclude_reason']=reason; excluded.append(rec)
-            else: arts.append(rec)
+        arts, excluded, raw = extract_issue_articles(links, page.url, issue_date, EDITION)
         (OUTPUT_DIR/'nikkei_issue_article_links.json').write_text(json.dumps(arts,ensure_ascii=False,indent=2),encoding='utf-8')
         (OUTPUT_DIR/'nikkei_issue_all_links.json').write_text(json.dumps(links,ensure_ascii=False,indent=2),encoding='utf-8')
         (OUTPUT_DIR/'nikkei_issue_excluded_links.json').write_text(json.dumps(excluded,ensure_ascii=False,indent=2),encoding='utf-8')

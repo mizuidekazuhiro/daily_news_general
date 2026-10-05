@@ -7,6 +7,10 @@ on:
     paths:
       - 'scripts/nikkei_extract_issue_links.py'
       - 'scripts/nikkei_score_articles.py'
+      - 'scripts/nikkei_fetch_articles_full.py'
+      - 'scripts/nikkei_save_articles_to_notion.py'
+      - 'tests/test_nikkei_canonical_article_links.py'
+      - 'tests/fixtures/nikkei_20261006_article_urls.json'
       - 'scripts/run_nikkei_final_report.py'
       - 'src/report_selection.py'
       - 'src/report_renderer.py'
@@ -25,6 +29,10 @@ on:
     paths:
       - 'scripts/nikkei_extract_issue_links.py'
       - 'scripts/nikkei_score_articles.py'
+      - 'scripts/nikkei_fetch_articles_full.py'
+      - 'scripts/nikkei_save_articles_to_notion.py'
+      - 'tests/test_nikkei_canonical_article_links.py'
+      - 'tests/fixtures/nikkei_20261006_article_urls.json'
       - 'scripts/run_nikkei_final_report.py'
       - 'src/report_selection.py'
       - 'src/report_renderer.py'
@@ -77,4 +85,8 @@ jobs:
             tests/test_nikkei_final_report_renderer.py \
             tests/test_general_report_modules.py \
             tests/test_nikkei_final_report_skip_behavior.py \
-            tests/test_nikkei_workflow_skip.py
+            tests/test_nikkei_workflow_skip.py \
+            tests/test_nikkei_canonical_article_links.py \
+            tests/test_nikkei_fetch_articles_full.py \
+            tests/test_nikkei_save_articles_to_notion.py \
+            tests/test_nikkei_backfill_existing.py
