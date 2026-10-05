@@ -209,6 +209,7 @@ jobs:
         run: |
           python - <<'P'
           import json
+          import os
           from pathlib import Path
           p = Path('logs/nikkei_paper_pipeline_skip.json')
           skip = False
@@ -217,7 +218,7 @@ jobs:
               skip = bool(json.loads(p.read_text(encoding='utf-8')).get('skip_final_report'))
             except Exception:
               skip = True
-          with open(Path('${GITHUB_OUTPUT}'), 'a', encoding='utf-8') as f:
+          with open(Path(os.environ['GITHUB_OUTPUT']), 'a', encoding='utf-8') as f:
             f.write(f"skip={str(skip).lower()}\n")
           P
       - run: python scripts/run_nikkei_final_report.py

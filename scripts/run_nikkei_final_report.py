@@ -232,6 +232,31 @@ def main() -> int:
     scored_path = logs / "nikkei_articles_scored.json"
     mail_enabled = _env_bool("NIKKEI_SEND_FINAL_REPORT_MAIL", True)
 
+    skip_path = logs / "nikkei_paper_pipeline_skip.json"
+    if skip_path.exists():
+        try:
+            skip = json.loads(skip_path.read_text(encoding="utf-8"))
+            skip_report = bool(skip.get("skip_final_report"))
+            reason = skip.get("skip_reason") or "pipeline_skip"
+        except (ValueError, AttributeError):
+            skip_report = True
+            reason = "invalid_pipeline_skip_json"
+        if skip_report:
+            payload = {
+                "final_report_skipped": True,
+                "final_report_skip_reason": reason,
+                "mail_enabled": mail_enabled,
+                "mail_send_allowed": False,
+                "mail_sent": False,
+                "mail_skipped_reason": reason,
+                "exit_code": 1 if reason == "invalid_pipeline_skip_json" else 0,
+            }
+            (logs / "nikkei_final_report_summary.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            print(f"final_report_skip_reason: {reason}")
+            return payload["exit_code"]
+
     if not scored_path.exists():
         payload = {
             "final_report_skipped": True,

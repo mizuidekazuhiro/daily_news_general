@@ -126,3 +126,29 @@ def test_early_dispatch_skips_when_morning_workflow_is_active():
     assert "--workflow nikkei_morning.yml" in workflow
     assert "select(.status != \"completed\")" in workflow
     assert "steps.active_guard.outputs.skip != 'true'" in workflow
+
+
+def test_canonical_issue_redirects():
+    from scripts.nikkei_extract_issue_links import edition_from_issue_url
+    for issue_id, edition in [('M101', 'morning'), ('E101', 'evening'), ('M201', 'evening')]:
+        url = f'https://www.nikkei.com/paper/20261005{issue_id}'
+        assert edition_from_issue_url(url, '20261005') == edition
+        summary = edition_mismatch_summary(expected_edition=edition, issue_date='20261005',
+            detected_ids=[], issue_url=url, direct_issue_url='')
+        assert summary['edition_check_result'] == 'ok'
+        wrong_edition = 'evening' if edition == 'morning' else 'morning'
+        assert edition_mismatch_summary(expected_edition=wrong_edition, issue_date='20261005',
+            detected_ids=[], issue_url=url, direct_issue_url='')['skip_final_report'] is True
+
+
+def test_unknown_or_wrong_date_issue_urls_fail_closed():
+    from scripts.nikkei_extract_issue_links import edition_from_issue_url
+    for url in [
+        'https://www.nikkei.com/paper/20261004M101',
+        'https://www.nikkei.com/paper/20261005M999',
+        'https://www.nikkei.com/paper/morning/?b=20261004&d=0',
+        'https://www.nikkei.com/login?next=/paper/20261005M101',
+        'https://example.com/paper/20261005M101',
+        'https://www.nikkei.com/paper/morning/login',
+    ]:
+        assert edition_from_issue_url(url, '20261005') == ''

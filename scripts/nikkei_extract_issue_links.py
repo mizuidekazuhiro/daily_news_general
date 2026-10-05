@@ -132,21 +132,31 @@ def find_detected_edition_ids(text: str, issue_date: str) -> list[str]:
     pat = re.compile(rf"editionID=({re.escape(issue_date)}[ME][0-9A-Za-z]+)", re.IGNORECASE)
     return list(dict.fromkeys(m.group(1) for m in pat.finditer(text)))
 
-def edition_from_issue_url(url: str) -> str:
-    path = (urlparse(url).path or "").lower()
+def edition_from_issue_url(url: str, issue_date: str = "") -> str:
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname != "www.nikkei.com":
+        return ""
+    path = (parsed.path or "").lower()
+    canonical = re.fullmatch(r"/paper/(\d{8})(m101|m201|e101)/?", path)
+    if canonical:
+        if issue_date and canonical[1] != issue_date:
+            return ""
+        return "morning" if canonical[2] == "m101" else "evening"
+    query_date = parse_qs(parsed.query).get("b", [])
+    if issue_date and query_date and query_date != [issue_date]:
+        return ""
     for edition in ("morning", "evening"):
-        if f"/paper/{edition}/" in path:
+        if path in (f"/paper/{edition}", f"/paper/{edition}/"):
             return edition
     return ""
 
 def edition_mismatch_summary(*, expected_edition: str, issue_date: str, detected_ids: list[str], issue_url: str, direct_issue_url: str) -> dict:
     expected = (expected_edition or "").strip().lower()
-    opened_edition = edition_from_issue_url(issue_url)
+    opened_edition = edition_from_issue_url(issue_url, issue_date)
     detected_id = detected_ids[0] if detected_ids else ""
     detected_marker = detected_id[8:10] if len(detected_id) >= 10 else ""
-    # Fail closed unless the final opened URL explicitly identifies the requested
-    # morning/evening route. editionID is diagnostic only because its family is
-    # not stable across published evening issues (observed M201 and E101).
+    # Accept named routes and known canonical issue URLs for the requested date.
+    # Embedded editionID values remain diagnostic only; unknown URLs fail closed.
     mismatch = bool(expected and opened_edition != expected)
     return {
         "edition_check_result": "edition_mismatch" if mismatch else "ok",
