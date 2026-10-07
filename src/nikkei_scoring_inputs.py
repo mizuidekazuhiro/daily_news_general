@@ -59,14 +59,13 @@ def article_type_exclusion(headline: str, source_title: str = "") -> tuple[bool,
     """
     text = clean_headline(headline)
     source = clean_headline(source_title)
-    # Preserve an explicit genre prefix on the issue card, but only when the
-    # canonical headline follows it exactly. Never use its body suffix.
-    prefix = source.split(text, 1)[0].strip() if text and text in source else ""
-    labels_to_check = [text, prefix]
+    # Issue-card labels remain authoritative even when the page headline has
+    # been edited. Anchoring each match at the start keeps body suffixes out.
+    labels_to_check = [text, source]
     reasons = []
     for reason, labels in _TYPE_LABELS.items():
         for label in labels:
-            pattern = r"^(?:【|［|\[|（|\()?" + re.escape(label) + r"(?=$|[\s:：、）)\]］】])"
+            pattern = r"^(?:【|［|\[|（|\()?" + re.escape(label) + r"(?=$|[\s:：、（(）)\]］】])"
             if any(re.search(pattern, candidate) for candidate in labels_to_check):
                 reasons.append(reason)
                 break
