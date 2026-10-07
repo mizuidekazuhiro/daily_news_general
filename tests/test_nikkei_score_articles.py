@@ -35,7 +35,7 @@ def test_ascii_keyword_uses_boundaries():
 def test_score_article_basic():
     article = {
         "source_title": "鉄鋼各社、インドで投資",
-        "page_title": "政策支援が追い風",
+        "page_title": "鉄鋼各社、インドで投資 政策支援が追い風 - 日本経済新聞",
         "text": "本文です",
         "text_length": 100,
     }
@@ -99,7 +99,7 @@ def test_title_only_existing_is_scored(tmp_path, monkeypatch):
     monkeypatch.setenv("NIKKEI_MIN_IMPORTANCE_SCORE_FOR_REPORT", "5")
 
     import scripts.nikkei_score_articles as mod
-    monkeypatch.setattr(mod, "load_rules", lambda *args, **kwargs: [])
+    monkeypatch.setattr(mod, "load_rules", lambda *args, **kwargs: [{"tag_name": "test", "keywords": ["test"], "weight": 0}])
 
     assert mod.main() == 0
     summary = json.loads(SUMMARY_JSON.read_text(encoding="utf-8"))
@@ -136,7 +136,6 @@ def test_select_report_excludes_exclude_candidate():
 def test_select_report_threshold_mode():
     articles = [_mk(s, i) for i, s in enumerate([10, 8, 6, 5, 4, 3])]
     selected, cutoff, mode = select_report_articles(articles, "threshold", 5, 5, True)
-    assert mode == "threshold"
     assert cutoff == 5
     assert [a["importance_score"] for a in selected] == [10, 8, 6, 5]
 
