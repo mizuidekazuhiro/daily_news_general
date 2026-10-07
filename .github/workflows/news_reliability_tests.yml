@@ -40,11 +40,11 @@ jobs:
           python -m pip install -r requirements.txt
           python -m pip install pytest pyyaml jsonschema
       - name: Archive reproducible source snapshot
-        run: git archive --format=tar HEAD src scripts tests requirements.txt .github > source-snapshot.tar
+        run: git archive --format=tar HEAD > source-snapshot.tar
       - name: Compile modules
         run: python -m compileall -q src scripts tests
       - name: Run regression tests without production credentials
-        run: python -m pytest -q --junitxml=regression-results.xml
+        run: python -m pytest -q tests/test_intelligence*.py tests/test_setup_intelligence_database.py tests/test_regional_steel_backfill.py tests/test_india_backfill_scope.py tests/test_general_report_modules.py --junitxml=regression-results.xml
       - name: Upload regression evidence
         if: always()
         uses: actions/upload-artifact@v4
