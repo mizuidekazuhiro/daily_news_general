@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from src.openai_json_client import OpenAIJsonClient
+from src.intelligence_contract import generate_operations_json, retryable_noop_reason
 
 NOTION_VERSION = "2022-06-28"
 JST = ZoneInfo("Asia/Tokyo")
@@ -707,6 +708,10 @@ def apply_operations(
     applied: list[dict[str, Any]] = []
     for operation in operations:
         if operation["action"] == "noop":
+            retry_reason = retryable_noop_reason(operation)
+            if retry_reason:
+                errors.append({"action": "classify", "insight_key": "", "error": retry_reason})
+                continue  # Never persist an invalid classification as processed.
             noops += 1
             applied.append({"action": "noop", "article_refs": operation.get("article_refs", [])})
             continue
@@ -811,7 +816,10 @@ def run() -> dict[str, Any]:
     }
     _write_json(logs / "intelligence_prompt_input.json", prompt_payload)
     client = OpenAIJsonClient(api_key)
-    raw_output = client.generate_json(
+    raw_output = generate_operations_json(
+        client=client, candidates=candidates, existing=existing,
+        normalize=normalize_operations,
+        diagnostics_path=logs / "intelligence_generation_attempts.json",
         model=model,
         system_prompt=_prompt_system(),
         user_prompt=json.dumps(prompt_payload, ensure_ascii=False),

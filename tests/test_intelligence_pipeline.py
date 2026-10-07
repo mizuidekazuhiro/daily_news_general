@@ -4,9 +4,10 @@ from src.intelligence_pipeline import (
     Article,
     Insight,
     _properties_for_operation,
-    normalize_operations,
     select_candidates,
 )
+
+from src.intelligence_safety import _ORIGINAL_NORMALIZE_OPERATIONS as normalize_operations
 
 
 def article(page_id: str, source: str = "general", score: float = 5.0, published: str = "2026-08-27") -> Article:
