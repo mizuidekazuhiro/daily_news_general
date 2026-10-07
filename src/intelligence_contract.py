@@ -27,7 +27,7 @@ def build_schema(ruleset: Any, *, countries: set[str], themes: set[str],
     from src.intelligence_policy import _checklist_rule_ids
 
     text = {"type": "string"}
-    nonempty = {"type": "string", "minLength": 1}
+    nonempty = {"type": "string", "pattern": r"\S"}
     refs = {"type": "array", "minItems": 1, "items": _object({
         "source": {"type": "string", "enum": ["nikkei", "general"]},
         "page_id": nonempty, "published_at": text,
