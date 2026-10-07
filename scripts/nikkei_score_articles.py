@@ -1,4 +1,7 @@
 import json
+import hashlib
+import math
+import sys
 import os
 import re
 from pathlib import Path
@@ -9,6 +12,11 @@ from urllib.parse import parse_qs, urlparse
 import requests
 from dotenv import load_dotenv
 
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+from src.nikkei_scoring_inputs import headline_for_article, article_type_exclusion
+
 load_dotenv()
 
 INPUT_JSON = Path("logs/nikkei_articles_full.json")
@@ -17,17 +25,6 @@ OUTPUT_JSON = Path("logs/nikkei_articles_scored.json")
 SUMMARY_JSON = Path("logs/nikkei_score_summary.json")
 NOTION_VERSION = "2022-06-28"
 
-EXCLUDE_PATTERNS = {
-    "スポーツ": ["スポーツ", "Jリーグ", "ボクシング"],
-    "競馬": ["競馬"],
-    "文化": ["文化"],
-    "連載小説": ["連載小説"],
-    "訃報": ["訃報", "おくやみ"],
-    "人事のみ": ["人事"],
-    "将棋・囲碁": ["将棋", "囲碁"],
-    "芸能": ["芸能", "俳優"],
-    "連載コラム": ["コラム"],
-}
 NAV_BODY_KEYWORDS = ["速報", "アクセスランキング", "トピック一覧", "おくやみ", "プレスリリース", "メディア一覧", "ビューアーで読む", "朝刊・夕刊"]
 
 
@@ -95,16 +92,9 @@ def _contains_keyword(target: str, keyword: str) -> bool:
 
 
 def should_exclude(source_title: str, page_title: str, body: str) -> tuple[bool, str]:
-    full = f"{source_title}\n{page_title}\n{body}"
-    reasons = []
-    for reason, kws in EXCLUDE_PATTERNS.items():
-        if any(kw in full for kw in kws):
-            reasons.append(reason)
-    if "人事のみ" in reasons and len(reasons) == 1 and any(x in full for x in ["異動", "人事"]):
-        return True, "人事だけの記事"
-    if reasons:
-        return True, "、".join(sorted(set(reasons)))
-    return False, ""
+    # Signature retained for callers; body must not determine article genre.
+    headline, _ = headline_for_article({"source_title": source_title, "page_title": page_title, "text": body})
+    return article_type_exclusion(headline, source_title)
 
 
 def is_navigation_like_body(text: str) -> bool:
@@ -219,13 +209,13 @@ def derive_tags_from_rules(tags_by_type: dict[str, list[str]]) -> dict[str, list
 
 
 def score_article(article: dict[str, Any], rules: list[dict[str, Any]], min_report_score: float) -> dict[str, Any]:
-    source_title = str(article.get("source_title") or "")
-    page_title = str(article.get("page_title") or "")
+    canonical_title, title_source = headline_for_article(article)
+    source_title = page_title = canonical_title
     raw_body = str(article.get("text") or "")
     body = clean_text_for_scoring(raw_body)
-    body_used_for_scoring = not is_navigation_like_body(body)
+    body_used_for_scoring = bool(body) and not is_navigation_like_body(body)
     body_for_score = body if body_used_for_scoring else ""
-    title_text = f"{source_title}\n{page_title}".lower()
+    title_text = canonical_title.lower()
     body_text = body_for_score.lower()
     both_text = f"{title_text}\n{body_text}"
 
@@ -272,7 +262,7 @@ def score_article(article: dict[str, Any], rules: list[dict[str, Any]], min_repo
                 "weight": rule.get("weight", 0.0),
             })
 
-    exclude_candidate, exclude_reason = should_exclude(source_title, page_title, body)
+    exclude_candidate, exclude_reason = should_exclude(str(article.get("source_title") or ""), page_title, body)
     if exclude_candidate:
         reason_to_read = f"除外候補: {exclude_reason}"
     elif score >= min_report_score and tags:
@@ -282,6 +272,11 @@ def score_article(article: dict[str, Any], rules: list[dict[str, Any]], min_repo
 
     out = dict(article)
     out.update({
+        "raw_source_title": article.get("source_title", ""),
+        "raw_page_title": article.get("page_title", ""),
+        "source_title": canonical_title,
+        "page_title": canonical_title,
+        "scoring_title_source": title_source,
         "importance_score": score,
         "priority": priority,
         "tags": tags,
@@ -334,6 +329,42 @@ def select_report_articles(
     return ordered[:top_rank], cutoff_score, "top_importance_rank"
 
 
+def validate_and_snapshot_rules(rules: list[dict[str, Any]]) -> str:
+    """An empty/broken rule set is a failure, not an ordinary no-news day."""
+    if not rules or not any(rule.get("keywords") for rule in rules):
+        raise RuntimeError("nikkei_scoring_rules_invalid:no_enabled_keywords")
+    for index, rule in enumerate(rules):
+        if not math.isfinite(float(rule.get("weight", 0))) or not math.isfinite(float(rule.get("priority", 0))):
+            raise RuntimeError(f"nikkei_scoring_rules_invalid:nonfinite_weight_or_priority:{index}")
+    payload = json.dumps(rules, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    fingerprint = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    path = SUMMARY_JSON.with_name("nikkei_rules_snapshot.json")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"rules_fingerprint": fingerprint, "rules": rules},
+                               ensure_ascii=False, indent=2), encoding="utf-8")
+    return fingerprint
+
+
+def write_step_summary(summary: dict[str, Any]) -> None:
+    path = os.getenv("GITHUB_STEP_SUMMARY", "")
+    if not path:
+        return
+    body = (
+        "## Nikkei scoring\n"
+        f"- Result: `{summary['report_state']}`\n"
+        f"- Scored: {summary['scored_article_count']}; eligible: {summary['report_candidate_count']}; selected: {summary['report_selected_count']}\n"
+        f"- Minimum score: {summary['report_min_importance_score']}; top rank: {summary['report_top_rank']}; ties: {summary['report_include_ties']}\n"
+        f"- Body unavailable or rejected: {summary['scoring_body_unused_count']}\n"
+        f"- Rules fingerprint: `{summary['rules_fingerprint']}`\n"
+        "No qualifying articles is a normal outcome, not a reason to lower the threshold.\n"
+    )
+    try:
+        with open(path, "a", encoding="utf-8") as handle:
+            handle.write(body)
+    except OSError as exc:
+        print(f"WARNING: step_summary_unavailable:{type(exc).__name__}")
+
+
 def main() -> int:
     if not env_bool("NIKKEI_ENABLE_SCORING", "true"):
         print("skip scoring: NIKKEI_ENABLE_SCORING=false")
@@ -351,6 +382,7 @@ def main() -> int:
     report_include_ties = env_bool("NIKKEI_REPORT_INCLUDE_TIES", "true")
 
     rules = load_rules(token, rules_db_id, rule_types)
+    fingerprint = validate_and_snapshot_rules(rules)
     fetched_articles = json.loads(INPUT_JSON.read_text(encoding="utf-8")) if INPUT_JSON.exists() else []
     inventory = json.loads(INVENTORY_JSON.read_text(encoding="utf-8")) if INVENTORY_JSON.exists() else []
     existing_articles = []
@@ -408,6 +440,10 @@ def main() -> int:
     eligible_count = sum(1 for a in scored if not a.get("exclude_candidate") and float(a.get("importance_score", 0)) >= min_report_score)
     summary = {
         "rules_db_id": rules_db_id,
+        "rules_fingerprint": fingerprint,
+        "report_state": "eligible_articles" if selected else "no_eligible_articles" if articles else "no_articles",
+        "scoring_body_unused_count": sum(1 for a in scored if not a.get("body_used_for_scoring")),
+        "scoring_title_normalized_count": sum(1 for a in scored if a.get("raw_source_title") != a.get("source_title") or a.get("raw_page_title") != a.get("page_title")),
         "loaded_rules_count": len(rules),
         "loaded_rules_count_by_type": by_type,
         "enabled_rules_count": len(rules),
@@ -437,10 +473,11 @@ def main() -> int:
     }
     SUMMARY_JSON.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    write_step_summary(summary)
     for k, v in summary.items():
         print(f"{k}: {json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v}")
     if scored and summary["max_importance_score"] < min_report_score:
-        print(f"WARNING: top_importance_score={summary['max_importance_score']} is below report threshold={min_report_score}. Rules may not be matching.")
+        print(f"INFO: no articles meet report threshold={min_report_score}; maximum={summary['max_importance_score']}. Threshold unchanged; no report will be sent.")
     if summary["report_candidate_count"] < report_top_rank:
         print(f"INFO: eligible report candidates are fewer than top rank. candidate_count={summary['report_candidate_count']} top_rank={report_top_rank}")
     return 0

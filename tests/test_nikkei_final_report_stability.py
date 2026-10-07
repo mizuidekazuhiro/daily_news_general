@@ -15,7 +15,7 @@ def mk(scores, exclude_idx=None):
 
 
 def test_validate_required_keys_success():
-    rep = {"report_title": "a", "today_key_message": "b", "executive_summary": "c", "cross_article_implications": "d", "article_sections": []}
+    rep = {"report_title": "a", "today_key_message": "b", "executive_summary": "c", "cross_article_implications": "d", "article_sections": [], "integrated_insights": [], "watchlist": []}
     assert validate_final_report_errors(rep, 0) == []
 
 
@@ -57,6 +57,8 @@ def test_core_four_plus_recovered_sections_pass_validation():
         "today_key_message": "k",
         "executive_summary": "e",
         "cross_article_implications": "c",
+        "integrated_insights": [],
+        "watchlist": [],
     }
     rep["article_sections"] = mod._build_article_sections_from_input(in_articles)
     assert validate_final_report_errors(rep, len(in_articles)) == []

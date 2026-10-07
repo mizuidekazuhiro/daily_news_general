@@ -1,10 +1,15 @@
-import json, os, time, re
+import json, os, time, re, sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 import requests
 from requests.exceptions import ConnectionError, ReadTimeout, Timeout
 from dotenv import load_dotenv
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+from src.nikkei_scoring_inputs import headline_for_article
 
 load_dotenv()
 NOTION_TOKEN = os.getenv('NOTION_TOKEN', '').strip()
@@ -119,7 +124,7 @@ def clean_text(t):
 
 
 def ensure_nikkei_title(a):
-    title = clean_text(a.get('title') or a.get('headline') or a.get('source_title') or a.get('page_title') or a.get('h1_text'))
+    title, _ = headline_for_article(a)
     if title:
         return title
     u = clean_text(a.get('url'))
