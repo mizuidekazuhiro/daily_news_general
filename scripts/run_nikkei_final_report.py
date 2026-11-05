@@ -215,6 +215,18 @@ def _generate_report(client, input_payload: dict, retry: bool = False):
             parse_failed = True
             raise OpenAIJsonError("parse_failed")
         parsed = _normalize_report_labels(parsed)
+        implications = parsed.get("cross_article_implications")
+        if implications is None or (isinstance(implications, str) and not implications.strip()):
+            parsed["cross_article_implications"] = ""
+            insights = parsed.get("integrated_insights")
+            if (
+                isinstance(insights, list)
+                and 3 <= len(insights) <= 5
+                and all(isinstance(item, str) and item.strip() for item in insights)
+            ):
+                # The email already uses these insights as its cross-article analysis.
+                parsed["cross_article_implications"] = "\n".join(item.strip() for item in insights)
+                logging.info("Nikkei final report recovered cross_article_implications from integrated_insights")
         errs = validate_final_report_errors(parsed, len(input_payload["articles"]))
         return parsed, raw, finish_reason, errs, parse_failed
     except Exception as exc:
