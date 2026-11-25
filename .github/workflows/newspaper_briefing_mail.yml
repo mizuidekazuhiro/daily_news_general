@@ -1,0 +1,189 @@
+name: Newspaper briefing email
+
+on:
+  schedule:
+    - cron: '10 23 * * *'
+    - cron: '10 9 * * *'
+  workflow_dispatch:
+    inputs:
+      edition:
+        description: 'Issue to generate in the current Japan time delivery window'
+        type: choice
+        options: [morning, evening]
+        required: true
+      send:
+        description: 'Send the finalized issue through Gmail'
+        type: boolean
+        default: false
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: newspaper-briefing-email
+  cancel-in-progress: false
+
+jobs:
+  email:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      ((github.event_name == 'workflow_dispatch' && !inputs.send) ||
+      vars.NEWSPAPER_BRIEFING_EMAIL_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check the scheduled issue and prior delivery reservation
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SCHEDULE: ${{ github.event.schedule }}
+          MANUAL_EDITION: ${{ inputs.edition }}
+          SEND_EMAIL: ${{ github.event_name == 'schedule' || inputs.send }}
+        run: |
+          set -euo pipefail
+          case "$GITHUB_EVENT_NAME:$SCHEDULE:$MANUAL_EDITION" in
+            'schedule:10 23 * * *:'|'workflow_dispatch::morning') edition=morning; cutoff=08; start=8; end=18 ;;
+            'schedule:10 9 * * *:'|'workflow_dispatch::evening') edition=evening; cutoff=18; start=18; end=24 ;;
+            *) exit 1 ;;
+          esac
+          created=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq '.created_at')
+          day=$(TZ=Asia/Tokyo date -d "$created" +%F)
+          hour=$(TZ=Asia/Tokyo date +%H)
+          if [[ "$day" != "$(TZ=Asia/Tokyo date +%F)" ]] || (( 10#$hour < start || 10#$hour >= end )); then
+            echo 'Scheduled issue is outside its delivery window.'
+            exit 0
+          fi
+          artifacts="repos/$GITHUB_REPOSITORY/actions/artifacts"
+          claim=''
+          if [[ "$SEND_EMAIL" == true ]]; then
+            claim="newspaper-briefing-email-$day-$edition"
+            prior=$(gh api "$artifacts" --method GET --paginate -f name="$claim" --jq '.artifacts[].id')
+            if [[ -n "$prior" ]]; then
+              echo 'The issue already has a delivery reservation.'
+              exit 0
+            fi
+          fi
+          morning_run=''
+          if [[ "$edition" == evening ]]; then
+            morning_run=$(gh api "$artifacts" --method GET --paginate -f name="newspaper-briefing-sent-$day-morning" \
+              --jq '.artifacts[] | select(.expired == false and .workflow_run.repository_id == .workflow_run.head_repository_id) | .workflow_run.id')
+            if [[ -n "$morning_run" && ! "$morning_run" =~ ^[0-9]+$ ]]; then
+              echo '::warning::No unique morning baseline was found.'
+              morning_run=''
+            fi
+          fi
+          printf 'day=%s\nedition=%s\ncutoff=%s\nclaim=%s\nmorning_run=%s\n' \
+            "$day" "$edition" "$cutoff" "$claim" "$morning_run" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        if: steps.issue.outputs.edition != ''
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        if: steps.issue.outputs.edition != ''
+        with:
+          python-version: '3.12'
+      - if: steps.issue.outputs.edition != ''
+        run: python -m pip install -r requirements.txt
+      - name: Download the encrypted baseline from the sent morning issue
+        id: baseline
+        if: steps.issue.outputs.morning_run != ''
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ steps.issue.outputs.morning_run }}
+          name: newspaper-briefing-sent-${{ steps.issue.outputs.day }}-morning
+          path: ${{ runner.temp }}/newspaper-briefing/baseline
+      - name: Finalize and verify the email preview
+        if: steps.issue.outputs.edition != ''
+        env:
+          ISSUE_DAY: ${{ steps.issue.outputs.day }}
+          EDITION: ${{ steps.issue.outputs.edition }}
+          CUTOFF: ${{ steps.issue.outputs.cutoff }}
+          SEND_EMAIL: ${{ steps.issue.outputs.claim != '' }}
+          BASELINE_DOWNLOADED: ${{ steps.baseline.outcome == 'success' }}
+          CONFIG_JSON: ${{ secrets.NEWSPAPER_BRIEFING_CONFIG_JSON }}
+          SOURCE_POLICY_JSON: ${{ secrets.NEWSPAPER_BRIEFING_SOURCE_POLICY_JSON }}
+          SNAPSHOT_KEY: ${{ secrets.NEWSPAPER_BRIEFING_SNAPSHOT_KEY }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          NEWSPAPER_BRIEFING_SMTP_TO: ${{ secrets.NEWSPAPER_BRIEFING_SMTP_TO }}
+          NEWSPAPER_BRIEFING_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          NEWSPAPER_BRIEFING_OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+        run: |
+          set -euo pipefail
+          : "${CONFIG_JSON:?}" "${SOURCE_POLICY_JSON:?}" "${SNAPSHOT_KEY:?}"
+          : "${NEWSPAPER_BRIEFING_OPENAI_API_KEY:?}" "${NEWSPAPER_BRIEFING_OPENAI_MODEL:?}"
+          if [[ "$SEND_EMAIL" == true ]]; then
+            : "${MAIL_FROM:?}" "${MAIL_PASSWORD:?}" "${NEWSPAPER_BRIEFING_SMTP_TO:?}"
+          fi
+          umask 077
+          work="$RUNNER_TEMP/newspaper-briefing"
+          mkdir -p "$work"
+          printf '%s' "$CONFIG_JSON" > "$work/config.json"
+          printf '%s' "$SOURCE_POLICY_JSON" > "$work/policy.json"
+          args=(--preview --publication-mail --ai --edition "$EDITION" --as-of "${ISSUE_DAY}T${CUTOFF}:00:00+09:00"
+            --config "$work/config.json" --source-policy "$work/policy.json" --output-dir "$work/previews")
+          if [[ "$BASELINE_DOWNLOADED" == true && -f "$work/baseline/snapshot.gpg" ]]; then
+            snapshot="$work/baseline/delivery/snapshot.json"
+            mkdir -p "$work/baseline/delivery"
+            if printf '%s\n' "$SNAPSHOT_KEY" | gpg --batch --pinentry-mode loopback --passphrase-fd 0 \
+              --output "$snapshot" --decrypt "$work/baseline/snapshot.gpg"; then
+              args+=(--snapshot "$snapshot")
+            else
+              echo '::warning::The morning baseline could not be opened.'
+            fi
+          fi
+          python -m src.newspaper_briefing "${args[@]}"
+          python -m scripts.newspaper_briefing_smtp --previews "$work/previews" --edition "$EDITION"
+          issue="$work/previews/$ISSUE_DAY/$EDITION/${CUTOFF}0000"
+          python - "$issue" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json
+          from pathlib import Path
+          import sys
+
+          issue = Path(sys.argv[1])
+          diagnostics = json.loads((issue / "diagnostics.json").read_text(encoding="utf-8"))
+          report = json.loads((issue / "delivery/report.json").read_text(encoding="utf-8"))
+          mail = json.loads((issue / "delivery/mail.json").read_text(encoding="utf-8"))
+          coverage = report["coverage"]
+          matching = diagnostics["event_matching_ai"]
+          print(f"Media available: {coverage['available']}/{coverage['total']}")
+          print(f"Stories in email: {len(report['stories'])}; links: {mail['link_count']}")
+          print(f"AI event matching: {matching['state']}; pairs: {matching['pairs']}; merges: {matching['merged']}")
+          print(f"AI summary: {report['ai_state']}; comparison: {report['comparison_state']}")
+          PY
+          if [[ "$EDITION" == morning ]]; then
+            snapshot="$issue/delivery/snapshot.json"
+            printf '%s\n' "$SNAPSHOT_KEY" | gpg --batch --pinentry-mode loopback --passphrase-fd 0 \
+              --cipher-algo AES256 --output "$work/snapshot.gpg" --symmetric "$snapshot"
+          fi
+          printf '%s %s\n' "$ISSUE_DAY" "$EDITION" > "$work/reservation.txt"
+      - name: Record the reservation before contacting SMTP
+        if: steps.issue.outputs.claim != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.issue.outputs.claim }}
+          path: ${{ runner.temp }}/newspaper-briefing/reservation.txt
+          if-no-files-found: error
+          retention-days: 7
+      - name: Send the finalized email through Gmail SMTP
+        if: steps.issue.outputs.claim != ''
+        env:
+          EDITION: ${{ steps.issue.outputs.edition }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          NEWSPAPER_BRIEFING_SMTP_TO: ${{ secrets.NEWSPAPER_BRIEFING_SMTP_TO }}
+        run: |
+          work="$RUNNER_TEMP/newspaper-briefing"
+          python -m scripts.newspaper_briefing_smtp --previews "$work/previews" --edition "$EDITION" \
+            --send-email --ledger "$work/delivery.sqlite3"
+      - name: Retain the encrypted baseline after confirmed morning delivery
+        if: steps.issue.outputs.claim != '' && steps.issue.outputs.edition == 'morning'
+        uses: actions/upload-artifact@v4
+        with:
+          name: newspaper-briefing-sent-${{ steps.issue.outputs.day }}-morning
+          path: ${{ runner.temp }}/newspaper-briefing/snapshot.gpg
+          if-no-files-found: error
+          retention-days: 2

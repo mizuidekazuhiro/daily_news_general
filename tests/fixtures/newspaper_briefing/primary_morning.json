@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "state": "fixture",
+  "sources": [],
+  "documents": [
+    {
+      "source": "fixture-prefecture",
+      "issued_at": "2026-11-24T07:56:00+09:00",
+      "link": "https://aoba.example.invalid/notices/earthquake-1",
+      "match": {"article_url": "https://news.web.nhk/__newspaper_briefing_fixture__/quake"},
+      "facts": [
+        {"field": "負傷者", "value": "4人", "scope": "青葉県沿岸の住民", "definition": "救急搬送された負傷者", "measured_at": "2026-11-24T07:50:00+09:00"},
+        {"field": "影響", "value": "青葉町沿岸の住民に避難指示が出ています"},
+        {"field": "次の予定", "value": "11月24日12時に県が被害状況を発表する予定"}
+      ]
+    },
+    {
+      "source": "fixture-rescue",
+      "issued_at": "2026-11-24T07:57:00+09:00",
+      "link": "https://rescue.example.invalid/releases/earthquake-1",
+      "match": {"article_url": "https://news.web.nhk/__newspaper_briefing_fixture__/quake"},
+      "facts": [
+        {"field": "負傷者", "value": "6人", "scope": "青葉県沿岸の住民", "definition": "救急搬送された負傷者", "measured_at": "2026-11-23T22:50:00Z"}
+      ]
+    }
+  ]
+}

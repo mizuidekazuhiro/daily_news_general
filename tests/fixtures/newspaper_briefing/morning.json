@@ -1,0 +1,58 @@
+{
+  "format": "rss-fixture",
+  "captured_at": "2026-11-24T08:00:00+09:00",
+  "feeds": [
+    {
+      "feed": "nhk-main",
+      "rss": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:atom=\"http://www.w3.org/2005/Atom\"><channel><title>新聞横断の架空ニュース</title><link>https://example.invalid/</link><description>試験用</description>\n  <item><title>青葉県沖で震度6強 気象庁が津波警報を発表</title><link>https://news.web.nhk/__newspaper_briefing_fixture__/quake</link><guid isPermaLink=\"false\">fixture-quake</guid><pubDate>Tue, 24 Nov 2026 07:52:00 +0900</pubDate><description>試験用の説明文。自動保存や送信の既定では取り込まない。</description></item>\n  <item><title>青葉市長選、投票始まる 期日前投票は前回上回る</title><link>https://news.web.nhk/__newspaper_briefing_fixture__/election</link><guid isPermaLink=\"false\">fixture-election</guid><pubDate>Tue, 24 Nov 2026 06:30:00 +0900</pubDate></item>\n</channel></rss>"
+    },
+    {
+      "feed": "nhk-society",
+      "rss": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:atom=\"http://www.w3.org/2005/Atom\"><channel><title>新聞横断の架空ニュース</title><link>https://example.invalid/</link><description>試験用</description>\n  <item><title>青葉県沖で震度6強 気象庁が津波警報を発表</title><link>https://news.web.nhk/__newspaper_briefing_fixture__/quake?utm_source=test</link><guid isPermaLink=\"false\">fixture-quake</guid><pubDate>Tue, 24 Nov 2026 07:52:00 +0900</pubDate></item>\n  <item><title>光浜市の住宅が全焼 市消防による消火続く</title><link>https://news.web.nhk/__newspaper_briefing_fixture__/fire-hikari</link><guid isPermaLink=\"false\">fixture-fire-hikari</guid><pubDate>Tue, 24 Nov 2026 07:30:00 +0900</pubDate></item>\n  <item><title>西浜市の住宅が全焼 市消防による消火続く</title><link>https://news.web.nhk/__newspaper_briefing_fixture__/fire-nishi</link><guid isPermaLink=\"false\">fixture-fire-nishi</guid><pubDate>Tue, 24 Nov 2026 07:31:00 +0900</pubDate></item>\n  <item><title>青葉市の新しい観光案内所</title><link>https://news.web.nhk/__newspaper_briefing_fixture__/no-date</link><guid isPermaLink=\"false\">fixture-no-date</guid></item>\n  <item><title>水辺市立図書館の新しい企画展</title><link>https://news.web.nhk/__newspaper_briefing_fixture__/old</link><guid isPermaLink=\"false\">fixture-old</guid><pubDate>Mon, 23 Nov 2026 07:55:00 +0900</pubDate></item>\n  <item><title>白浜市で市民マラソンの申し込み開始</title><link>https://news.web.nhk/__newspaper_briefing_fixture__/future</link><guid isPermaLink=\"false\">fixture-future</guid><pubDate>Tue, 24 Nov 2026 09:00:00 +0900</pubDate></item>\n</channel></rss>"
+    },
+    {
+      "feed": "nhk-search",
+      "rss": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:atom=\"http://www.w3.org/2005/Atom\"><channel><title>新聞横断の架空ニュース</title><link>https://example.invalid/</link><description>試験用</description>\n  <item><title>青葉県沖で震度6強 気象庁が津波警報を発表 - NHKニュース</title><link>https://news.google.com/rss/articles/fixture-google-quake?oc=5&amp;hl=ja</link><guid isPermaLink=\"false\">fixture-google-quake</guid><pubDate>Tue, 24 Nov 2026 07:52:00 +0900</pubDate><source url=\"https://news.web.nhk/\">NHKニュース</source><description>&lt;ul&gt;&lt;li&gt;&lt;a href=&quot;https://example.invalid/&quot;&gt;関係のない1万人という数字&lt;/a&gt;&lt;/li&gt;&lt;/ul&gt;</description></item>\n</channel></rss>"
+    },
+    {
+      "feed": "okinawa-official",
+      "rss": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:atom=\"http://www.w3.org/2005/Atom\"><channel><title>新聞横断の架空ニュース</title><link>https://example.invalid/</link><description>試験用</description>\n  <item><title>海風市で通学路を変更 来月から夏浜橋の通行止め</title><link>https://www.okinawatimes.co.jp/__newspaper_briefing_fixture__/road</link><guid isPermaLink=\"false\">fixture-road</guid><pubDate>Mon, 23 Nov 2026 23:58:00 +0900</pubDate><dc:creator>沖縄タイムス</dc:creator></item>\n  <item><title>白浜市で倉庫全焼 けが人3人（共同通信）</title><link>https://www.okinawatimes.co.jp/__newspaper_briefing_fixture__/wire-fire</link><guid isPermaLink=\"false\">fixture-wire-fire</guid><pubDate>Tue, 24 Nov 2026 06:16:00 +0900</pubDate><dc:creator>共同通信</dc:creator></item>\n  <item><title>若葉選手が車いす競技で世界記録を更新</title><link>https://www.okinawatimes.co.jp/__newspaper_briefing_fixture__/sport</link><guid isPermaLink=\"false\">fixture-sport</guid><pubDate>Tue, 24 Nov 2026 07:00:00 +0900</pubDate><dc:creator>沖縄タイムス</dc:creator></item>\n</channel></rss>"
+    },
+    {
+      "feed": "47news-search",
+      "rss": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:atom=\"http://www.w3.org/2005/Atom\"><channel><title>新聞横断の架空ニュース</title><link>https://example.invalid/</link><description>試験用</description>\n  <item><title>白浜市で倉庫全焼 けが人3人（共同通信） - 47NEWS</title><link>https://news.google.com/rss/articles/fixture-wire-paper?oc=5&amp;hl=ja</link><guid isPermaLink=\"false\">fixture-wire-paper</guid><pubDate>Tue, 24 Nov 2026 06:16:00 +0900</pubDate><dc:creator>共同通信</dc:creator><source url=\"https://www.47news.jp/\">47NEWS</source></item>\n</channel></rss>"
+    },
+    {
+      "feed": "tokyo-search",
+      "rss": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:atom=\"http://www.w3.org/2005/Atom\"><channel><title>新聞横断の架空ニュース</title><link>https://example.invalid/</link><description>試験用</description>\n  <item><title>東浜市議会が避難バスの運行を正式決定 - 東京新聞</title><link>https://news.google.com/rss/articles/fixture-common?oc=5&amp;hl=ja</link><guid isPermaLink=\"false\">fixture-common</guid><pubDate>Tue, 24 Nov 2026 06:10:00 +0900</pubDate><dc:creator>東京新聞</dc:creator><source url=\"https://www.tokyo-np.co.jp/\">東京新聞</source></item>\n</channel></rss>"
+    },
+    {
+      "feed": "chunichi-search",
+      "rss": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:atom=\"http://www.w3.org/2005/Atom\"><channel><title>新聞横断の架空ニュース</title><link>https://example.invalid/</link><description>試験用</description>\n  <item><title>東浜市議会が避難バスの運行を正式決定 - 中日新聞Web</title><link>https://news.google.com/rss/articles/fixture-common?oc=5&amp;hl=ja</link><guid isPermaLink=\"false\">fixture-common</guid><pubDate>Tue, 24 Nov 2026 06:12:00 +0900</pubDate><dc:creator>中日新聞Web</dc:creator><source url=\"https://sp.chunichi.co.jp/\">中日新聞Web</source></item>\n</channel></rss>"
+    },
+    {
+      "feed": "asahi-search",
+      "rss": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:atom=\"http://www.w3.org/2005/Atom\"><channel><title>新聞横断の架空ニュース</title><link>https://example.invalid/</link><description>試験用</description>\n  <item><title>研究チームが青葉湾で新種の海藻を発見 - 朝日新聞</title><link>https://news.google.com/rss/articles/fixture-science?oc=5&amp;hl=ja</link><guid isPermaLink=\"false\">fixture-science</guid><pubDate>Tue, 24 Nov 2026 07:25:00 +0900</pubDate><source url=\"https://www.asahi.com/\">朝日新聞</source></item>\n  <item><title>官房長官が輸入米の関税を見直す方針を正式決定 - 朝日新聞</title><link>https://news.google.com/rss/articles/fixture-same-leader-a?oc=5&amp;hl=ja</link><guid isPermaLink=\"false\">fixture-same-leader-a</guid><pubDate>Tue, 24 Nov 2026 07:20:00 +0900</pubDate><source url=\"https://www.asahi.com/\">朝日新聞</source></item>\n  <item><title>官房長官が輸入小麦の関税を見直す方針を正式決定 - 朝日新聞</title><link>https://news.google.com/rss/articles/fixture-same-leader-b?oc=5&amp;hl=ja</link><guid isPermaLink=\"false\">fixture-same-leader-b</guid><pubDate>Tue, 24 Nov 2026 07:21:00 +0900</pubDate><source url=\"https://www.asahi.com/\">朝日新聞</source></item>\n  <item><title>系列サイトの開店記念イベント - 朝日新聞</title><link>https://news.google.com/rss/articles/fixture-wrong-host?oc=5&amp;hl=ja</link><guid isPermaLink=\"false\">fixture-wrong-host</guid><pubDate>Tue, 24 Nov 2026 07:00:00 +0900</pubDate><source url=\"https://dot.asahi.com/\">朝日新聞</source></item>\n</channel></rss>"
+    },
+    {
+      "feed": "kobe-search",
+      "rss": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:atom=\"http://www.w3.org/2005/Atom\"><channel><title>新聞横断の架空ニュース</title><link>https://example.invalid/</link><description>試験用</description>\n  <item><title>朝凪市の旧灯台が新たに世界遺産に登録決定 - 神戸新聞</title><link>https://news.google.com/rss/articles/fixture-culture?oc=5&amp;hl=ja</link><guid isPermaLink=\"false\">fixture-culture</guid><pubDate>Tue, 24 Nov 2026 07:00:00 +0900</pubDate><source url=\"https://www.kobe-np.co.jp/\">神戸新聞</source></item>\n  <item><title>沖浜市は増水に備え避難所を開設 - 神戸新聞</title><link>https://news.google.com/rss/articles/fixture-reprint?oc=5&amp;hl=ja</link><guid isPermaLink=\"false\">fixture-reprint</guid><pubDate>Tue, 24 Nov 2026 06:10:00 +0900</pubDate><source url=\"https://www.kobe-np.co.jp/\">神戸新聞</source></item>\n</channel></rss>"
+    },
+    {
+      "feed": "jiji-search",
+      "rss": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:atom=\"http://www.w3.org/2005/Atom\"><channel><title>新聞横断の架空ニュース</title><link>https://example.invalid/</link><description>試験用</description>\n  <item><title>国連が港湾の通行制限の解除を公式発表 - 時事ドットコム</title><link>https://news.google.com/rss/articles/fixture-intl?oc=5&amp;hl=ja</link><guid isPermaLink=\"false\">fixture-intl</guid><pubDate>Tue, 24 Nov 2026 04:15:00 +0900</pubDate><source url=\"https://www.jiji.com/\">時事ドットコム</source></item>\n</channel></rss>"
+    },
+    {
+      "feed": "jiji-popular",
+      "rss": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:atom=\"http://www.w3.org/2005/Atom\"><channel><title>新聞横断の架空ニュース</title><link>https://example.invalid/</link><description>試験用</description>\n  <item><title>国連が港湾の通行制限の解除を公式発表</title><link>https://www.jiji.com/__newspaper_briefing_fixture__/intl</link><guid isPermaLink=\"false\">fixture-intl</guid><pubDate>Tue, 24 Nov 2026 04:15:00 +0900</pubDate></item>\n  <item><title>公式ランキングにだけ出る記事</title><link>https://www.jiji.com/__newspaper_briefing_fixture__/popular-only</link><guid isPermaLink=\"false\">fixture-popular-only</guid><pubDate>Tue, 24 Nov 2026 07:17:00 +0900</pubDate></item>\n</channel></rss>"
+    },
+    {
+      "feed": "google-top",
+      "rss": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\" xmlns:dc=\"http://purl.org/dc/elements/1.1/\" xmlns:atom=\"http://www.w3.org/2005/Atom\"><channel><title>新聞横断の架空ニュース</title><link>https://example.invalid/</link><description>試験用</description>\n  <item><title>青葉県沖で震度6強 気象庁が津波警報を発表 - NHKニュース</title><link>https://news.google.com/rss/articles/fixture-google-quake?oc=5&amp;hl=ja</link><guid isPermaLink=\"false\">fixture-google-quake</guid><pubDate>Tue, 24 Nov 2026 07:52:00 +0900</pubDate><source url=\"https://news.web.nhk/\">NHKニュース</source></item>\n  <item><title>夕波市の新しい小劇場が開館 - 読売新聞</title><link>https://news.google.com/rss/articles/fixture-discovery-only?oc=5&amp;hl=ja</link><guid isPermaLink=\"false\">fixture-discovery-only</guid><pubDate>Tue, 24 Nov 2026 07:44:00 +0900</pubDate><source url=\"https://www.yomiuri.co.jp/\">読売新聞</source></item>\n</channel></rss>"
+    },
+    {
+      "feed": "shikoku-search",
+      "failure": "HTTP 503"
+    }
+  ]
+}

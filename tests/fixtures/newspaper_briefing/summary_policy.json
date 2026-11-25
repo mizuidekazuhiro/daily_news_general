@@ -1,0 +1,26 @@
+{
+  "sources": [
+    {
+      "id": "fixture-prefecture",
+      "kind": "primary",
+      "name": "架空の青葉県",
+      "url": "https://aoba.example.invalid/notices/",
+      "ref_prefix": "https://aoba.example.invalid/notices/",
+      "basis_urls": ["https://aoba.example.invalid/terms"],
+      "checked_on": "2026-11-24",
+      "permissions": {"acquire": true, "save": true, "ai": true, "email": true},
+      "constraints": "オフラインテスト専用の架空資料。"
+    },
+    {
+      "id": "fixture-rescue",
+      "kind": "primary",
+      "name": "架空の青葉救助本部",
+      "url": "https://rescue.example.invalid/releases/",
+      "ref_prefix": "https://rescue.example.invalid/releases/",
+      "basis_urls": ["https://rescue.example.invalid/terms"],
+      "checked_on": "2026-11-24",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": true},
+      "constraints": "オフラインテスト専用の架空資料。"
+    }
+  ]
+}
