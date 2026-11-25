@@ -115,6 +115,8 @@ def test_ai_email_has_a_summary_for_every_rank_and_multiple_verified_links(tmp_p
             assert {article["headline"] for article in pair["articles"]} == {title, alternative}
             compared.append(pair["id"])
             return {"pairs": [{"id": pair["id"], "same_event": True, "shared_detail": "港南研究所"}]}
+        assert 1 <= len(payload) <= 10
+        assert [item["id"] for item in payload] == [f"s{number}" for number in range(1, len(payload) + 1)]
         selected.extend(item["id"] for item in payload)
         assert all("url" not in fact for item in payload for fact in item["facts"])
         assert all(fact["name"] != "河北新報" for item in payload for fact in item["facts"])

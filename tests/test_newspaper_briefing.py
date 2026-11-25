@@ -450,6 +450,7 @@ def test_event_ai_only_matches_approved_headlines_and_checks_the_returned_pair(t
         def generate_structured_json(self, **options):
             [pair] = json.loads(options["user_prompt"])
             requests.append(pair)
+            assert pair["id"] == "p1"
             assert {article["headline"] for article in pair["articles"]} == {titles[0][1], titles[1][1]}
             assert "港南研究所" in pair["shared_details"]
             assert all(detail in stories.title_text(article["headline"])
