@@ -120,13 +120,15 @@ def test_ai_email_has_a_summary_for_every_rank_and_multiple_verified_links(tmp_p
         selected.extend(item["id"] for item in payload)
         assert all("url" not in fact for item in payload for fact in item["facts"])
         assert all(fact["name"] != "河北新報" for item in payload for fact in item["facts"])
-        rows = []
+        rows = {}
+        definitions = kwargs["schema"]["properties"]["stories"]["properties"]
         for item in payload:
-            row = {"id": item["id"]}
+            row = {}
             for section in ("what", "why", "next"):
-                fact = next((f for f in item["facts"] if f["section"] == section), None)
-                row[section] = [fact["id"]] if fact else []
-            rows.append(row)
+                available = [fact["id"] for fact in item["facts"] if fact["section"] == section]
+                assert definitions[item["id"]]["properties"][section]["enum"] == (available or [""])
+                row[section] = available[0] if available else ""
+            rows[item["id"]] = row
         return {"stories": rows}
 
     monkeypatch.setattr(OpenAIJsonClient, "generate_structured_json", choose)
