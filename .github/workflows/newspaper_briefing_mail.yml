@@ -31,7 +31,7 @@ jobs:
       ((github.event_name == 'workflow_dispatch' && !inputs.send) ||
       vars.NEWSPAPER_BRIEFING_EMAIL_ENABLED == 'true')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Check the scheduled issue and prior delivery reservation
         id: issue
@@ -111,6 +111,8 @@ jobs:
           NEWSPAPER_BRIEFING_SMTP_TO: ${{ secrets.NEWSPAPER_BRIEFING_SMTP_TO }}
           NEWSPAPER_BRIEFING_OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           NEWSPAPER_BRIEFING_OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          OPENAI_REQUEST_TIMEOUT_SECONDS: '45'
+          OPENAI_MAX_RETRIES: '0'
         run: |
           set -euo pipefail
           : "${CONFIG_JSON:?}" "${SOURCE_POLICY_JSON:?}" "${SNAPSHOT_KEY:?}"
@@ -151,7 +153,7 @@ jobs:
           matching = diagnostics["event_matching_ai"]
           print(f"Media available: {coverage['available']}/{coverage['total']}")
           print(f"Stories in email: {len(report['stories'])}; links: {mail['link_count']}")
-          print(f"AI event matching: {matching['state']}; pairs: {matching['pairs']}; merges: {matching['merged']}")
+          print(f"AI event matching: {matching['state']}; pairs: {matching['pairs']}; reviewed: {matching.get('reviewed', 0)}; merges: {matching['merged']}")
           print(f"AI summary: {report['ai_state']}; comparison: {report['comparison_state']}")
           PY
           if [[ "$EDITION" == morning ]]; then

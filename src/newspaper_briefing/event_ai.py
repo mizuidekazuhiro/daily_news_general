@@ -4,19 +4,18 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import timedelta
 from difflib import SequenceMatcher
-import json
 import os
-from pathlib import Path
 import re
-from tempfile import TemporaryDirectory
 
+from .ai_requests import request_batch
 from .evidence import reference
 from .feeds import Observation, Settings, text_key
-from .stories import Features, Story, conflicting, features, outage_scope, stable_id, title_text, within_event_interval
+from .stories import Features, Story, conflicting, features, outage_scope, title_text, within_event_interval
 from .summaries import schema_object
 
 
 MAX_PAIRS = 60
+PAIR_BATCH_SIZE = 20
 PAIR_SCHEMA = schema_object({"pairs": {"type": "array", "items": schema_object({
     "id": {"type": "string"}, "same_event": {"type": "boolean"}, "shared_detail": {"type": "string"},
 })}})
@@ -69,8 +68,7 @@ def event_pairs(stories: list[Story], settings: Settings) -> dict[str, tuple[Can
             delta = candidate.record.published_at - other.record.published_at
             if ((same_context and shared >= 3 or similar_words) and abs(delta) <= timedelta(hours=24)
                     and not conflicting(item, other_item) and within_event_interval(item, other_item, delta)):
-                pair = stable_id("pair-", *sorted((stories[index].id, stories[other_index].id)))
-                pairs[pair] = (candidate, other)
+                pairs[f"p{len(pairs) + 1}"] = (candidate, other)
                 if len(pairs) >= MAX_PAIRS:
                     return pairs
     return pairs
@@ -129,31 +127,33 @@ def refine(stories: list[Story], settings: Settings, enabled: bool) -> tuple[lis
     model = os.getenv("NEWSPAPER_BRIEFING_OPENAI_MODEL", "").strip()
     if not key or not model:
         return stories, status | {"state": "unavailable"}
-    payload = [{"id": pid,
-                "articles": [{"headline": item.record.title, "published_at": item.record.published_at.isoformat()}
-                             for item in pair],
-                "shared_details": shared_details(pair[0].signature, pair[1].signature)}
-               for pid, pair in pairs.items()]
     try:
         from src.openai_json_client import OpenAIJsonClient
 
-        with TemporaryDirectory(prefix="newspaper-briefing-events-") as directory:
-            diagnostic = Path(directory) / "result.json"
-            try:
-                result = OpenAIJsonClient(key).generate_structured_json(
-                    model=model, system_prompt=PROMPT, user_prompt=json.dumps(payload, ensure_ascii=False),
-                    max_output_tokens=max(1800, 110 * len(pairs)), temperature=0, schema=PAIR_SCHEMA,
-                    validate=lambda response: checked_matches(response, pairs), diagnostics_path=diagnostic,
-                )
-            except Exception:
-                attempts = json.loads(diagnostic.read_text(encoding="utf-8")).get("attempts", []) if diagnostic.is_file() else []
-                state = "invalid" if any(row.get("validation_errors") for row in attempts) else "unavailable"
-                return stories, status | {"state": state}
-            confirmed = checked_matches(result, pairs)
-    except (TypeError, ValueError, KeyError, AttributeError):
-        return stories, status | {"state": "invalid"}
-    except (OSError, ImportError):
+        client = OpenAIJsonClient(key)
+    except Exception:
         return stories, status | {"state": "unavailable"}
+    confirmed, reviewed, failure = set(), 0, ""
+    items = list(pairs.items())
+    for start in range(0, len(items), PAIR_BATCH_SIZE):
+        batch = dict(items[start:start + PAIR_BATCH_SIZE])
+        payload = [{"id": pid,
+                    "articles": [{"headline": item.record.title, "published_at": item.record.published_at.isoformat()}
+                                 for item in pair],
+                    "shared_details": shared_details(pair[0].signature, pair[1].signature)}
+                   for pid, pair in batch.items()]
+        result, state = request_batch(client, model, phase="matching", prompt=PROMPT, payload=payload,
+                                      schema=PAIR_SCHEMA, validate=lambda response: checked_matches(response, batch),
+                                      max_output_tokens=2200)
+        if result is None:
+            failure = state
+            if state == "unavailable":
+                break
+        else:
+            confirmed.update(result)
+            reviewed += len(batch)
+    if not reviewed:
+        return stories, status | {"state": failure}
 
     declined = defaultdict(set)
     for pid, (left, right) in pairs.items():
@@ -184,5 +184,5 @@ def refine(stories: list[Story], settings: Settings, enabled: bool) -> tuple[lis
             owners[index] = first
         merged += 1
     return [groups[index] for index in members], {
-        "state": "ok", "pairs": len(pairs), "merged": merged,
+        "state": "partial" if failure else "ok", "pairs": len(pairs), "reviewed": reviewed, "merged": merged,
     }
