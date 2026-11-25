@@ -1,0 +1,42 @@
+name: Newspaper briefing preview
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: Generate morning and evening previews from synthetic feeds
+        run: |
+          python -m src.newspaper_briefing --edition morning \
+            --offline-input tests/fixtures/newspaper_briefing/morning.json
+          python -m src.newspaper_briefing --edition evening \
+            --offline-input tests/fixtures/newspaper_briefing/evening.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: newspaper-briefing-preview
+          path: artifacts/newspaper_briefing/**/report.*
+          retention-days: 7
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: newspaper-briefing-diagnostics
+          path: artifacts/newspaper_briefing/**/diagnostics.json
+          retention-days: 7
+          if-no-files-found: error

@@ -1,0 +1,163 @@
+{
+  "sources": [
+    {
+      "id": "nhk-main",
+      "kind": "headline",
+      "url": "https://news.web.nhk/n-data/conf/na/rss/cat0.xml",
+      "basis_urls": ["https://www.nhk.or.jp/toppage/rss/index.html"],
+      "checked_on": "2026-11-26",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": false},
+      "constraints": "公式案内で指定されたRSSを個人用リーダーの候補検出に使用し、見出し・時刻・リンクをローカルの検証用に記録する。RSSから取得した内容の再配信・再提供は禁止。"
+    },
+    {
+      "id": "nhk-society",
+      "kind": "headline",
+      "url": "https://news.web.nhk/n-data/conf/na/rss/cat1.xml",
+      "basis_urls": ["https://www.nhk.or.jp/toppage/rss/index.html"],
+      "checked_on": "2026-11-26",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": false},
+      "constraints": "公式案内で指定されたRSSを個人用リーダーの候補検出に使用し、見出し・時刻・リンクをローカルの検証用に記録する。RSSから取得した内容の再配信・再提供は禁止。"
+    },
+    {
+      "id": "nhk-culture",
+      "kind": "headline",
+      "url": "https://news.web.nhk/n-data/conf/na/rss/cat2.xml",
+      "basis_urls": ["https://www.nhk.or.jp/toppage/rss/index.html"],
+      "checked_on": "2026-11-26",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": false},
+      "constraints": "公式案内で指定されたRSSを個人用リーダーの候補検出に使用し、見出し・時刻・リンクをローカルの検証用に記録する。RSSから取得した内容の再配信・再提供は禁止。"
+    },
+    {
+      "id": "nhk-science",
+      "kind": "headline",
+      "url": "https://news.web.nhk/n-data/conf/na/rss/cat3.xml",
+      "basis_urls": ["https://www.nhk.or.jp/toppage/rss/index.html"],
+      "checked_on": "2026-11-26",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": false},
+      "constraints": "公式案内で指定されたRSSを個人用リーダーの候補検出に使用し、見出し・時刻・リンクをローカルの検証用に記録する。RSSから取得した内容の再配信・再提供は禁止。"
+    },
+    {
+      "id": "nhk-politics",
+      "kind": "headline",
+      "url": "https://news.web.nhk/n-data/conf/na/rss/cat4.xml",
+      "basis_urls": ["https://www.nhk.or.jp/toppage/rss/index.html"],
+      "checked_on": "2026-11-26",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": false},
+      "constraints": "公式案内で指定されたRSSを個人用リーダーの候補検出に使用し、見出し・時刻・リンクをローカルの検証用に記録する。RSSから取得した内容の再配信・再提供は禁止。"
+    },
+    {
+      "id": "nhk-economy",
+      "kind": "headline",
+      "url": "https://news.web.nhk/n-data/conf/na/rss/cat5.xml",
+      "basis_urls": ["https://www.nhk.or.jp/toppage/rss/index.html"],
+      "checked_on": "2026-11-26",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": false},
+      "constraints": "公式案内で指定されたRSSを個人用リーダーの候補検出に使用し、見出し・時刻・リンクをローカルの検証用に記録する。RSSから取得した内容の再配信・再提供は禁止。"
+    },
+    {
+      "id": "nhk-international",
+      "kind": "headline",
+      "url": "https://news.web.nhk/n-data/conf/na/rss/cat6.xml",
+      "basis_urls": ["https://www.nhk.or.jp/toppage/rss/index.html"],
+      "checked_on": "2026-11-26",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": false},
+      "constraints": "公式案内で指定されたRSSを個人用リーダーの候補検出に使用し、見出し・時刻・リンクをローカルの検証用に記録する。RSSから取得した内容の再配信・再提供は禁止。"
+    },
+    {
+      "id": "nhk-sports",
+      "kind": "headline",
+      "url": "https://news.web.nhk/n-data/conf/na/rss/cat7.xml",
+      "basis_urls": ["https://www.nhk.or.jp/toppage/rss/index.html"],
+      "checked_on": "2026-11-26",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": false},
+      "constraints": "公式案内で指定されたRSSを個人用リーダーの候補検出に使用し、見出し・時刻・リンクをローカルの検証用に記録する。RSSから取得した内容の再配信・再提供は禁止。"
+    },
+    {
+      "id": "jma-earthquake",
+      "kind": "primary",
+      "name": "気象庁",
+      "adapter": "jma_earthquake",
+      "url": "https://www.data.jma.go.jp/developer/xml/feed/eqvol_l.xml",
+      "ref_prefix": "https://www.data.jma.go.jp/developer/xml/data/",
+      "basis_urls": ["https://xml.kishou.go.jp/xmlpull.html", "https://xml.kishou.go.jp/considerationforxml.pdf", "https://www.jma.go.jp/jma/kishou/info/coment.html", "https://www.digital.go.jp/resources/open_data/public_data_license_v1.0"],
+      "checked_on": "2026-11-24",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": true},
+      "constraints": "通常運用の震源・震度に関する情報の公表済み観測項目のみ。抽出項目を保存し、気象庁資料の加工であることとURLを表示する。予報・第三者素材・外部AIへの入力は対象外。"
+    },
+    {
+      "id": "mlit-press",
+      "kind": "primary",
+      "name": "国土交通省",
+      "adapter": "mlit_press",
+      "url": "https://www.mlit.go.jp/pressrelease.rdf",
+      "ref_prefix": "https://www.mlit.go.jp/report/press/",
+      "basis_urls": ["https://www.mlit.go.jp/page/rssinfo.html", "https://www.mlit.go.jp/link.html", "https://www.mlit.go.jp/page/kanbo01_hy_003657.html", "https://www.digital.go.jp/resources/open_data/public_data_license_v1.0"],
+      "checked_on": "2026-11-26",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": true},
+      "constraints": "省自身のプレスリリースRSSと、同RSSで案内する省作成の報道発表資料の冒頭の短い記述のみ。公表時刻はRSS記載値。ウェブサイトのURLを明示し、リンク先を別ウィンドウで開き、加工した主体を表示。外部資料、第三者素材、個別規約の対象、画像、添付資料、外部AIへの入力は対象外。"
+    },
+    {
+      "id": "digital-updates",
+      "kind": "primary",
+      "name": "デジタル庁",
+      "adapter": "digital_updates",
+      "url": "https://www.digital.go.jp/rss/news.xml",
+      "ref_prefix": "https://www.digital.go.jp/",
+      "basis_urls": ["https://www.digital.go.jp/rss", "https://www.digital.go.jp/copyright-policy", "https://www.digital.go.jp/resources/open_data/public_data_license_v1.0"],
+      "checked_on": "2026-11-26",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": true},
+      "constraints": "公式RSSの庁自身の更新情報の見出し・日時・ページURLを使用する。出典と作成主体を明示する。会見記録、調達情報、外部リンク、資料本文、第三者素材、外部AIへの入力は対象外。"
+    },
+    {
+      "id": "mofa-statements",
+      "kind": "primary",
+      "name": "外務省",
+      "adapter": "verified_input",
+      "url": "https://www.mofa.go.jp/mofaj/press/kaiken/",
+      "ref_prefix": "https://www.mofa.go.jp/mofaj/press/kaiken/",
+      "basis_urls": ["https://www.mofa.go.jp/mofaj/annai/legalmatters/index.html", "https://www.digital.go.jp/resources/open_data/public_data_license_v1.0"],
+      "checked_on": "2026-11-26",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": true},
+      "constraints": "公開会見で省自身が説明した事実を照合した入力ファイルのみ。質問者など第三者の文言、会見記録の本文転載、自動巡回、外部AIへの入力は対象外。出典と作成主体を明示する。"
+    },
+    {
+      "id": "mlit-chugoku-documents",
+      "kind": "primary",
+      "name": "中国運輸局",
+      "adapter": "verified_input",
+      "url": "https://wwwtb.mlit.go.jp/chugoku/release/release.html",
+      "ref_prefix": "https://wwwtb.mlit.go.jp/chugoku/content/",
+      "basis_urls": ["https://wwwtb.mlit.go.jp/chugoku/txt/copyright.html"],
+      "checked_on": "2026-11-26",
+      "permissions": {"acquire": true, "save": true, "ai": false, "email": true},
+      "constraints": "局自身が作成した公開資料の事実を照合した入力ファイルのみ。出典と作成主体を明示する。資料の本文転載、第三者の資料、写真、自動巡回、外部AIへの入力は対象外。"
+    },
+    {
+      "id": "nhk-main",
+      "kind": "rss_description",
+      "url": "https://news.web.nhk/n-data/conf/na/rss/cat0.xml",
+      "basis_urls": ["https://www.nhk.or.jp/toppage/rss/index.html"],
+      "checked_on": "2026-11-24",
+      "permissions": {"acquire": false, "save": false, "ai": false, "email": false},
+      "constraints": "公式案内はRSSの個人利用を認め、プログラム等による再配信や再提供を許可していない。このジョブでは説明文の取得・保存も行わない。"
+    },
+    {
+      "id": "nhk-society",
+      "kind": "rss_description",
+      "url": "https://news.web.nhk/n-data/conf/na/rss/cat1.xml",
+      "basis_urls": ["https://www.nhk.or.jp/toppage/rss/index.html"],
+      "checked_on": "2026-11-24",
+      "permissions": {"acquire": false, "save": false, "ai": false, "email": false},
+      "constraints": "公式案内はRSSの個人利用を認め、プログラム等による再配信や再提供を許可していない。このジョブでは説明文の取得・保存も行わない。"
+    },
+    {
+      "id": "okinawa-official",
+      "kind": "rss_description",
+      "url": "https://www.okinawatimes.co.jp/list/feed/rss",
+      "basis_urls": ["https://www.okinawatimes.co.jp/"],
+      "checked_on": "2026-11-24",
+      "permissions": {"acquire": false, "save": false, "ai": false, "email": false},
+      "constraints": "説明文の利用を認める条件を確認できていない。"
+    }
+  ]
+}

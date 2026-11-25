@@ -1,0 +1,49 @@
+{
+  "weights": {
+    "impact": 40,
+    "breadth": 30,
+    "recency": 20,
+    "editorial": 10
+  },
+  "collection": {
+    "timeout": 12,
+    "retries": 1,
+    "workers": 3,
+    "max_supplemental_feeds": 2,
+    "search_cap_hint": 100
+  },
+  "feeds": [
+    {"id":"nhk-main","publisher":"nhk","title":"NHK 主要","kind":"editorial","url":"https://news.web.nhk/n-data/conf/na/rss/cat0.xml","confirm_origin":true,"personal_only":true},
+    {"id":"nhk-society","publisher":"nhk","title":"NHK 社会","kind":"official","url":"https://news.web.nhk/n-data/conf/na/rss/cat1.xml","confirm_origin":true,"personal_only":true},
+    {"id":"nhk-culture","publisher":"nhk","title":"NHK 文化","kind":"official","url":"https://news.web.nhk/n-data/conf/na/rss/cat2.xml","confirm_origin":true,"personal_only":true},
+    {"id":"nhk-science","publisher":"nhk","title":"NHK 科学・医療","kind":"official","url":"https://news.web.nhk/n-data/conf/na/rss/cat3.xml","confirm_origin":true,"personal_only":true},
+    {"id":"nhk-politics","publisher":"nhk","title":"NHK 政治","kind":"official","url":"https://news.web.nhk/n-data/conf/na/rss/cat4.xml","confirm_origin":true,"personal_only":true},
+    {"id":"nhk-economy","publisher":"nhk","title":"NHK 経済","kind":"official","url":"https://news.web.nhk/n-data/conf/na/rss/cat5.xml","confirm_origin":true,"personal_only":true},
+    {"id":"nhk-international","publisher":"nhk","title":"NHK 国際","kind":"official","url":"https://news.web.nhk/n-data/conf/na/rss/cat6.xml","confirm_origin":true,"personal_only":true},
+    {"id":"nhk-sports","publisher":"nhk","title":"NHK スポーツ","kind":"official","url":"https://news.web.nhk/n-data/conf/na/rss/cat7.xml","confirm_origin":true,"personal_only":true},
+    {"id":"okinawa-official","publisher":"okinawa","title":"沖縄タイムス 公式RSS","kind":"official","url":"https://www.okinawatimes.co.jp/list/feed/rss"},
+    {"id":"jiji-popular","publisher":"jiji","title":"時事ドットコム アクセスランキング","kind":"popularity","url":"https://www.jiji.com/rss/ranking.rdf"},
+    {"id":"google-top","title":"Googleニュース日本版 トップ","kind":"discovery","url":"https://news.google.com/rss?hl=ja&gl=JP&ceid=JP%3Aja"}
+  ],
+  "publishers": [
+    {"id":"nikkei","name":"日本経済新聞","region":"全国","domain":"nikkei.com","hosts":["www.nikkei.com","nikkei.com"],"aliases":[],"reporting_group":"nikkei","search_query":"site:nikkei.com when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|日経会社情報|日経電子版からのお知らせ"},
+    {"id":"asahi","name":"朝日新聞","region":"全国","domain":"asahi.com","hosts":["www.asahi.com","asahi.com"],"aliases":["朝日新聞デジタル"],"reporting_group":"asahi","search_query":"site:asahi.com when:1d","supplemental_terms":["科学"],"exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/asagakuplus/"},
+    {"id":"yomiuri","name":"読売新聞","region":"全国","domain":"yomiuri.co.jp","hosts":["www.yomiuri.co.jp","yomiuri.co.jp"],"aliases":["読売新聞オンライン"],"reporting_group":"yomiuri","search_query":"site:yomiuri.co.jp when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/komachi/|/yomidr/"},
+    {"id":"mainichi","name":"毎日新聞","region":"全国","domain":"mainichi.jp","hosts":["mainichi.jp","www.mainichi.jp"],"aliases":[],"reporting_group":"mainichi","search_query":"site:mainichi.jp when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/sp/advertisement/"},
+    {"id":"sankei","name":"産経ニュース","region":"全国","domain":"sankei.com","hosts":["www.sankei.com","sankei.com"],"aliases":["産経新聞"],"reporting_group":"sankei","search_query":"site:sankei.com when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/pressrelease/"},
+    {"id":"nhk","name":"NHKニュース","region":"全国・放送","domain":"news.web.nhk","hosts":["news.web.nhk","www3.nhk.or.jp"],"aliases":["NHK","NHK NEWS WEB","NHK ONE"],"reporting_group":"nhk","search_query":"site:news.web.nhk when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/event/"},
+    {"id":"47news","name":"47NEWS","region":"全国・通信配信","domain":"47news.jp","hosts":["www.47news.jp","47news.jp"],"aliases":["47NEWS（よんななニュース）"],"reporting_group":"47news","search_query":"site:47news.jp when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/prtimes/"},
+    {"id":"jiji","name":"時事ドットコム","region":"全国・通信","domain":"jiji.com","hosts":["www.jiji.com","jiji.com","sp.m.jiji.com"],"aliases":["時事通信ニュース"],"reporting_group":"jiji","search_query":"site:jiji.com when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|[?&]k=prtimes|/ad/|^画像・写真[:：]","confirm_search_origin":true},
+    {"id":"hokkaido","name":"北海道新聞","region":"北海道","domain":"hokkaido-np.co.jp","hosts":["www.hokkaido-np.co.jp","hokkaido-np.co.jp"],"aliases":["北海道新聞デジタル"],"reporting_group":"hokkaido","search_query":"site:hokkaido-np.co.jp when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/prtimes/"},
+    {"id":"kahoku","name":"河北新報","region":"東北","domain":"kahoku.news","hosts":["kahoku.news","www.kahoku.news"],"aliases":["河北新報オンライン"],"reporting_group":"kahoku","search_query":"site:kahoku.news when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/prtimes/"},
+    {"id":"tokyo","name":"東京新聞","region":"関東","domain":"tokyo-np.co.jp","hosts":["www.tokyo-np.co.jp","tokyo-np.co.jp"],"aliases":["東京新聞デジタル","東京新聞 TOKYO Web"],"reporting_group":"chunichi","search_query":"site:tokyo-np.co.jp when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/prtimes/"},
+    {"id":"chunichi","name":"中日新聞","region":"東海","domain":"chunichi.co.jp","hosts":["www.chunichi.co.jp","chunichi.co.jp","sp.chunichi.co.jp","plus.chunichi.co.jp"],"aliases":["中日新聞Web"],"reporting_group":"chunichi","search_query":"site:chunichi.co.jp when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/prtimes/|/job/"},
+    {"id":"shinmai","name":"信濃毎日新聞","region":"信越","domain":"shinmai.co.jp","hosts":["www.shinmai.co.jp","shinmai.co.jp"],"aliases":["信濃毎日新聞デジタル"],"reporting_group":"shinmai","search_query":"site:shinmai.co.jp when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/prtimes/"},
+    {"id":"kobe","name":"神戸新聞","region":"近畿","domain":"kobe-np.co.jp","hosts":["www.kobe-np.co.jp","kobe-np.co.jp"],"aliases":["神戸新聞NEXT"],"reporting_group":"kobe","search_query":"site:kobe-np.co.jp when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/prtimes/"},
+    {"id":"chugoku","name":"中国新聞","region":"中国","domain":"chugoku-np.co.jp","hosts":["www.chugoku-np.co.jp","chugoku-np.co.jp"],"aliases":["中国新聞デジタル"],"reporting_group":"chugoku","search_query":"site:chugoku-np.co.jp when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/prtimes/"},
+    {"id":"shikoku","name":"四国新聞","region":"四国","domain":"shikoku-np.co.jp","hosts":["www.shikoku-np.co.jp","shikoku-np.co.jp"],"aliases":[],"reporting_group":"shikoku","search_query":"site:shikoku-np.co.jp when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/prtimes/"},
+    {"id":"nishinihon","name":"西日本新聞","region":"九州","domain":"nishinippon.co.jp","hosts":["www.nishinippon.co.jp","nishinippon.co.jp"],"aliases":["西日本新聞me"],"reporting_group":"nishinihon","search_query":"site:nishinippon.co.jp when:1d","supplemental_terms":["災害"],"exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/prtimes/|(?:^|[-–—] )写真・画像[（(][0-9]+/[0-9]+[）)]$"},
+    {"id":"okinawa","name":"沖縄タイムス","region":"沖縄","domain":"okinawatimes.co.jp","hosts":["www.okinawatimes.co.jp","okinawatimes.co.jp"],"aliases":["沖縄タイムス社","沖縄タイムス＋プラス","沖縄タイムス＋プラス プレミアム"],"reporting_group":"okinawa","search_query":"site:okinawatimes.co.jp when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/prtimes/"},
+    {"id":"ryukyu","name":"琉球新報","region":"沖縄","domain":"ryukyushimpo.jp","hosts":["ryukyushimpo.jp","www.ryukyushimpo.jp"],"aliases":["琉球新報デジタル"],"reporting_group":"ryukyu","search_query":"site:ryukyushimpo.jp when:1d","exclude":"(?:^|\\n)【?(?:広告|PR|ＰＲ|求人|スポンサー広告|プレスリリース|お知らせ|会員募集)(?:】|[:：]|\\s)|/(?:pr|recruit|jobs|pressrelease|press-release|advertorial)(?:/|\\?|$)|/prtimes/"}
+  ]
+}
